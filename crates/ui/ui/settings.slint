@@ -233,7 +233,7 @@ export component SettingsPanel inherits Rectangle {
                         alignment: start;
                         IconButton { y: (parent.height - self.height) / 2; icon: "minus"; size: 26px; icon-size: 12px; clicked => { presets.amount = Math.max(1, presets.amount - (presets.scale == 0 ? 5 : 1)); } }
                         Text { text: presets.amount; min-width: 26px; horizontal-alignment: center; color: Theme.text; font-size: Theme.fs-l; font-weight: 700; vertical-alignment: center; }
-                        IconButton { y: (parent.height - self.height) / 2; icon: "plus"; size: 26px; icon-size: 12px; clicked => { presets.amount = Math.min(999, presets.amount + (presets.scale == 0 ? 5 : 1)); } }
+                        IconButton { y: (parent.height - self.height) / 2; icon: "plus"; size: 26px; icon-size: 12px; clicked => { presets.amount = Math.min(presets.scale == 2 ? 365 : 999, presets.amount + (presets.scale == 0 ? 5 : 1)); } }
                         Text { text: "before"; color: Theme.text; font-size: Theme.fs-m; vertical-alignment: center; }
                     }
                     HorizontalLayout {
@@ -244,7 +244,7 @@ export component SettingsPanel inherits Rectangle {
                             stretch: true;
                             items: ["min", "hours", "days"];
                             current: presets.scale;
-                            picked(u) => { presets.scale = u; }
+                            picked(u) => { presets.scale = u; presets.amount = Math.min(presets.amount, u == 2 ? 365 : 999); }
                         }
                         Button {
                             y: (parent.height - self.height) / 2;
