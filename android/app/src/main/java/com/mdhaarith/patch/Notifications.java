@@ -6,9 +6,8 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.drawable.Icon;
-
-import java.util.concurrent.atomic.AtomicInteger;
 
 final class Notifications {
     static final String CHANNEL_REMINDERS = "reminders";
@@ -16,7 +15,7 @@ final class Notifications {
     static final int OVERLAY_ID = 1;
 
     private static final int ACCENT = 0xFF0A84FF;
-    private static final AtomicInteger nextId = new AtomicInteger(100);
+    private static final int FIRST_REMINDER_ID = 100;
 
     private Notifications() {}
 
@@ -51,7 +50,17 @@ final class Notifications {
                 .setAutoCancel(true)
                 .build();
         // Without POST_NOTIFICATIONS this is silently dropped.
-        context.getSystemService(NotificationManager.class).notify(nextId.getAndIncrement(), n);
+        context.getSystemService(NotificationManager.class).notify(nextReminderId(context), n);
+    }
+
+    /** Persisted so reminders still in the tray aren't replaced after the
+     * process is killed and the sequence would otherwise restart. */
+    private static synchronized int nextReminderId(Context context) {
+        SharedPreferences sp = context.getSharedPreferences("notifications", Context.MODE_PRIVATE);
+        int id = sp.getInt("next_id", FIRST_REMINDER_ID);
+        int next = id == Integer.MAX_VALUE ? FIRST_REMINDER_ID : id + 1;
+        sp.edit().putInt("next_id", next).apply();
+        return id;
     }
 
     static Notification overlay(Context context) {

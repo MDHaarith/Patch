@@ -97,4 +97,4 @@ jobs:
         with:
           files: |
             patch-linux-x86_64/*.tar.gz
-            android-apk/*.apk
+            android-apk/release/*.apk
