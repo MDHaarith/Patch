@@ -1,0 +1,370 @@
+import { Theme } from "theme.slint";
+import { Icon, IconBox } from "icons.slint";
+import { Store, Actions, TaskItem, BoardCol } from "store.slint";
+import { Glass, Check, Priority, IconButton, Field, Scroll } from "widgets.slint";
+
+export component Card inherits Rectangle {
+    in property <TaskItem> item;
+    in property <bool> ghost: false;
+    border-radius: 12px;
+    background: Theme.light ? #ffffff : Theme.glass ? #ffffff26 : #1c1c1f;
+    border-width: 1px;
+    border-color: Theme.edge;
+    drop-shadow-blur: ghost ? 24px : (Theme.light ? 6px : 0px);
+    drop-shadow-offset-y: ghost ? 10px : 2px;
+    drop-shadow-color: ghost ? #00000080 : (Theme.light ? #00000014 : transparent);
+    Rectangle {
+        x: 0;
+        y: 0;
+        height: parent.height * 0.6;
+        border-radius: 12px;
+        background: Theme.sheen;
+    }
+    // List colour accent
+    Rectangle {
+        x: 10px;
+        y: 12px;
+        width: 3px;
+        height: parent.height - 24px;
+        border-radius: 1.5px;
+        background: root.item.color;
+    }
+    VerticalLayout {
+        padding-left: 22px;
+        padding-right: 12px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 6px;
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                horizontal-stretch: 1;
+                text: root.item.title;
+                font-size: Store.mobile ? Theme.fs-l : Theme.fs-m;
+                font-weight: 600;
+                color: root.item.done ? Theme.text-3 : Theme.text;
+                wrap: word-wrap;
+                overflow: elide;
+                vertical-alignment: top;
+            }
+            Check {
+                checked: root.item.done;
+                tint: root.item.color;
+                size: 18px;
+                toggled => { Actions.toggle-done(root.item.id); }
+            }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            height: 18px;
+            if root.item.when != "": Rectangle {
+                border-radius: 5px;
+                width: wl.preferred-width + 12px;
+                background: root.item.overdue ? Theme.danger.with-alpha(0.16) : root.item.today ? Theme.accent-soft : Theme.well;
+                wl := HorizontalLayout {
+                    padding-left: 5px;
+                    spacing: 4px;
+                    IconBox { name: root.item.repeat ? "repeat" : "clock"; size: 10px; tint: root.item.overdue ? Theme.danger : root.item.today ? Theme.accent : Theme.text-2; }
+                    Text {
+                        text: root.item.when;
+                        font-size: Theme.fs-xs;
+                        font-weight: 600;
+                        color: root.item.overdue ? Theme.danger : root.item.today ? Theme.accent : Theme.text-2;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            if root.item.check-total > 0: HorizontalLayout {
+                spacing: 3px;
+                IconBox { name: "checklist"; size: 11px; tint: Theme.text-2; }
+                Text { text: "\{root.item.check-done}/\{root.item.check-total}"; font-size: Theme.fs-xs; color: Theme.text-2; vertical-alignment: center; }
+            }
+            if root.item.has-notes: IconBox { name: "note"; size: 11px; tint: Theme.text-2; }
+            Rectangle { horizontal-stretch: 1; }
+            Priority { level: root.item.priority; }
+        }
+    }
+}
+
+export component BoardView inherits Rectangle {
+    property <length> pad: Store.mobile ? 12px : 16px;
+    property <length> col-w: Store.mobile ? Math.min(self.width - 56px, 330px) : 286px;
+    property <length> gap: 12px;
+    property <length> head-h: 44px;
+    property <length> card-h: Store.mobile ? 86px : 78px;
+    property <length> card-gap: 8px;
+    property <length> content-h: Math.max(self.height, head-h + pad * 2 + Math.max(Store.board-tallest, 1) * (card-h + card-gap) + 64px);
+
+    // Drag state, in board viewport coordinates.
+    property <bool> dragging;
+    property <bool> armed;
+    property <string> drag-id;
+    property <TaskItem> drag-item;
+    property <length> grab-x;
+    property <length> grab-y;
+    property <length> drag-x;
+    property <length> drag-y;
+    property <int> drop-col: Math.clamp(Math.floor((drag-x - pad - scroll.content-x) / (col-w + gap)), 0, Math.max(0, Store.board.length - 1));
+    property <int> drop-index: Math.max(0, Math.floor((drag-y - scroll.content-y - pad - head-h + card-gap) / (card-h + card-gap) + 0.5));
+    property <string> adding-col;
+    property <string> renaming-col;
+    property <string> menu-col;
+
+    function start-drag(item: TaskItem) {
+        root.dragging = true;
+        root.drag-id = item.id;
+        root.drag-item = item;
+    }
+
+    long-press := Timer {
+        interval: 380ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            if (root.armed) {
+                root.dragging = true;
+            }
+        }
+    }
+
+    scroll := Scroll {
+        interactive: !root.dragging;
+        content-width: root.pad * 2 + Store.board.length * (root.col-w + root.gap) + root.col-w;
+        content-height: root.content-h;
+
+        for col[ci] in Store.board: Glass {
+            x: root.pad + ci * (root.col-w + root.gap);
+            y: root.pad;
+            width: root.col-w;
+            height: root.content-h - root.pad * 2;
+            radius: 18px;
+            fill: Theme.light ? #ffffff99 : Theme.glass ? #ffffff14 : #0f0f11;
+            sheen: !Theme.matte;
+            border-color: root.dragging && root.drop-col == ci ? Theme.accent.with-alpha(0.6) : Theme.hairline;
+
+            // Header
+            HorizontalLayout {
+                y: 0;
+                height: root.head-h;
+                padding-left: 14px;
+                padding-right: 6px;
+                spacing: 8px;
+                if root.renaming-col != col.id: Text {
+                    text: col.name;
+                    font-size: Theme.fs-m;
+                    font-weight: 700;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    TouchArea { double-clicked => { root.renaming-col = col.id; } }
+                }
+                if root.renaming-col == col.id: Field {
+                    y: (parent.height - self.height) / 2;
+                    horizontal-stretch: 1;
+                    text: col.name;
+                    init => { self.focus-input(); }
+                    accepted(t) => {
+                        Actions.rename-column(col.id, t);
+                        root.renaming-col = "";
+                    }
+                    escaped => { root.renaming-col = ""; }
+                }
+                Rectangle {
+                    y: (parent.height - self.height) / 2;
+                    width: cnt.preferred-width + 12px;
+                    height: 18px;
+                    border-radius: 9px;
+                    background: col.done ? Theme.success.with-alpha(0.2) : Theme.well;
+                    cnt := Text {
+                        text: col.count;
+                        font-size: Theme.fs-xs;
+                        font-weight: 700;
+                        color: col.done ? Theme.success : Theme.text-2;
+                    }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                IconButton {
+                    y: (parent.height - self.height) / 2;
+                    icon: "plus";
+                    size: 26px;
+                    icon-size: 13px;
+                    clicked => { root.adding-col = col.id; }
+                }
+                IconButton {
+                    y: (parent.height - self.height) / 2;
+                    icon: "more";
+                    size: 26px;
+                    icon-size: 15px;
+                    active: root.menu-col == col.id;
+                    clicked => { root.menu-col = root.menu-col == col.id ? "" : col.id; }
+                }
+            }
+
+            // Inline add
+            if root.adding-col == col.id: Field {
+                x: 10px;
+                y: root.head-h + Math.max(col.cards.length, 0) * (root.card-h + root.card-gap);
+                width: parent.width - 20px;
+                placeholder: "Card title — try “Review PR fri 3pm”";
+                init => { self.focus-input(); }
+                accepted(t) => {
+                    if (t != "") {
+                        Actions.quick-add-card(col.id, t);
+                    }
+                    self.text = "";
+                }
+                escaped => { root.adding-col = ""; }
+            }
+
+            for card[k] in col.cards: Rectangle {
+                property <bool> lifted: root.dragging && root.drag-id == card.id;
+                property <length> shift: root.dragging && root.drop-col == ci && !lifted && k >= root.drop-index ? 6px : 0px;
+                x: 10px;
+                y: root.head-h + k * (root.card-h + root.card-gap) + shift;
+                width: parent.width - 20px;
+                height: root.card-h;
+                animate y { duration: 120ms; }
+                Card {
+                    item: card;
+                    opacity: parent.lifted ? 0.3 : 1;
+                }
+                TouchArea {
+                    x: 0;
+                    width: parent.width - 34px;
+                    clicked => {
+                        if (!root.dragging) {
+                            Actions.open-task(card.id);
+                        }
+                    }
+                    pointer-event(e) => {
+                        if (e.kind == PointerEventKind.down) {
+                            root.armed = true;
+                            root.drag-id = card.id;
+                            root.drag-item = card;
+                            root.grab-x = self.mouse-x;
+                            root.grab-y = self.mouse-y;
+                            root.drag-x = root.pad + ci * (root.col-w + root.gap) + 10px + self.mouse-x + scroll.content-x;
+                            root.drag-y = root.pad + root.head-h + k * (root.card-h + root.card-gap) + self.mouse-y + scroll.content-y;
+                            if (Store.mobile) {
+                                long-press.running = true;
+                            }
+                        }
+                        if (e.kind == PointerEventKind.up) {
+                            long-press.running = false;
+                            root.armed = false;
+                            if (root.dragging) {
+                                root.dragging = false;
+                                Actions.drop-card(root.drag-id, root.drop-col, root.drop-index);
+                            }
+                        }
+                        if (e.kind == PointerEventKind.cancel) {
+                            long-press.running = false;
+                            root.armed = false;
+                            root.dragging = false;
+                        }
+                    }
+                    moved => {
+                        if (!self.pressed) {
+                            return;
+                        }
+                        if (!root.dragging && !Store.mobile && (Math.abs(self.mouse-x - self.pressed-x) > 5px || Math.abs(self.mouse-y - self.pressed-y) > 5px)) {
+                            root.start-drag(card);
+                        }
+                        if (!root.dragging && Store.mobile && (Math.abs(self.mouse-x - self.pressed-x) > 8px || Math.abs(self.mouse-y - self.pressed-y) > 8px)) {
+                            long-press.running = false;
+                            root.armed = false;
+                        }
+                        if (root.dragging) {
+                            root.drag-x = root.pad + ci * (root.col-w + root.gap) + 10px + self.mouse-x + scroll.content-x;
+                            root.drag-y = root.pad + root.head-h + k * (root.card-h + root.card-gap) + self.mouse-y + scroll.content-y;
+                        }
+                    }
+                }
+            }
+
+            if col.cards.length == 0 && root.adding-col != col.id: Text {
+                y: root.head-h + 8px;
+                width: parent.width;
+                text: col.done ? "Drop finished cards here" : "No cards";
+                horizontal-alignment: center;
+                font-size: Theme.fs-s;
+                color: Theme.text-3;
+            }
+
+            // Column menu
+            if root.menu-col == col.id: Glass {
+                x: parent.width - self.width - 8px;
+                y: root.head-h - 4px;
+                width: 168px;
+                height: 82px;
+                z: 20;
+                radius: 12px;
+                fill: Theme.float;
+                elevated: true;
+                VerticalLayout {
+                    padding: 5px;
+                    Rectangle {
+                        height: 36px;
+                        border-radius: 7px;
+                        background: r-ta.has-hover ? Theme.hover : transparent;
+                        Text { x: 10px; text: "Rename"; color: Theme.text; font-size: Theme.fs-m; }
+                        r-ta := TouchArea { clicked => { root.renaming-col = col.id; root.menu-col = ""; } }
+                    }
+                    Rectangle {
+                        height: 36px;
+                        border-radius: 7px;
+                        background: d-ta.has-hover ? Theme.danger.with-alpha(0.15) : transparent;
+                        Text { x: 10px; text: "Delete column"; color: Theme.danger; font-size: Theme.fs-m; }
+                        d-ta := TouchArea { clicked => { root.menu-col = ""; Actions.delete-column(col.id); } }
+                    }
+                }
+            }
+        }
+
+        // New column
+        Rectangle {
+            x: root.pad + Store.board.length * (root.col-w + root.gap);
+            y: root.pad;
+            width: root.col-w;
+            height: 46px;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: Theme.hairline;
+            background: nc-ta.has-hover ? Theme.hover : transparent;
+            if root.adding-col != "__new": HorizontalLayout {
+                alignment: center;
+                spacing: 6px;
+                IconBox { name: "plus"; size: 13px; tint: Theme.text-2; }
+                Text { text: "New column"; color: Theme.text-2; font-size: Theme.fs-m; font-weight: 500; vertical-alignment: center; }
+            }
+            nc-ta := TouchArea {
+                enabled: root.adding-col != "__new";
+                clicked => { root.adding-col = "__new"; }
+            }
+            if root.adding-col == "__new": Field {
+                x: 8px;
+                width: parent.width - 16px;
+                placeholder: "Column name";
+                init => { self.focus-input(); }
+                accepted(t) => {
+                    if (t != "") {
+                        Actions.add-column(t);
+                    }
+                    root.adding-col = "";
+                }
+                escaped => { root.adding-col = ""; }
+            }
+        }
+    }
+
+    // The card under the finger while dragging
+    if root.dragging: Card {
+        x: root.drag-x - root.grab-x - scroll.content-x + scroll.content-x;
+        y: root.drag-y - root.grab-y;
+        width: root.col-w - 20px;
+        height: root.card-h;
+        item: root.drag-item;
+        ghost: true;
+    }
+}

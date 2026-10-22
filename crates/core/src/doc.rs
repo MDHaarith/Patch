@@ -64,8 +64,9 @@ impl Doc {
     /// Built-in lists and columns. Every replica creates them with the same
     /// ids and the seed stamp, so they never conflict or duplicate.
     fn seed(&mut self) {
+        type Seed<'a> = (&'a str, &'a str, Vec<(&'a str, Value)>);
         let seed = Stamp::seed();
-        let defaults: [(&str, &str, Vec<(&str, Value)>); 5] = [
+        let defaults: [Seed; 5] = [
             (COL_TODO, KIND_COLUMN, vec![("name", json!("To Do")), ("done", json!(false)), ("order", json!(1.0))]),
             (COL_DOING, KIND_COLUMN, vec![("name", json!("In Progress")), ("done", json!(false)), ("order", json!(2.0))]),
             (COL_DONE, KIND_COLUMN, vec![("name", json!("Done")), ("done", json!(true)), ("order", json!(3.0))]),
@@ -486,7 +487,7 @@ impl Doc {
             .iter()
             .filter(|c| c.id != id)
             .min_by_key(|c| c.done)
-            .map(|c| c.clone())
+            .cloned()
         else {
             return false;
         };

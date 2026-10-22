@@ -1,0 +1,278 @@
+import { Theme } from "theme.slint";
+import { Store, Actions, Block } from "store.slint";
+import { Scroll } from "widgets.slint";
+
+// Week and day views: hour grid with drag-to-move and drag-to-resize
+// blocks, an all-day lane and the red "now" line.
+export component TimeGrid inherits Rectangle {
+    property <int> days: Math.max(1, Store.grid-days.length);
+    property <length> gutter: Store.mobile ? 46px : 56px;
+    property <length> hour-h: Store.mobile ? 54px : 46px;
+    property <length> col-w: (self.width - gutter) / days;
+    property <length> head-h: Store.mobile && days == 1 ? 0px : 44px;
+    property <length> bar-h: 20px;
+    property <length> allday-h: Math.max(1, Store.grid-lanes) * (bar-h + 2px) + 8px;
+    property <length> body-y: head-h + allday-h + 1px;
+
+    // Drag state (block-relative deltas in pixels)
+    property <string> drag-id;
+    property <bool> dragging;
+    property <bool> resizing;
+    property <length> dx;
+    property <length> dy;
+    property <int> snap-min: Math.round(dy / hour-h * 4) * 15;
+    property <int> snap-day: Math.round(dx / col-w);
+
+    function minute-label(m: int) -> string {
+        if (Store.time-24h) {
+            return "\{Math.floor(m / 60) < 10 ? "0" : ""}\{Math.floor(m / 60)}:\{Math.mod(m, 60) < 10 ? "0" : ""}\{Math.mod(m, 60)}";
+        }
+        return "\{Math.mod(Math.floor(m / 60) + 11, 12) + 1}:\{Math.mod(m, 60) < 10 ? "0" : ""}\{Math.mod(m, 60)}";
+    }
+
+    // Column headers
+    if root.head-h > 0: Rectangle {
+        y: 0;
+        height: root.head-h;
+        for d[i] in Store.grid-days: Rectangle {
+            x: root.gutter + i * root.col-w;
+            width: root.col-w;
+            HorizontalLayout {
+                alignment: center;
+                spacing: 5px;
+                Text {
+                    text: d.weekday;
+                    font-size: Theme.fs-m;
+                    color: d.weekend ? Theme.text-3 : Theme.text-2;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    y: (parent.height - self.height) / 2;
+                    width: Math.max(26px, dn.preferred-width + 10px);
+                    height: 26px;
+                    border-radius: 13px;
+                    background: d.today ? Theme.today : transparent;
+                    dn := Text {
+                        text: d.day;
+                        font-size: Theme.fs-l;
+                        font-weight: d.today ? 700 : 600;
+                        color: d.today ? #ffffff : Theme.text;
+                    }
+                }
+            }
+            TouchArea { clicked => { Actions.select-date(d.key); } double-clicked => { Actions.select-date(d.key); Actions.set-view(0); } }
+        }
+    }
+
+    // All-day lane
+    Rectangle {
+        y: root.head-h;
+        height: root.allday-h;
+        Text {
+            x: 0;
+            width: root.gutter - 8px;
+            y: 6px;
+            text: "all-day";
+            horizontal-alignment: right;
+            font-size: Theme.fs-xs;
+            color: Theme.text-2;
+        }
+        for d[i] in Store.grid-days: TouchArea {
+            x: root.gutter + i * root.col-w;
+            width: root.col-w;
+            double-clicked => { Actions.new-task(d.key, -1); }
+        }
+        for bar in Store.grid-bars: Rectangle {
+            x: root.gutter + bar.col * root.col-w + (bar.cont-left ? 0 : 2px);
+            y: 4px + bar.lane * (root.bar-h + 2px);
+            width: bar.span * root.col-w - (bar.cont-left ? 0 : 2px) - (bar.cont-right ? 0 : 3px);
+            height: root.bar-h;
+            border-radius: 4px;
+            background: bar.color.with-alpha(Theme.light ? 0.22 : 0.32);
+            opacity: bar.done ? 0.5 : 1;
+            Rectangle { x: 0; width: 3px; border-radius: 2px; background: bar.color; visible: !bar.cont-left; }
+            Text {
+                x: 8px;
+                width: parent.width - 12px;
+                text: bar.title;
+                font-size: Theme.fs-s;
+                font-weight: 600;
+                color: Theme.light ? bar.color.darker(0.35) : bar.color.brighter(0.45);
+                overflow: elide;
+            }
+            TouchArea { clicked => { Actions.open-task(bar.id); } }
+        }
+    }
+    Rectangle { y: root.body-y - 1px; height: 1px; background: Theme.hairline; }
+
+    scroll := Scroll {
+        y: root.body-y;
+        height: root.height - root.body-y;
+        content-height: 24 * root.hour-h + 20px;
+        init => { self.content-y = -7.5 * root.hour-h; }
+
+        // Weekend shading and day separators
+        for d[i] in Store.grid-days: Rectangle {
+            x: root.gutter + i * root.col-w;
+            y: 0;
+            width: root.col-w;
+            height: 24 * root.hour-h + 20px;
+            background: d.weekend ? Theme.weekend : transparent;
+            Rectangle { x: 0; width: 1px; background: Theme.hairline; }
+        }
+        // Hour lines and labels
+        for h in 24: Rectangle {
+            y: 10px + h * root.hour-h;
+            height: root.hour-h;
+            Rectangle {
+                x: root.gutter;
+                y: 0;
+                height: 1px;
+                background: h == 0 ? transparent : Theme.hairline;
+            }
+            Rectangle {
+                x: root.gutter;
+                y: root.hour-h / 2;
+                height: 1px;
+                background: Theme.hairline.with-alpha(Theme.hairline.alpha / 255 * 0.45);
+            }
+            if h > 0 && h < Store.hour-labels.length: Text {
+                x: 0;
+                y: -7px;
+                width: root.gutter - 8px;
+                text: Store.hour-labels[h];
+                horizontal-alignment: right;
+                font-size: Theme.fs-xs;
+                color: Theme.text-2;
+            }
+        }
+
+        // Double-click (or long-press on phones) an empty slot to add.
+        TouchArea {
+            x: root.gutter;
+            width: parent.width - root.gutter;
+            property <int> day: Math.clamp(Math.floor(self.mouse-x / root.col-w), 0, root.days - 1);
+            property <int> slot: Math.clamp(Math.floor((self.mouse-y - 10px) / root.hour-h * 2) * 30, 0, 1410);
+            double-clicked => {
+                if (day < Store.grid-days.length) {
+                    Actions.new-task(Store.grid-days[day].key, slot);
+                }
+            }
+        }
+
+        // Now line
+        if Store.now-day >= 0: Rectangle {
+            x: root.gutter + Store.now-day * root.col-w - 4px;
+            y: 10px + Store.now-minutes / 60 * root.hour-h - 4px;
+            width: root.col-w + 4px;
+            height: 8px;
+            Rectangle { x: 0; width: 8px; height: 8px; border-radius: 4px; background: Theme.today; }
+            Rectangle { x: 4px; y: 3.25px; height: 1.5px; background: Theme.today; }
+        }
+
+        for b in Store.grid-blocks: blk := Rectangle {
+            property <bool> active: root.drag-id == b.id && (root.dragging || root.resizing);
+            x: root.gutter + b.day * root.col-w + b.lane-x * (root.col-w - 4px) + 2px;
+            y: 10px + b.top / 60 * root.hour-h + 1px;
+            width: b.lane-w * (root.col-w - 4px) - 2px;
+            height: Math.max(b.span / 60 * root.hour-h - 2px, 18px);
+            z: active ? 10 : 1;
+
+            visual := Rectangle {
+                x: parent.active && root.dragging ? root.snap-day * root.col-w : 0;
+                y: parent.active && root.dragging ? root.snap-min / 60 * root.hour-h : 0;
+                width: parent.width;
+                height: parent.active && root.resizing ? Math.max(parent.height + root.snap-min / 60 * root.hour-h, root.hour-h / 4) : parent.height;
+                border-radius: 5px;
+                background: Theme.light ? b.color.with-alpha(0.18) : Theme.glass ? b.color.with-alpha(0.38) : b.color.with-alpha(0.26);
+                border-width: parent.active ? 1px : 0px;
+                border-color: b.color;
+                opacity: b.done ? 0.5 : 1;
+                drop-shadow-blur: parent.active ? 16px : 0px;
+                drop-shadow-color: #00000066;
+                Rectangle { x: 0; width: 3px; border-top-left-radius: 5px; border-bottom-left-radius: 5px; background: b.color; }
+                VerticalLayout {
+                    padding-left: 8px;
+                    padding-right: 4px;
+                    padding-top: 3px;
+                    spacing: 0px;
+                    alignment: start;
+                    Text {
+                        text: b.title;
+                        font-size: Theme.fs-s;
+                        font-weight: 600;
+                        color: Theme.light ? b.color.darker(0.45) : b.color.brighter(0.55);
+                        overflow: elide;
+                        wrap: b.span >= 60 ? word-wrap : no-wrap;
+                        max-height: visual.height - 18px;
+                    }
+                    if b.span >= 45 || (blk.active && root.dragging): Text {
+                        text: blk.active && root.dragging ? root.minute-label(Math.mod(Math.round(b.top) + root.snap-min + 1440, 1440)) : b.time;
+                        font-size: Theme.fs-xs;
+                        color: Theme.light ? b.color.darker(0.25) : b.color.brighter(0.3);
+                        overflow: elide;
+                    }
+                }
+            }
+            TouchArea {
+                height: parent.height - 7px;
+                y: 0;
+                clicked => {
+                    if (!root.dragging) {
+                        Actions.open-task(b.id);
+                    }
+                }
+                moved => {
+                    if (self.pressed) {
+                        if (!root.dragging && (Math.abs(self.mouse-x - self.pressed-x) > 5px || Math.abs(self.mouse-y - self.pressed-y) > 5px)) {
+                            root.drag-id = b.id;
+                            root.dragging = true;
+                        }
+                        if (root.dragging) {
+                            root.dx = self.mouse-x - self.pressed-x;
+                            root.dy = self.mouse-y - self.pressed-y;
+                        }
+                    }
+                }
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.up && root.dragging) {
+                        if (root.snap-day != 0 || root.snap-min != 0) {
+                            Actions.move-block(b.id, root.snap-day, root.snap-min);
+                        }
+                        root.dragging = false;
+                        root.dx = 0;
+                        root.dy = 0;
+                    }
+                    if (e.kind == PointerEventKind.cancel) {
+                        root.dragging = false;
+                        root.dx = 0;
+                        root.dy = 0;
+                    }
+                }
+            }
+            // Resize handle along the bottom edge.
+            TouchArea {
+                y: parent.height - 7px;
+                height: 7px;
+                mouse-cursor: ns-resize;
+                moved => {
+                    if (self.pressed) {
+                        root.drag-id = b.id;
+                        root.resizing = true;
+                        root.dx = 0;
+                        root.dy = self.mouse-y - self.pressed-y;
+                    }
+                }
+                pointer-event(e) => {
+                    if ((e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel) && root.resizing) {
+                        if (e.kind == PointerEventKind.up && root.snap-min != 0) {
+                            Actions.resize-block(b.id, root.snap-min);
+                        }
+                        root.resizing = false;
+                        root.dy = 0;
+                    }
+                }
+            }
+        }
+    }
+}

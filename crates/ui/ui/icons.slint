@@ -1,0 +1,62 @@
+import { Theme } from "theme.slint";
+
+// Stroke icons on a 24×24 grid.
+export component Icon inherits Path {
+    in property <string> name;
+    in property <color> tint: Theme.text;
+    in property <length> size: 16px;
+    width: size;
+    height: size;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    stroke: tint;
+    stroke-width: 2px;
+    stroke-line-cap: round;
+    stroke-line-join: round;
+    fill: transparent;
+    commands: name == "chevron-left" ? "M 15 5 L 8 12 L 15 19"
+        : name == "chevron-right" ? "M 9 5 L 16 12 L 9 19"
+        : name == "chevron-down" ? "M 5 9 L 12 16 L 19 9"
+        : name == "plus" ? "M 12 4 L 12 20 M 4 12 L 20 12"
+        : name == "check" ? "M 5 12.5 L 10 17.5 L 19.5 6.5"
+        : name == "close" ? "M 6 6 L 18 18 M 18 6 L 6 18"
+        : name == "minus" ? "M 5 12 L 19 12"
+        : name == "sidebar" ? "M 4 5 L 20 5 L 20 19 L 4 19 Z M 9.5 5 L 9.5 19"
+        : name == "search" ? "M 10.5 4 A 6.5 6.5 0 1 1 10.49 4 Z M 15.5 15.5 L 20 20"
+        : name == "gear" ? "M 12 8.5 A 3.5 3.5 0 1 1 11.99 8.5 Z M 12 2.5 L 12 5 M 12 19 L 12 21.5 M 2.5 12 L 5 12 M 19 12 L 21.5 12 M 5.3 5.3 L 7.1 7.1 M 16.9 16.9 L 18.7 18.7 M 5.3 18.7 L 7.1 16.9 M 16.9 7.1 L 18.7 5.3"
+        : name == "calendar" ? "M 4 6 L 20 6 L 20 20 L 4 20 Z M 4 10 L 20 10 M 8 3.5 L 8 7 M 16 3.5 L 16 7"
+        : name == "board" ? "M 4 4 L 9 4 L 9 20 L 4 20 Z M 10.5 4 L 15.5 4 L 15.5 14 L 10.5 14 Z M 17 4 L 21 4 L 21 11 L 17 11 Z"
+        : name == "list" ? "M 9 6 L 20 6 M 9 12 L 20 12 M 9 18 L 20 18 M 4.5 6 L 4.6 6 M 4.5 12 L 4.6 12 M 4.5 18 L 4.6 18"
+        : name == "clock" ? "M 12 3 A 9 9 0 1 1 11.99 3 Z M 12 7 L 12 12 L 15.5 14"
+        : name == "repeat" ? "M 17 2.5 L 20.5 6 L 17 9.5 M 4 11 L 4 9.5 A 3.5 3.5 0 0 1 7.5 6 L 20 6 M 7 21.5 L 3.5 18 L 7 14.5 M 20 13 L 20 14.5 A 3.5 3.5 0 0 1 16.5 18 L 4 18"
+        : name == "bell" ? "M 6 16 L 6 10.5 A 6 6 0 0 1 18 10.5 L 18 16 L 20 18 L 4 18 Z M 10 21 L 14 21"
+        : name == "trash" ? "M 4 7 L 20 7 M 9.5 7 L 9.5 4.5 L 14.5 4.5 L 14.5 7 M 6.5 7 L 7.5 20 L 16.5 20 L 17.5 7"
+        : name == "flag" ? "M 5 21 L 5 4 M 5 4 L 18 4 L 15 8.5 L 18 13 L 5 13"
+        : name == "sync" ? "M 20 12 A 8 8 0 0 1 6.3 17.7 M 4 12 A 8 8 0 0 1 17.7 6.3 M 17.5 2.5 L 17.7 6.3 L 13.9 6.5 M 6.5 21.5 L 6.3 17.7 L 10.1 17.5"
+        : name == "more" ? "M 5 12 L 5.1 12 M 12 12 L 12.1 12 M 19 12 L 19.1 12"
+        : name == "open" ? "M 13 4 L 20 4 L 20 11 M 20 4 L 11 13 M 18 15 L 18 20 L 4 20 L 4 6 L 9 6"
+        : name == "layers" ? "M 12 3 L 21 8 L 12 13 L 3 8 Z M 3 12.5 L 12 17.5 L 21 12.5 M 3 16.5 L 12 21.5 L 21 16.5"
+        : name == "note" ? "M 5 3.5 L 15 3.5 L 19 7.5 L 19 20.5 L 5 20.5 Z M 8.5 10 L 15.5 10 M 8.5 14 L 15.5 14 M 8.5 18 L 12.5 18"
+        : name == "checklist" ? "M 4 6.5 L 5.5 8 L 8 5 M 4 12.5 L 5.5 14 L 8 11 M 4 18.5 L 5.5 20 L 8 17 M 11 6.5 L 20 6.5 M 11 12.5 L 20 12.5 M 11 18.5 L 20 18.5"
+        : name == "pin" ? "M 9 3.5 L 15 3.5 M 10 3.5 L 10 10 L 6.5 14 L 17.5 14 L 14 10 L 14 3.5 M 12 14 L 12 21"
+        : name == "tailscale" ? "M 6 6 L 6.1 6 M 12 6 L 12.1 6 M 18 6 L 18.1 6 M 6 12 L 6.1 12 M 12 12 L 12.1 12 M 18 12 L 18.1 12 M 6 18 L 6.1 18 M 12 18 L 12.1 18 M 18 18 L 18.1 18"
+        : name == "day" ? "M 4 6 L 20 6 L 20 20 L 4 20 Z M 4 10 L 20 10 M 10 13 L 14 13 L 14 17 L 10 17 Z"
+        : name == "inbox" ? "M 4 13 L 7 5 L 17 5 L 20 13 L 20 19 L 4 19 Z M 4 13 L 9 13 L 10 15.5 L 14 15.5 L 15 13 L 20 13"
+        : "";
+}
+
+// An icon that can sit in a layout: the box takes the row height and the
+// glyph is centred in it.
+export component IconBox inherits Rectangle {
+    in property <string> name;
+    in property <color> tint: Theme.text;
+    in property <length> size: 16px;
+    in property <length> stroke: 2px;
+    width: size;
+    Icon {
+        name: root.name;
+        tint: root.tint;
+        size: root.size;
+        stroke-width: root.stroke;
+    }
+}

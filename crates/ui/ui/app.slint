@@ -1,0 +1,623 @@
+import "../../../assets/fonts/Inter-Regular.otf";
+import "../../../assets/fonts/Inter-Medium.otf";
+import "../../../assets/fonts/Inter-SemiBold.otf";
+import "../../../assets/fonts/Inter-Bold.otf";
+
+import { Theme, Look } from "theme.slint";
+import { Icon } from "icons.slint";
+import { Store, Editor, Actions, TaskItem } from "store.slint";
+import { Glass, Divider, VDivider, IconButton, Button, Segmented, Field, Scroll, SectionLabel, Toast } from "widgets.slint";
+import { MiniCalendar } from "calendar-bits.slint";
+import { MonthView } from "month.slint";
+import { TimeGrid } from "timegrid.slint";
+import { BoardView } from "board.slint";
+import { ListView } from "listview.slint";
+import { EditorPanel } from "editor.slint";
+import { SettingsPanel } from "settings.slint";
+import { TaskRow } from "rows.slint";
+import { OverlayWindow, OverlayPanel } from "overlay.slint";
+
+export { Store, Editor, Actions, Theme, Look, OverlayWindow }
+
+component Backdrop inherits Rectangle {
+    background: Theme.backdrop;
+    if Theme.glass: Rectangle {
+        // Soft light blooms behind the glass.
+        x: -parent.width * 0.2;
+        y: -parent.height * 0.3;
+        width: parent.width * 0.9;
+        height: parent.height * 0.9;
+        border-radius: self.width / 2;
+        background: @radial-gradient(circle, #8fd3c955 0%, #8fd3c900 70%);
+    }
+    if Theme.glass: Rectangle {
+        x: parent.width * 0.55;
+        y: parent.height * 0.45;
+        width: parent.width * 0.8;
+        height: parent.height * 0.8;
+        border-radius: self.width / 2;
+        background: @radial-gradient(circle, #0a84ff33 0%, #0a84ff00 70%);
+    }
+    if Theme.matte: Image {
+        width: parent.width;
+        height: parent.height;
+        source: Store.grain;
+        horizontal-tiling: repeat;
+        vertical-tiling: repeat;
+    }
+}
+
+component Logo inherits Rectangle {
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    background: @linear-gradient(145deg, #3a3a3e 0%, #0c0c0d 100%);
+    border-width: 1px;
+    border-color: #ffffff2e;
+    Rectangle {
+        y: 0;
+        height: 12px;
+        border-radius: 8px;
+        background: @linear-gradient(180deg, #ffffff30 0%, #ffffff00 100%);
+    }
+    Icon { name: "check"; size: 15px; tint: #0a84ff; stroke-width: 3px; }
+}
+
+component SyncDot inherits Rectangle {
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
+    background: Store.sync-state == 2 ? Theme.success : Store.sync-state == 1 ? Theme.warning : Store.sync-state == 0 ? Theme.text-3 : Theme.danger;
+}
+
+component ListRow inherits Rectangle {
+    in property <string> id;
+    in property <string> name;
+    in property <color> tint;
+    in property <bool> visible-list;
+    in property <int> count;
+    property <bool> renaming;
+    height: Store.mobile ? 40px : 28px;
+    border-radius: 7px;
+    background: ta.has-hover ? Theme.hover : transparent;
+    ta := TouchArea {
+        clicked => { Actions.toggle-list(root.id); }
+        double-clicked => { root.renaming = true; }
+    }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 4px;
+        spacing: 9px;
+        Rectangle {
+            y: (parent.height - self.height) / 2;
+            width: 14px;
+            height: 14px;
+            border-radius: 4px;
+            background: root.visible-list ? root.tint : transparent;
+            border-width: 1.5px;
+            border-color: root.tint;
+            if root.visible-list: Icon { name: "check"; size: 10px; tint: #ffffff; stroke-width: 3.5px; }
+        }
+        if !root.renaming: Text {
+            horizontal-stretch: 1;
+            text: root.name;
+            color: Theme.text;
+            font-size: Theme.fs-m;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        if root.renaming: Field {
+            y: (parent.height - self.height) / 2;
+            horizontal-stretch: 1;
+            text: root.name;
+            init => { self.focus-input(); }
+            accepted(t) => {
+                Actions.rename-list(root.id, t);
+                root.renaming = false;
+            }
+            escaped => { root.renaming = false; }
+        }
+        if ta.has-hover && !root.renaming: IconButton {
+            y: (parent.height - self.height) / 2;
+            icon: "layers";
+            size: 20px;
+            icon-size: 11px;
+            clicked => { Actions.recolor-list(root.id); }
+        }
+        if ta.has-hover && !root.renaming && Store.lists.length > 1: IconButton {
+            y: (parent.height - self.height) / 2;
+            icon: "trash";
+            size: 20px;
+            icon-size: 11px;
+            clicked => { Actions.delete-list(root.id); }
+        }
+        if !ta.has-hover && !root.renaming: Text {
+            text: root.count > 0 ? root.count : "";
+            color: Theme.text-3;
+            font-size: Theme.fs-s;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component Sidebar inherits Glass {
+    property <bool> adding;
+    fill: Theme.panel;
+    radius: 18px;
+    sheen: !Theme.matte;
+    VerticalLayout {
+        padding: 12px;
+        padding-top: 14px;
+        spacing: 12px;
+        HorizontalLayout {
+            spacing: 9px;
+            padding-left: 4px;
+            Logo { y: (parent.height - self.height) / 2; }
+            Text { text: "Patch"; font-size: Theme.fs-l; font-weight: 700; color: Theme.text; vertical-alignment: center; horizontal-stretch: 1; }
+            SyncDot { y: (parent.height - self.height) / 2; }
+            Rectangle { width: 4px; }
+        }
+        MiniCalendar {}
+        Divider {}
+        HorizontalLayout {
+            padding-left: 6px;
+            SectionLabel { text: "LISTS"; vertical-alignment: center; horizontal-stretch: 1; }
+            IconButton { icon: "plus"; size: 22px; icon-size: 12px; clicked => { root.adding = true; } }
+        }
+        VerticalLayout {
+            spacing: 1px;
+            for l in Store.lists: ListRow {
+                id: l.id;
+                name: l.name;
+                tint: l.color;
+                visible-list: l.visible;
+                count: l.count;
+            }
+            if root.adding: Field {
+                placeholder: "List name";
+                init => { self.focus-input(); }
+                accepted(t) => {
+                    if (t != "") {
+                        Actions.add-list(t);
+                    }
+                    root.adding = false;
+                }
+                escaped => { root.adding = false; }
+            }
+        }
+        Divider {}
+        HorizontalLayout {
+            padding-left: 6px;
+            SectionLabel { text: "UP NEXT"; }
+        }
+        next-scroll := Scroll {
+            vertical-stretch: 1;
+            content-height: next.preferred-height;
+            next := VerticalLayout {
+                width: next-scroll.width;
+                alignment: start;
+                spacing: 2px;
+                for it in Store.up-next: Rectangle {
+                    height: 42px;
+                    border-radius: 8px;
+                    background: nta.has-hover ? Theme.hover : transparent;
+                    nta := TouchArea { clicked => { Actions.open-task(it.id); } }
+                    Rectangle { x: 6px; y: 7px; width: 3px; height: parent.height - 14px; border-radius: 1.5px; background: it.color; }
+                    VerticalLayout {
+                        padding-left: 16px;
+                        padding-right: 6px;
+                        alignment: center;
+                        Text { text: it.title; color: Theme.text; font-size: Theme.fs-m; font-weight: 500; overflow: elide; }
+                        Text { text: it.when; color: it.overdue ? Theme.danger : Theme.text-2; font-size: Theme.fs-s; overflow: elide; }
+                    }
+                }
+                if Store.up-next.length == 0: Text {
+                    x: 8px;
+                    text: "Nothing coming up";
+                    color: Theme.text-3;
+                    font-size: Theme.fs-s;
+                }
+            }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            padding-left: 4px;
+            for c[i] in [#0b0b0c, #2a6a70, #f2f2f7]: Rectangle {
+                y: (parent.height - self.height) / 2;
+                width: 20px;
+                height: 20px;
+                border-radius: 10px;
+                background: c;
+                border-width: (i == 0 && Theme.matte) || (i == 1 && Theme.glass) || (i == 2 && Theme.light) ? 2px : 1px;
+                border-color: (i == 0 && Theme.matte) || (i == 1 && Theme.glass) || (i == 2 && Theme.light) ? Theme.accent : Theme.edge;
+                TouchArea { clicked => { Actions.set-look(i); } }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            IconButton { icon: "gear"; clicked => { Store.settings-open = true; } }
+        }
+    }
+}
+
+component SearchBox inherits Rectangle {
+    horizontal-stretch: 1;
+    min-width: 130px;
+    max-width: 220px;
+    height: 30px;
+    sf := Field {
+        width: parent.width;
+        icon: "search";
+        placeholder: "Search";
+        edited(t) => {
+            Actions.search(t);
+            Store.search-open = t != "";
+        }
+        escaped => {
+            self.text = "";
+            Actions.search("");
+            Store.search-open = false;
+        }
+    }
+    public function focus-box() {
+        sf.focus-input();
+    }
+}
+
+component Toolbar inherits HorizontalLayout {
+    height: 50px;
+    padding-left: 12px;
+    padding-right: 12px;
+    spacing: 6px;
+    IconButton { y: (parent.height - self.height) / 2; icon: "sidebar"; active: Store.sidebar-open; clicked => { Store.sidebar-open = !Store.sidebar-open; } }
+    IconButton { y: (parent.height - self.height) / 2; icon: "plus"; clicked => { Actions.new-task(Store.selected, -2); } }
+    Rectangle { width: 6px; }
+    if root.width > 900px: Field {
+        y: (parent.height - self.height) / 2;
+        horizontal-stretch: 1;
+        min-width: 160px;
+        max-width: 300px;
+        icon: "inbox";
+        placeholder: "Quick add — “Lunch with Sam fri 1pm #work”";
+        accepted(t) => {
+            if (t != "") {
+                Actions.quick-add(t);
+            }
+            self.text = "";
+        }
+    }
+    Rectangle { horizontal-stretch: 1; }
+    Segmented {
+        y: (parent.height - self.height) / 2;
+        items: ["Day", "Week", "Month", "Board", "List"];
+        current: Store.view;
+        picked(i) => { Actions.set-view(i); }
+    }
+    Rectangle { horizontal-stretch: 1; }
+    search := SearchBox { y: (parent.height - self.height) / 2; }
+    IconButton { y: (parent.height - self.height) / 2; icon: "gear"; clicked => { Store.settings-open = true; } }
+    public function focus-search-box() {
+        search.focus-box();
+    }
+}
+
+component Header inherits HorizontalLayout {
+    height: Store.mobile ? 54px : 58px;
+    padding-left: Store.mobile ? 18px : 22px;
+    padding-right: Store.mobile ? 12px : 18px;
+    spacing: 8px;
+    HorizontalLayout {
+        spacing: 8px;
+        Text { text: Store.title-main; font-size: Theme.fs-title; font-weight: 700; color: Theme.text; vertical-alignment: center; }
+        Text { text: Store.title-sub; font-size: Theme.fs-title; font-weight: 400; color: Theme.text-2; vertical-alignment: center; }
+    }
+    if Store.caption != "" && !Store.mobile: Text {
+        text: Store.caption;
+        font-size: Theme.fs-m;
+        color: Theme.text-3;
+        vertical-alignment: center;
+    }
+    Rectangle { horizontal-stretch: 1; }
+    if Store.view <= 2: HorizontalLayout {
+        horizontal-stretch: 0;
+        alignment: end;
+        spacing: 2px;
+        IconButton { y: (parent.height - self.height) / 2; icon: "chevron-left"; clicked => { Actions.nav(-1); } }
+        Button { y: (parent.height - self.height) / 2; text: "Today"; kind: 0; pad: 12px; clicked => { Actions.go-today(); } }
+        IconButton { y: (parent.height - self.height) / 2; icon: "chevron-right"; clicked => { Actions.nav(1); } }
+    }
+}
+
+component Content inherits Rectangle {
+    if Store.view == 0 || Store.view == 1: TimeGrid { width: parent.width; height: parent.height; }
+    if Store.view == 2: MonthView { width: parent.width; height: parent.height; }
+    if Store.view == 3: BoardView { width: parent.width; height: parent.height; }
+    if Store.view == 4: ListView { width: parent.width; height: parent.height; }
+}
+
+component SearchResults inherits Glass {
+    fill: Theme.float;
+    elevated: true;
+    radius: 14px;
+    height: Math.min(360px, list.preferred-height + 16px);
+    results-scroll := Scroll {
+        y: 8px;
+        height: parent.height - 16px;
+        content-height: list.preferred-height;
+        list := VerticalLayout {
+            width: results-scroll.width;
+            alignment: start;
+            padding-left: 6px;
+            padding-right: 6px;
+            for it in Store.results: TaskRow {
+                item: it;
+                opened(id) => {
+                    Store.search-open = false;
+                    Actions.open-task(id);
+                }
+            }
+            if Store.results.length == 0: Text {
+                height: 40px;
+                text: "No matches";
+                color: Theme.text-3;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+component DesktopShell inherits Rectangle {
+    callback focus-search();
+    property <length> gap: 10px;
+    property <length> side-w: Store.sidebar-open && self.width > 760px ? 248px : 0px;
+    property <length> inspector-w: Store.editor-open ? 360px : 0px;
+
+    if root.side-w > 0: Sidebar {
+        x: root.gap;
+        y: root.gap;
+        width: root.side-w;
+        height: parent.height - 2 * root.gap;
+    }
+    main := Glass {
+        x: root.side-w > 0 ? root.side-w + 2 * root.gap : root.gap;
+        y: root.gap;
+        width: parent.width - self.x - root.gap - (root.inspector-w > 0 ? root.inspector-w + root.gap : 0px);
+        height: parent.height - 2 * root.gap;
+        radius: 18px;
+        fill: Theme.light ? #ffffffcc : Theme.glass ? #ffffff12 : #0e0e10;
+        sheen: !Theme.matte;
+        clip: true;
+        VerticalLayout {
+            tb := Toolbar {}
+            Divider {}
+            Header {}
+            Content { vertical-stretch: 1; }
+        }
+        if Store.search-open: SearchResults {
+            x: parent.width - self.width - 48px;
+            y: 46px;
+            width: 340px;
+        }
+    }
+    if root.inspector-w > 0: Glass {
+        x: parent.width - root.inspector-w - root.gap;
+        y: root.gap;
+        width: root.inspector-w;
+        height: parent.height - 2 * root.gap;
+        radius: 18px;
+        fill: Theme.float;
+        elevated: true;
+        clip: true;
+        EditorPanel {}
+    }
+    if Store.settings-open: Rectangle {
+        background: #00000066;
+        TouchArea { clicked => { Store.settings-open = false; } }
+        Glass {
+            width: Math.min(620px, parent.width - 40px);
+            height: Math.min(760px, parent.height - 40px);
+            radius: 22px;
+            fill: Theme.light ? #f5f5f7f5 : Theme.glass ? #1f5a63f2 : #111113f7;
+            elevated: true;
+            clip: true;
+            TouchArea {}
+            SettingsPanel {}
+        }
+    }
+    public function focus-search-box() {
+        tb.focus-search-box();
+    }
+}
+
+component MobileShell inherits Rectangle {
+    property <bool> searching;
+    VerticalLayout {
+        Rectangle { height: Store.safe-top; }
+        HorizontalLayout {
+            height: 56px;
+            padding-left: 18px;
+            padding-right: 10px;
+            spacing: 4px;
+            HorizontalLayout {
+                spacing: 7px;
+                Text { text: Store.title-main; font-size: 26px; font-weight: 700; color: Theme.text; vertical-alignment: center; }
+                Text { text: Store.title-sub; font-size: 26px; font-weight: 400; color: Theme.text-2; vertical-alignment: center; }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            if Store.view <= 2: Button { y: (parent.height - self.height) / 2; text: "Today"; kind: 0; pad: 12px; clicked => { Actions.go-today(); } }
+            IconButton { y: (parent.height - self.height) / 2; size: 38px; icon-size: 18px; icon: "search"; active: root.searching; clicked => { root.searching = !root.searching; } }
+            IconButton { y: (parent.height - self.height) / 2; size: 38px; icon-size: 18px; icon: "gear"; clicked => { Store.settings-open = true; } }
+        }
+        if root.searching: HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            padding-bottom: 8px;
+            Field {
+                icon: "search";
+                placeholder: "Search tasks";
+                init => { self.focus-input(); }
+                edited(t) => { Actions.search(t); }
+            }
+        }
+        HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            padding-bottom: 8px;
+            Segmented {
+                items: ["Day", "Week", "Month", "Board", "List"];
+                current: Store.view;
+                stretch: true;
+                picked(i) => { Actions.set-view(i); }
+            }
+        }
+        if root.searching: res-scroll := Scroll {
+            vertical-stretch: 1;
+            content-height: res.preferred-height;
+            res := VerticalLayout {
+                width: res-scroll.width;
+                alignment: start;
+                padding: 8px;
+                for it in Store.results: TaskRow { item: it; opened(id) => { root.searching = false; Actions.open-task(id); } }
+            }
+        }
+        if !root.searching: Rectangle {
+            vertical-stretch: 1;
+            Content { width: parent.width; height: parent.height; }
+            // Week/month swipe
+        }
+    }
+
+    // Bottom quick-add dock
+    dock := Glass {
+        x: 12px;
+        y: parent.height - self.height - 12px - Store.safe-bottom;
+        width: parent.width - 24px;
+        height: 60px;
+        radius: 30px;
+        fill: Theme.light ? #ffffffeb : Theme.glass ? #2a6a70e6 : #18181bf2;
+        HorizontalLayout {
+            padding: 8px;
+            padding-left: 18px;
+            spacing: 8px;
+            Field {
+                y: (parent.height - self.height) / 2;
+                horizontal-stretch: 1;
+                boxed: false;
+                placeholder: "Add a task… “Gym tmrw 7am”";
+                accepted(t) => {
+                    if (t != "") {
+                        Actions.quick-add(t);
+                    }
+                    self.text = "";
+                }
+            }
+            Rectangle {
+                width: 44px;
+                height: 44px;
+                border-radius: 22px;
+                background: Theme.accent;
+                Icon { name: "plus"; size: 20px; tint: #ffffff; stroke-width: 2.6px; }
+                TouchArea { clicked => { Actions.new-task(Store.selected, -2); } }
+            }
+        }
+    }
+
+    if Store.editor-open: Rectangle {
+        background: Theme.light ? #f2f2f7 : Theme.glass ? #1d555e : #0b0b0c;
+        TouchArea {}
+        VerticalLayout {
+            Rectangle { height: Store.safe-top; }
+            EditorPanel { vertical-stretch: 1; }
+            Rectangle { height: Store.safe-bottom; }
+        }
+    }
+    if Store.settings-open: Rectangle {
+        background: Theme.light ? #f2f2f7 : Theme.glass ? #1d555e : #0b0b0c;
+        TouchArea {}
+        VerticalLayout {
+            Rectangle { height: Store.safe-top; }
+            SettingsPanel { vertical-stretch: 1; }
+            Rectangle { height: Store.safe-bottom; }
+        }
+    }
+}
+
+export component MainWindow inherits Window {
+    title: "Patch";
+    icon: Store.app-icon;
+    default-font-family: "Inter";
+    preferred-width: 1320px;
+    preferred-height: 840px;
+    min-width: 360px;
+    min-height: 520px;
+    background: Theme.light ? #f2f2f7 : Theme.glass ? #1d555e : #0b0b0c;
+
+    public function refocus() {
+        keys.focus();
+    }
+
+    keys := FocusScope {
+        key-pressed(e) => {
+            if (e.text == Key.Escape) {
+                if (Store.settings-open) {
+                    Store.settings-open = false;
+                    return accept;
+                }
+                if (Store.editor-open) {
+                    Actions.editor-close();
+                    return accept;
+                }
+                if (Store.search-open) {
+                    Store.search-open = false;
+                    return accept;
+                }
+                return reject;
+            }
+            if (e.modifiers.control || e.modifiers.meta) {
+                if (e.text == "f") {
+                    desktop.focus-search-box();
+                    return accept;
+                }
+                if (e.text == ",") {
+                    Store.settings-open = true;
+                    return accept;
+                }
+                if (e.text == "n") {
+                    Actions.new-task(Store.selected, -2);
+                    return accept;
+                }
+                return reject;
+            }
+            if (Store.editor-open || Store.settings-open) {
+                return reject;
+            }
+            if (e.text == Key.LeftArrow) { Actions.nav(-1); return accept; }
+            if (e.text == Key.RightArrow) { Actions.nav(1); return accept; }
+            if (e.text == "t") { Actions.go-today(); return accept; }
+            if (e.text == "n") { Actions.new-task(Store.selected, -2); return accept; }
+            if (e.text == "d" || e.text == "1") { Actions.set-view(0); return accept; }
+            if (e.text == "w" || e.text == "2") { Actions.set-view(1); return accept; }
+            if (e.text == "m" || e.text == "3") { Actions.set-view(2); return accept; }
+            if (e.text == "b" || e.text == "4") { Actions.set-view(3); return accept; }
+            if (e.text == "l" || e.text == "5") { Actions.set-view(4); return accept; }
+            if (e.text == "/") { desktop.focus-search-box(); return accept; }
+            reject
+        }
+
+        Backdrop { width: parent.width; height: parent.height; }
+        desktop := DesktopShell {
+            visible: !Store.mobile;
+            width: parent.width;
+            height: parent.height;
+        }
+        if Store.mobile: MobileShell {
+            width: parent.width;
+            height: parent.height;
+        }
+        Toast {
+            x: (parent.width - self.width) / 2;
+            y: parent.height - self.height - (Store.mobile ? 90px + Store.safe-bottom : 28px);
+            text: Store.toast;
+        }
+    }
+    init => { keys.focus(); }
+}

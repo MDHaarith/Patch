@@ -1,0 +1,258 @@
+import { Theme } from "theme.slint";
+import { Icon, IconBox } from "icons.slint";
+import { Store, Editor, Actions, Choice } from "store.slint";
+import { Glass, Field, Toggle, Check, Segmented, IconButton, Button, Scroll, SectionLabel, Divider } from "widgets.slint";
+import { RangePicker } from "calendar-bits.slint";
+
+// Chips laid out in a fixed number of equal columns.
+component ChoiceGrid inherits Rectangle {
+    in property <[Choice]> choices;
+    in property <[string]> labels;
+    in property <int> current;
+    in property <int> cols: 3;
+    callback picked(int);
+    property <int> n: choices.length > 0 ? choices.length : labels.length;
+    property <length> h: Store.mobile ? 34px : 28px;
+    property <length> gap: 6px;
+    property <length> w: (self.width - (cols - 1) * gap) / cols;
+    height: Math.ceil(n / cols) * (h + gap) - gap;
+    for i in root.n: Rectangle {
+        x: Math.mod(i, root.cols) * (root.w + root.gap);
+        y: Math.floor(i / root.cols) * (root.h + root.gap);
+        width: root.w;
+        height: root.h;
+        border-radius: 8px;
+        background: i == root.current ? Theme.accent-soft : ta.has-hover ? Theme.hover : Theme.well;
+        border-width: 1px;
+        border-color: i == root.current ? Theme.accent.with-alpha(0.7) : Theme.hairline;
+        HorizontalLayout {
+            padding-left: 9px;
+            padding-right: 6px;
+            spacing: 6px;
+            if i < root.choices.length && root.choices[i].color != transparent: Rectangle {
+                y: (parent.height - self.height) / 2;
+                width: 9px;
+                height: 9px;
+                border-radius: 4.5px;
+                background: root.choices[i].color;
+            }
+            Text {
+                horizontal-stretch: 1;
+                text: i < root.choices.length ? root.choices[i].label : root.labels[i];
+                font-size: Store.mobile ? Theme.fs-m : Theme.fs-s;
+                font-weight: i == root.current ? 600 : 500;
+                color: i == root.current ? Theme.accent : Theme.text;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+        ta := TouchArea { clicked => { root.picked(i); } }
+    }
+}
+
+component Group inherits VerticalLayout {
+    in property <string> title;
+    in property <string> icon;
+    spacing: 8px;
+    HorizontalLayout {
+        spacing: 6px;
+        if root.icon != "": IconBox { name: root.icon; size: 12px; tint: Theme.text-2; }
+        SectionLabel { text: root.title; }
+    }
+    @children
+}
+
+export component EditorPanel inherits Rectangle {
+    callback close();
+    VerticalLayout {
+        HorizontalLayout {
+            padding: 12px;
+            padding-left: 14px;
+            spacing: 8px;
+            height: Store.mobile ? 60px : 52px;
+            IconButton {
+                y: (parent.height - self.height) / 2;
+                icon: "close";
+                clicked => { Actions.editor-close(); }
+            }
+            Text {
+                horizontal-stretch: 1;
+                text: Editor.is-new ? "New task" : "Task";
+                font-size: Theme.fs-l;
+                font-weight: 700;
+                color: Theme.text;
+                vertical-alignment: center;
+            }
+            Button {
+                y: (parent.height - self.height) / 2;
+                text: Editor.is-new ? "Add" : "Done";
+                kind: 1;
+                enabled: Editor.title != "";
+                clicked => { Actions.editor-save(); }
+            }
+        }
+        Divider {}
+        scroll := Scroll {
+            vertical-stretch: 1;
+            content-height: body.preferred-height;
+            body := VerticalLayout {
+                width: scroll.width;
+                alignment: start;
+                padding: 16px;
+                padding-bottom: 40px;
+                spacing: 18px;
+
+                title-field := Field {
+                    text <=> Editor.title;
+                    placeholder: "What needs doing?";
+                    font-size: 18px;
+                    font-weight: 600;
+                    init => {
+                        if (Editor.is-new && !Store.mobile) {
+                            self.focus-input();
+                        }
+                    }
+                    accepted => { Actions.editor-save(); }
+                }
+
+                Group {
+                    title: "LIST";
+                    ChoiceGrid {
+                        choices: Editor.lists;
+                        current: Editor.list-index;
+                        cols: 2;
+                        picked(i) => { Editor.list-index = i; }
+                    }
+                }
+
+                Group {
+                    title: "STATUS";
+                    ChoiceGrid {
+                        choices: Editor.columns;
+                        current: Editor.column-index;
+                        cols: 3;
+                        picked(i) => { Editor.column-index = i; }
+                    }
+                }
+
+                Group {
+                    title: "PRIORITY";
+                    Segmented {
+                        items: ["None", "Low", "Medium", "High"];
+                        current: Editor.priority;
+                        stretch: true;
+                        picked(i) => { Editor.priority = i; }
+                    }
+                }
+
+                Group {
+                    title: "SCHEDULE";
+                    icon: "calendar";
+                    HorizontalLayout {
+                        Text { text: "Date & time"; color: Theme.text; font-size: Theme.fs-m; vertical-alignment: center; horizontal-stretch: 1; }
+                        Toggle {
+                            checked <=> Editor.scheduled;
+                            toggled => { Actions.editor-changed(); }
+                        }
+                    }
+                    if Editor.scheduled: HorizontalLayout {
+                        Text { text: "All-day"; color: Theme.text; font-size: Theme.fs-m; vertical-alignment: center; horizontal-stretch: 1; }
+                        Toggle {
+                            checked <=> Editor.all-day;
+                            toggled => { Actions.editor-changed(); }
+                        }
+                    }
+                    if Editor.scheduled: RangePicker {
+                        confirmed => { Actions.editor-changed(); }
+                    }
+                    if Editor.scheduled: Text {
+                        text: Editor.range-label;
+                        color: Theme.text-2;
+                        font-size: Theme.fs-s;
+                        wrap: word-wrap;
+                    }
+                }
+
+                if Editor.scheduled: Group {
+                    title: "REPEAT";
+                    icon: "repeat";
+                    ChoiceGrid {
+                        labels: Editor.repeats;
+                        current: Editor.repeat-index;
+                        cols: 3;
+                        picked(i) => { Editor.repeat-index = i; }
+                    }
+                }
+
+                if Editor.scheduled: Group {
+                    title: "ALERT";
+                    icon: "bell";
+                    ChoiceGrid {
+                        labels: Editor.reminders;
+                        current: Editor.reminder-index;
+                        cols: 3;
+                        picked(i) => { Editor.reminder-index = i; }
+                    }
+                }
+
+                Group {
+                    title: "CHECKLIST";
+                    icon: "checklist";
+                    for row[i] in Editor.checklist: HorizontalLayout {
+                        spacing: 10px;
+                        height: Store.mobile ? 40px : 30px;
+                        Check {
+                            y: (parent.height - self.height) / 2;
+                            checked: row.done;
+                            size: 16px;
+                            toggled => { Actions.check-toggle(i); }
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: row.text;
+                            color: row.done ? Theme.text-3 : Theme.text;
+                            font-size: Theme.fs-m;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        IconButton {
+                            y: (parent.height - self.height) / 2;
+                            icon: "close";
+                            size: 22px;
+                            icon-size: 11px;
+                            clicked => { Actions.check-remove(i); }
+                        }
+                    }
+                    Field {
+                        icon: "plus";
+                        placeholder: "Add an item";
+                        accepted(t) => {
+                            if (t != "") {
+                                Actions.check-add(t);
+                            }
+                            self.text = "";
+                        }
+                    }
+                }
+
+                Group {
+                    title: "NOTES";
+                    icon: "note";
+                    Field {
+                        text <=> Editor.notes;
+                        multiline: true;
+                        min-height: 96px;
+                        placeholder: "Notes, links, details…";
+                    }
+                }
+
+                if !Editor.is-new: Button {
+                    text: "Delete task";
+                    icon: "trash";
+                    kind: 2;
+                    clicked => { Actions.editor-delete(); }
+                }
+            }
+        }
+    }
+}

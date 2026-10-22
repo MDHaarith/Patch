@@ -1,0 +1,70 @@
+import { Theme } from "theme.slint";
+import { Icon, IconBox } from "icons.slint";
+import { Store, Actions, TaskItem } from "store.slint";
+import { Check, Priority } from "widgets.slint";
+
+// One task in a list: completion circle, title, when · list, flags.
+export component TaskRow inherits Rectangle {
+    in property <TaskItem> item;
+    in property <bool> dense: false;
+    callback opened(string);
+    height: dense ? (Store.mobile ? 48px : 38px) : (Store.mobile ? 58px : 46px);
+    border-radius: Theme.r-m;
+    background: ta.pressed ? Theme.press : ta.has-hover ? Theme.hover : transparent;
+    animate background { duration: 100ms; }
+    ta := TouchArea {
+        clicked => { root.opened(root.item.id); }
+    }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 11px;
+        Check {
+            y: (parent.height - self.height) / 2;
+            checked: root.item.done;
+            tint: root.item.color;
+            toggled => { Actions.toggle-done(root.item.id); }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            HorizontalLayout {
+                spacing: 6px;
+                Text {
+                    horizontal-stretch: 1;
+                    text: root.item.title;
+                    font-size: Store.mobile ? Theme.fs-l : Theme.fs-m;
+                    font-weight: 500;
+                    color: root.item.done ? Theme.text-3 : Theme.text;
+                    overflow: elide;
+                }
+                Priority { level: root.item.done ? 0 : root.item.priority; }
+            }
+            if !root.dense || root.item.when != "": HorizontalLayout {
+                spacing: 5px;
+                if root.item.repeat: IconBox { name: "repeat"; size: 11px; tint: Theme.text-2; }
+                Text {
+                    horizontal-stretch: 0;
+                    text: root.item.when;
+                    font-size: Theme.fs-s;
+                    color: root.item.overdue ? Theme.danger : Theme.text-2;
+                    overflow: elide;
+                }
+                if root.item.check-total > 0: Text {
+                    horizontal-stretch: 0;
+                    text: "· \{root.item.check-done}/\{root.item.check-total}";
+                    font-size: Theme.fs-s;
+                    color: Theme.text-2;
+                }
+                if root.dense: Rectangle { horizontal-stretch: 1; }
+                if !root.dense: Text {
+                    horizontal-stretch: 1;
+                    text: root.item.when == "" ? root.item.list-name : "· \{root.item.list-name}";
+                    font-size: Theme.fs-s;
+                    color: Theme.text-3;
+                    overflow: elide;
+                }
+            }
+        }
+    }
+}

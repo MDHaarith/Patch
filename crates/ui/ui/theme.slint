@@ -1,0 +1,67 @@
+// Design tokens for the three looks from the reference: Matte Black (the
+// default), Liquid Glass and Light.
+
+export enum Look { matte, glass, light }
+
+export global Theme {
+    in-out property <Look> look: Look.matte;
+    in-out property <bool> compact: false;
+
+    out property <bool> light: look == Look.light;
+    out property <bool> glass: look == Look.glass;
+    out property <bool> matte: look == Look.matte;
+
+    // Window backdrop.
+    out property <brush> backdrop: light
+        ? @linear-gradient(180deg, #f5f5f7 0%, #ececf0 100%)
+        : glass
+            ? @linear-gradient(160deg, #4b8d88 0%, #2a6a70 38%, #154a5d 72%, #0d3346 100%)
+            : @linear-gradient(180deg, #0b0b0c 0%, #060607 100%);
+
+    // Panels: sidebar, cards, the calendar body.
+    out property <color> panel: light ? #ffffffd9 : glass ? #ffffff1c : #121214;
+    out property <color> panel-strong: light ? #ffffff : glass ? #ffffff29 : #18181b;
+    // Floating glass: popovers, sheets, the overlay panel.
+    out property <color> float: light ? #fbfbfdf0 : glass ? #2a6a70d9 : #161618f2;
+    out property <color> well: light ? #0000000a : glass ? #ffffff14 : #ffffff0a;
+    out property <color> hairline: light ? #0000001a : glass ? #ffffff38 : #ffffff12;
+    out property <color> edge: light ? #00000014 : glass ? #ffffff59 : #ffffff1f;
+    // Specular highlight along the top edge of glass.
+    out property <brush> sheen: light
+        ? @linear-gradient(180deg, #ffffff 0%, #ffffff00 100%)
+        : glass
+            ? @linear-gradient(180deg, #ffffff40 0%, #ffffff00 55%)
+            : @linear-gradient(180deg, #ffffff12 0%, #ffffff00 45%);
+    out property <color> shadow: light ? #0000001f : #00000099;
+
+    out property <color> text: light ? #1d1d1f : #f5f5f7;
+    out property <color> text-2: light ? #6e6e73 : glass ? #ffffffbf : #9a9aa1;
+    out property <color> text-3: light ? #aeaeb2 : glass ? #ffffff70 : #56565c;
+    out property <color> on-accent: #ffffff;
+
+    out property <color> accent: light ? #007aff : #0a84ff;
+    out property <color> accent-soft: light ? #007aff1f : #0a84ff33;
+    out property <color> today: light ? #ff3b30 : #ff453a;
+    out property <color> danger: light ? #ff3b30 : #ff453a;
+    out property <color> success: light ? #34c759 : #30d158;
+    out property <color> warning: light ? #ff9500 : #ff9f0a;
+
+    out property <color> hover: light ? #0000000d : #ffffff0f;
+    out property <color> press: light ? #0000001a : #ffffff1a;
+    // The grey band between the ends of a selected date range.
+    out property <color> range: light ? #e3e3e8 : glass ? #ffffff38 : #3a3a3d;
+    out property <color> chip: light ? #e9e9ee : glass ? #ffffff2e : #2c2c2f;
+    out property <color> weekend: light ? #00000005 : #ffffff04;
+
+    out property <length> r-s: 6px;
+    out property <length> r-m: 10px;
+    out property <length> r-l: 16px;
+    out property <length> r-xl: 26px;
+
+    out property <length> fs-xs: 11px;
+    out property <length> fs-s: 12px;
+    out property <length> fs-m: 13px;
+    out property <length> fs-l: 15px;
+    out property <length> fs-xl: 22px;
+    out property <length> fs-title: compact ? 26px : 28px;
+}

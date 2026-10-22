@@ -1,0 +1,298 @@
+import { Theme } from "theme.slint";
+import { Icon, IconBox } from "icons.slint";
+import { Store, Editor, Actions, DayCell } from "store.slint";
+import { IconButton } from "widgets.slint";
+
+// Sidebar month: today in red, selection in blue, dots for busy days.
+export component MiniCalendar inherits VerticalLayout {
+    spacing: 4px;
+    HorizontalLayout {
+        padding-left: 6px;
+        Text {
+            text: Store.mini-title;
+            font-size: Theme.fs-m;
+            font-weight: 650;
+            color: Theme.text;
+            vertical-alignment: center;
+        }
+        Rectangle { horizontal-stretch: 1; }
+        IconButton { icon: "chevron-left"; size: 24px; icon-size: 12px; clicked => { Actions.mini-nav(-1); } }
+        IconButton { icon: "chevron-right"; size: 24px; icon-size: 12px; clicked => { Actions.mini-nav(1); } }
+    }
+    heads := Rectangle {
+        height: 14px;
+        for d[i] in Store.weekdays: Text {
+            x: i * heads.width / 7;
+            width: heads.width / 7;
+            text: d;
+            horizontal-alignment: center;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: Theme.text-3;
+        }
+    }
+    grid := Rectangle {
+        height: 6 * 28px;
+        for cell[i] in Store.mini-cells: Rectangle {
+            x: Math.mod(i, 7) * (grid.width / 7);
+            y: Math.floor(i / 7) * 28px;
+            width: grid.width / 7;
+            height: 28px;
+            Rectangle {
+                width: 24px;
+                height: 24px;
+                border-radius: 12px;
+                background: cell.today ? Theme.today : cell.selected ? Theme.accent : cta.has-hover ? Theme.hover : transparent;
+                Text {
+                    text: cell.day;
+                    font-size: Theme.fs-s;
+                    font-weight: cell.today || cell.selected ? 700 : 500;
+                    color: cell.today || cell.selected ? #ffffff : cell.in-month ? (cell.weekend ? Theme.text-2 : Theme.text) : Theme.text-3;
+                }
+            }
+            if cell.dots.length > 0 && !cell.today && !cell.selected: Rectangle {
+                y: parent.height - 4px;
+                width: 3px;
+                height: 3px;
+                border-radius: 1.5px;
+                background: cell.dots[0];
+            }
+            cta := TouchArea {
+                clicked => { Actions.select-date(cell.key); }
+            }
+        }
+    }
+}
+
+component TimeChip inherits Rectangle {
+    in property <int> minutes;
+    in property <bool> active;
+    callback clicked();
+    function two(n: int) -> string {
+        return n < 10 ? "0\{n}" : "\{n}";
+    }
+    function label(m: int) -> string {
+        if (Store.time-24h) {
+            return "\{two(Math.floor(m / 60))}:\{two(Math.mod(m, 60))}";
+        }
+        return "\{Math.mod(Math.floor(m / 60) + 11, 12) + 1}:\{two(Math.mod(m, 60))} \{m < 720 ? "AM" : "PM"}";
+    }
+    height: Store.mobile ? 30px : 24px;
+    width: t.preferred-width + 18px;
+    border-radius: 6px;
+    background: active ? Theme.accent-soft : Theme.chip;
+    border-width: active ? 1px : 0px;
+    border-color: Theme.accent;
+    t := Text {
+        text: root.label(root.minutes);
+        font-size: Theme.fs-m;
+        font-weight: 500;
+        color: root.active ? Theme.accent : Theme.text;
+    }
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+component Stepper inherits HorizontalLayout {
+    in property <string> text;
+    callback step(int);
+    spacing: 2px;
+    IconButton { icon: "chevron-left"; size: 26px; icon-size: 12px; clicked => { root.step(-1); } }
+    Text {
+        min-width: 30px;
+        text: root.text;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-size: Theme.fs-l;
+        font-weight: 600;
+        color: Theme.text;
+    }
+    IconButton { icon: "chevron-right"; size: 26px; icon-size: 12px; clicked => { root.step(1); } }
+}
+
+// The date range picker from the reference design: month grid with a
+// highlighted range, a time row, Reset and a round confirm button.
+export component RangePicker inherits Rectangle {
+    in property <bool> show-footer: true;
+    callback confirmed();
+    property <int> editing: 0; // 0 none, 1 start time, 2 end time
+    property <length> cell-h: Store.mobile ? 38px : 30px;
+    function two(n: int) -> string {
+        return n < 10 ? "0\{n}" : "\{n}";
+    }
+    function bump(which: int, delta: int) {
+        if (which == 1) {
+            Editor.start-min = Math.mod(Editor.start-min + delta + 1440, 1440);
+            if (Editor.start-key == Editor.end-key && Editor.end-min <= Editor.start-min) {
+                Editor.end-min = Math.min(Editor.start-min + 60, 1439);
+            }
+        } else {
+            Editor.end-min = Math.mod(Editor.end-min + delta + 1440, 1440);
+        }
+        Actions.editor-changed();
+    }
+
+    border-radius: Theme.r-xl;
+    background: Theme.glass ? #ffffff1f : Theme.light ? #ffffff : #1c1c1e;
+    border-width: 1px;
+    border-color: Theme.edge;
+    drop-shadow-blur: Theme.light ? 18px : 24px;
+    drop-shadow-offset-y: 6px;
+    drop-shadow-color: Theme.light ? #0000001c : #00000080;
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: 70px;
+        border-radius: Theme.r-xl;
+        background: Theme.sheen;
+    }
+
+    VerticalLayout {
+        padding: Store.mobile ? 18px : 16px;
+        padding-top: 14px;
+        spacing: 6px;
+
+        HorizontalLayout {
+            spacing: 2px;
+            Text {
+                text: Editor.picker-title;
+                font-size: Theme.fs-m;
+                font-weight: 700;
+                color: Theme.text;
+                vertical-alignment: center;
+            }
+            IconBox { name: "chevron-right"; size: 12px; tint: Theme.accent; stroke: 3px; }
+            Rectangle { horizontal-stretch: 1; }
+            IconButton { icon: "chevron-left"; size: 28px; icon-size: 14px; tint: Theme.accent; clicked => { Actions.picker-nav(-1); } }
+            IconButton { icon: "chevron-right"; size: 28px; icon-size: 14px; tint: Theme.accent; clicked => { Actions.picker-nav(1); } }
+        }
+
+        heads := Rectangle {
+            height: 16px;
+            for d[i] in Store.weekdays: Text {
+                x: i * heads.width / 7;
+                width: heads.width / 7;
+                text: d;
+                horizontal-alignment: center;
+                font-size: 10px;
+                font-weight: 600;
+                color: Theme.text-2;
+            }
+        }
+
+        days := Rectangle {
+            height: (Editor.picker-cells.length / 7) * root.cell-h;
+            for cell[i] in Editor.picker-cells: day-cell := Rectangle {
+                property <bool> ends: cell.range-start || cell.range-end;
+                property <bool> single: cell.range-start && cell.range-end;
+                x: Math.mod(i, 7) * (days.width / 7);
+                y: Math.floor(i / 7) * root.cell-h;
+                width: days.width / 7;
+                height: root.cell-h;
+                // Range band
+                if (cell.in-range || (self.ends && !self.single)) && cell.in-month: Rectangle {
+                    x: cell.range-start ? parent.width / 2 : 0;
+                    width: cell.range-start || cell.range-end ? parent.width / 2 : parent.width;
+                    y: (parent.height - self.height) / 2;
+                    height: root.cell-h - 6px;
+                    background: Theme.range;
+                }
+                Rectangle {
+                    width: root.cell-h - 6px;
+                    height: root.cell-h - 6px;
+                    border-radius: self.width / 2;
+                    background: parent.ends && cell.in-month ? Theme.accent : pta.has-hover && cell.in-month ? Theme.hover : transparent;
+                    border-width: cell.today && !parent.ends ? 1px : 0px;
+                    border-color: Theme.today;
+                    Text {
+                        text: cell.in-month ? cell.day : "";
+                        font-size: Store.mobile ? Theme.fs-l : Theme.fs-m;
+                        font-weight: day-cell.ends ? 700 : 500;
+                        color: day-cell.ends ? #ffffff : cell.today ? Theme.today : Theme.text;
+                    }
+                }
+                pta := TouchArea {
+                    enabled: cell.in-month;
+                    clicked => { Actions.picker-tap(cell.key); }
+                }
+            }
+        }
+
+        if !Editor.all-day: HorizontalLayout {
+            padding-top: 4px;
+            spacing: 6px;
+            Text {
+                text: "Time";
+                font-size: Theme.fs-m;
+                font-weight: 600;
+                color: Theme.text;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            TimeChip {
+                minutes: Editor.start-min;
+                active: root.editing == 1;
+                clicked => { root.editing = root.editing == 1 ? 0 : 1; }
+            }
+            Text { text: "–"; color: Theme.text-2; vertical-alignment: center; }
+            TimeChip {
+                minutes: Editor.end-min;
+                active: root.editing == 2;
+                clicked => { root.editing = root.editing == 2 ? 0 : 2; }
+            }
+        }
+
+        if root.editing != 0 && !Editor.all-day: HorizontalLayout {
+            alignment: end;
+            spacing: 4px;
+            property <int> m: root.editing == 1 ? Editor.start-min : Editor.end-min;
+            Stepper {
+                text: root.two(Math.floor(parent.m / 60));
+                step(d) => { root.bump(root.editing, d * 60); }
+            }
+            Text { text: ":"; font-weight: 700; color: Theme.text; vertical-alignment: center; }
+            Stepper {
+                text: root.two(Math.mod(parent.m, 60));
+                step(d) => { root.bump(root.editing, d * 5); }
+            }
+        }
+
+        if root.show-footer: HorizontalLayout {
+            padding-top: 6px;
+            Rectangle {
+                width: rt.preferred-width + 24px;
+                height: Store.mobile ? 34px : 28px;
+                border-radius: self.height / 2;
+                background: rta.pressed ? Theme.press : Theme.chip;
+                rt := Text {
+                    text: "Reset";
+                    font-size: Theme.fs-m;
+                    font-weight: 500;
+                    color: Theme.text;
+                }
+                rta := TouchArea {
+                    clicked => {
+                        root.editing = 0;
+                        Actions.picker-reset();
+                    }
+                }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Rectangle {
+                width: Store.mobile ? 38px : 32px;
+                height: self.width;
+                border-radius: self.width / 2;
+                background: cta.pressed ? Theme.accent.darker(0.2) : Theme.accent;
+                drop-shadow-blur: 10px;
+                drop-shadow-color: Theme.accent.with-alpha(0.45);
+                Icon { name: "check"; size: 17px; tint: #ffffff; stroke-width: 3px; }
+                cta := TouchArea {
+                    clicked => {
+                        root.editing = 0;
+                        root.confirmed();
+                    }
+                }
+            }
+        }
+    }
+}

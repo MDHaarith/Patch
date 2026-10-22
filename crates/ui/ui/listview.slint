@@ -1,0 +1,82 @@
+import { Theme } from "theme.slint";
+import { Icon } from "icons.slint";
+import { Store, Actions, Section } from "store.slint";
+import { Field, Scroll, SectionLabel } from "widgets.slint";
+import { TaskRow } from "rows.slint";
+
+// Todo list grouped into Overdue / Today / Tomorrow / Upcoming / Someday.
+export component ListView inherits Rectangle {
+    VerticalLayout {
+        padding-left: Store.mobile ? 8px : 24px;
+        padding-right: Store.mobile ? 8px : 24px;
+        padding-top: 8px;
+        spacing: 8px;
+        if !Store.mobile: qa := Field {
+            icon: "plus";
+            placeholder: "New task — try “Pay rent 1st oct #personal !!” or “Standup every weekday 9:30”";
+            accepted(t) => {
+                if (t != "") {
+                    Actions.quick-add(t);
+                }
+                self.text = "";
+            }
+        }
+        scroll := Scroll {
+            vertical-stretch: 1;
+            content-height: body.preferred-height;
+            body := VerticalLayout {
+                width: scroll.width;
+                alignment: start;
+                padding-bottom: 100px;
+                spacing: 2px;
+                for sec in Store.sections: VerticalLayout {
+                    spacing: 0px;
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-top: 14px;
+                        padding-bottom: 4px;
+                        spacing: 8px;
+                        Text {
+                            horizontal-stretch: 0;
+                            text: sec.title;
+                            font-size: Theme.fs-l;
+                            font-weight: 700;
+                            color: sec.tint;
+                        }
+                        Text {
+                            horizontal-stretch: 0;
+                            text: sec.items.length;
+                            font-size: Theme.fs-m;
+                            color: Theme.text-3;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    for item in sec.items: TaskRow {
+                        item: item;
+                        opened(id) => { Actions.open-task(id); }
+                    }
+                }
+                if Store.sections.length == 0: VerticalLayout {
+                    padding-top: 80px;
+                    spacing: 10px;
+                    alignment: start;
+                    Icon { x: (parent.width - self.width) / 2; name: "check"; size: 42px; tint: Theme.text-3; }
+                    Text {
+                        text: "All clear";
+                        horizontal-alignment: center;
+                        font-size: Theme.fs-xl;
+                        font-weight: 700;
+                        color: Theme.text;
+                    }
+                    Text {
+                        text: "Add a task above. Dates, times, #lists and !priority are understood.";
+                        horizontal-alignment: center;
+                        font-size: Theme.fs-m;
+                        color: Theme.text-2;
+                    }
+                }
+            }
+        }
+    }
+}

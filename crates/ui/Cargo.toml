@@ -1,6 +1,22 @@
 [package]
 name = "patch-ui"
-version = "0.1.0"
-edition = "2021"
-[lib]
-path = "src/lib.rs"
+description = "Patch's shared Slint UI and app controller (Linux desktop + Android)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+patch-core.workspace = true
+patch-sync.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+# Backends and renderers are chosen by the platform crates (apps/linux, crates/android).
+slint = { workspace = true, features = ["std", "compat-1-2"] }
+png = "0.18"
+
+[build-dependencies]
+slint-build.workspace = true
+
+[dev-dependencies]
+slint = { workspace = true, features = ["std", "compat-1-2", "renderer-software"] }

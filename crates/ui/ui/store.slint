@@ -1,0 +1,294 @@
+// View models pushed from Rust, and the actions the UI sends back.
+
+export struct CellItem {
+    id: string,
+    title: string,
+    time: string,
+    color: color,
+    // 0 = empty lane, 1 = all-day bar, 2 = timed item with a dot
+    kind: int,
+    cont-left: bool,
+    cont-right: bool,
+    done: bool,
+}
+
+export struct DayCell {
+    key: string,
+    day: int,
+    label: string,
+    in-month: bool,
+    today: bool,
+    selected: bool,
+    weekend: bool,
+    range-start: bool,
+    range-end: bool,
+    in-range: bool,
+    dots: [color],
+    items: [CellItem],
+    more: int,
+}
+
+export struct DayHead {
+    key: string,
+    weekday: string,
+    day: int,
+    today: bool,
+    weekend: bool,
+}
+
+// A timed block in the week/day grid. Positions are in minutes and lane
+// fractions so the view can lay them out at any size.
+export struct Block {
+    id: string,
+    title: string,
+    time: string,
+    color: color,
+    day: int,
+    lane-x: float,
+    lane-w: float,
+    top: float,
+    span: float,
+    done: bool,
+}
+
+// An all-day bar in the week grid header.
+export struct Bar {
+    id: string,
+    title: string,
+    color: color,
+    col: int,
+    span: int,
+    lane: int,
+    done: bool,
+    cont-left: bool,
+    cont-right: bool,
+}
+
+export struct TaskItem {
+    id: string,
+    title: string,
+    subtitle: string,
+    list-name: string,
+    color: color,
+    done: bool,
+    priority: int,
+    overdue: bool,
+    when: string,
+    has-notes: bool,
+    check-done: int,
+    check-total: int,
+    repeat: bool,
+    today: bool,
+}
+
+export struct BoardCol {
+    id: string,
+    name: string,
+    done: bool,
+    count: int,
+    cards: [TaskItem],
+}
+
+export struct Section {
+    title: string,
+    tint: color,
+    items: [TaskItem],
+}
+
+export struct ListInfo {
+    id: string,
+    name: string,
+    color: color,
+    visible: bool,
+    count: int,
+}
+
+export struct CheckRow {
+    id: string,
+    text: string,
+    done: bool,
+}
+
+export struct Choice {
+    label: string,
+    color: color,
+}
+
+export global Store {
+    // Platform
+    in-out property <bool> mobile: false;
+    in-out property <bool> can-host: false;
+    in-out property <length> safe-top: 0px;
+    in-out property <length> safe-bottom: 0px;
+    in-out property <string> version: "0.1.0";
+    // Generated in Rust so no image decoder is needed at runtime.
+    in-out property <image> grain;
+    in-out property <image> app-icon;
+
+    // Navigation: 0 day, 1 week, 2 month, 3 board, 4 list
+    in-out property <int> view: 2;
+    in-out property <string> title-main: "October";
+    in-out property <string> title-sub: "2026";
+    in-out property <string> caption: "";
+    in-out property <bool> sidebar-open: true;
+    in-out property <string> selected: "";
+    in-out property <string> clock: "09:41";
+    in-out property <string> today-label: "Thursday, 22 October";
+
+    // Sidebar
+    in-out property <string> mini-title: "October 2026";
+    in-out property <[string]> weekdays: ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
+    in-out property <[string]> weekdays-short: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    in-out property <[DayCell]> mini-cells;
+    in-out property <[ListInfo]> lists;
+    in-out property <[TaskItem]> up-next;
+
+    // Month view
+    in-out property <[DayCell]> month-cells;
+    in-out property <[TaskItem]> day-agenda;
+    in-out property <string> day-agenda-title;
+
+    // Week / day view
+    in-out property <[DayHead]> grid-days;
+    in-out property <[Block]> grid-blocks;
+    in-out property <[Bar]> grid-bars;
+    in-out property <int> grid-lanes: 0;
+    in-out property <[string]> hour-labels;
+    in-out property <float> now-minutes: 600;
+    in-out property <int> now-day: -1;
+
+    // Board and lists
+    in-out property <[BoardCol]> board;
+    in-out property <int> board-tallest: 0;
+    in-out property <[Section]> sections;
+    in-out property <[TaskItem]> today-items;
+    in-out property <int> today-open: 0;
+
+    // Search
+    in-out property <[TaskItem]> results;
+
+    // Sync
+    // 0 local only, 1 working, 2 synced, 3 offline, 4 wrong token
+    in-out property <int> sync-state: 0;
+    in-out property <string> sync-label: "Local only";
+    in-out property <string> hub-url;
+    in-out property <string> hub-token;
+    in-out property <bool> hosting: false;
+    in-out property <string> host-urls;
+    in-out property <string> host-token;
+
+    // Preferences
+    in-out property <bool> week-monday: true;
+    in-out property <bool> time-24h: true;
+    in-out property <bool> autostart: false;
+    in-out property <bool> widget-on: false;
+    in-out property <bool> overlay-on: false;
+    in-out property <bool> overlay-boot: false;
+    in-out property <bool> overlay-allowed: true;
+
+    // Sheets
+    in-out property <bool> editor-open: false;
+    in-out property <bool> settings-open: false;
+    in-out property <bool> search-open: false;
+    in-out property <string> toast;
+
+    // Overlay panel
+    in-out property <bool> overlay-expanded: true;
+    in-out property <int> overlay-tab: 0;
+}
+
+export global Editor {
+    in-out property <string> id;
+    in-out property <bool> is-new;
+    in-out property <string> title;
+    in-out property <string> notes;
+    in-out property <int> list-index;
+    in-out property <int> column-index;
+    in-out property <int> priority;
+    in-out property <bool> scheduled;
+    in-out property <bool> all-day;
+    in-out property <string> start-key;
+    in-out property <string> end-key;
+    in-out property <int> start-min: 600;
+    in-out property <int> end-min: 660;
+    in-out property <int> repeat-index;
+    in-out property <int> reminder-index;
+    in-out property <[CheckRow]> checklist;
+    in-out property <string> range-label;
+    // Range picker
+    in-out property <string> picker-title;
+    in-out property <[DayCell]> picker-cells;
+    // Choices
+    in-out property <[Choice]> lists;
+    in-out property <[Choice]> columns;
+    in-out property <[string]> repeats: ["Never", "Every day", "Weekdays", "Every week", "Every month", "Every year"];
+    in-out property <[string]> reminders: ["None", "At time", "5 min", "15 min", "1 hour", "1 day"];
+}
+
+export global Actions {
+    // Navigation
+    callback nav(int);
+    callback go-today();
+    callback set-view(int);
+    callback select-date(string);
+    callback mini-nav(int);
+
+    // Tasks
+    callback open-task(string);
+    callback new-task(string, int);
+    callback toggle-done(string);
+    callback quick-add(string);
+    callback delete-task(string);
+    callback drop-on-date(string, string);
+    callback move-block(string, int, int);
+    callback resize-block(string, int);
+    callback drop-card(string, int, int);
+    callback quick-add-card(string, string);
+
+    // Board columns
+    callback add-column(string);
+    callback rename-column(string, string);
+    callback delete-column(string);
+
+    // Lists
+    callback toggle-list(string);
+    callback add-list(string);
+    callback rename-list(string, string);
+    callback recolor-list(string);
+    callback delete-list(string);
+
+    // Editor
+    callback editor-save();
+    callback editor-close();
+    callback editor-delete();
+    callback picker-nav(int);
+    callback picker-tap(string);
+    callback picker-reset();
+    callback editor-changed();
+    callback check-add(string);
+    callback check-toggle(int);
+    callback check-remove(int);
+
+    // Search
+    callback search(string);
+
+    // Settings
+    callback set-look(int);
+    callback set-week-monday(bool);
+    callback set-time-24h(bool);
+    callback connect-hub(string, string);
+    callback disconnect-hub();
+    callback set-hosting(bool);
+    callback set-autostart(bool);
+    callback set-widget(bool);
+    callback set-overlay(bool);
+    callback set-overlay-boot(bool);
+    callback copy-text(string);
+
+    // Overlay
+    callback overlay-expand(bool);
+    callback open-app(string);
+
+    // Platform
+    callback text-focus(bool);
+}
