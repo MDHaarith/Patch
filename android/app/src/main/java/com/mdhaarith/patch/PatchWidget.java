@@ -51,10 +51,14 @@ public final class PatchWidget extends AppWidgetProvider {
         }
     }
 
-    /** The last snapshot, or an empty one. */
+    /**
+     * The last snapshot, or an empty one. A snapshot from an earlier day is
+     * dropped: its "today" is no longer today, and Rust isn't running to
+     * redo the lists, so the widget asks to be opened instead.
+     */
     static JSONObject snapshot(Context context) {
         String json = prefs(context).getString(KEY_JSON, null);
-        if (json != null) {
+        if (json != null && !stale(context)) {
             try {
                 return new JSONObject(json);
             } catch (JSONException e) {
@@ -62,6 +66,12 @@ public final class PatchWidget extends AppWidgetProvider {
             }
         }
         return new JSONObject();
+    }
+
+    /** True when the stored snapshot was made on an earlier day. */
+    static boolean stale(Context context) {
+        String made = prefs(context).getString(KEY_DAY, null);
+        return made != null && !made.equals(day());
     }
 
     @Override
@@ -88,12 +98,17 @@ public final class PatchWidget extends AppWidgetProvider {
     private static RemoteViews views(Context context, int id, JSONObject snap) {
         RemoteViews v = new RemoteViews(context.getPackageName(), R.layout.widget);
 
-        v.setImageViewResource(R.id.widget_pet, pet(snap.optString("mood")));
+        boolean stale = stale(context);
+        v.setImageViewResource(R.id.widget_pet, pet(stale ? "sleepy" : snap.optString("mood")));
         v.setTextViewText(R.id.widget_date, date(context, snap));
         int open = snap.optInt("open", 0);
-        v.setTextViewText(R.id.widget_count, open == 0
+        v.setTextViewText(R.id.widget_count, stale
+                ? context.getString(R.string.widget_stale_count)
+                : open == 0
                 ? context.getString(R.string.widget_all_clear)
                 : context.getResources().getQuantityString(R.plurals.widget_open, open, open));
+        v.setTextViewText(R.id.widget_empty,
+                context.getString(stale ? R.string.widget_stale : R.string.widget_empty));
 
         // The list: one adapter per widget id (the data URI makes the
         // intents distinct, so each widget gets its own factory).
@@ -138,13 +153,13 @@ public final class PatchWidget extends AppWidgetProvider {
     }
 
     /**
-     * Rust's date while the snapshot is from today; after midnight (the
-     * periodic update) the local date, so the header rolls over even before
+     * Rust's date while the snapshot is from today; otherwise (none yet, or
+     * after midnight) the local date, so the header rolls over even before
      * the app runs again.
      */
     private static String date(Context context, JSONObject snap) {
         String stored = snap.optString("date");
-        if (!stored.isEmpty() && day().equals(prefs(context).getString(KEY_DAY, ""))) {
+        if (!stored.isEmpty()) { // only today's snapshot survives snapshot()
             return stored;
         }
         Locale locale = context.getResources().getConfiguration().getLocales().get(0);
