@@ -241,10 +241,28 @@ export component SettingsPanel inherits Rectangle {
                     title: "About";
                     icon: "note";
                     Text {
-                        text: "Patch \{Store.version} — native Rust, rendered with Slint (Made with Slint). Your data lives on your devices and syncs only across your tailnet.";
+                        text: "Patch \{Store.version} — native Rust on Linux and Android. Your data lives on your devices and syncs only across your tailnet.";
                         color: Theme.text-2;
                         font-size: Theme.fs-s;
                         wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Rectangle {
+                            width: badge.preferred-width + 20px;
+                            height: 26px;
+                            border-radius: 13px;
+                            background: Theme.well;
+                            border-width: 1px;
+                            border-color: Theme.hairline;
+                            badge := Text {
+                                text: "Made with Slint · slint.dev";
+                                font-size: Theme.fs-s;
+                                font-weight: 600;
+                                color: Theme.text;
+                            }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
                     }
                 }
             }
