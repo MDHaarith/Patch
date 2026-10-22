@@ -1,65 +1,90 @@
-import { Theme, Look } from "theme.slint";
+import { Theme } from "theme.slint";
 import { Icon, IconBox } from "icons.slint";
-import { Store, Actions } from "store.slint";
-import { Glass, Field, Toggle, IconButton, Button, Scroll, SectionLabel, Divider } from "widgets.slint";
+import { Store, Actions, ThemeCard } from "store.slint";
+import { Glass, Field, Toggle, IconButton, Button, Scroll, SectionLabel, Divider, Segmented } from "widgets.slint";
 
-// A miniature of the reference picker in each look.
-component LookCard inherits Rectangle {
-    in property <int> look;
-    in property <string> label;
+// A miniature of the range picker drawn in a theme's own colours.
+component ThemePreview inherits Rectangle {
+    in property <ThemeCard> theme;
     in property <bool> selected;
     callback picked();
-    property <brush> bg: look == 0 ? @linear-gradient(180deg, #0d0d0f 0%, #050506 100%) : look == 1 ? @linear-gradient(160deg, #4b8d88 0%, #154a5d 100%) : @linear-gradient(180deg, #f2f2f6 0%, #e4e4ea 100%);
-    property <color> card: look == 0 ? #1c1c1e : look == 1 ? #ffffff2e : #ffffff;
-    property <color> ink: look == 2 ? #1d1d1f : #f5f5f7;
-    property <color> band: look == 0 ? #3a3a3d : look == 1 ? #ffffff40 : #e3e3e8;
-    height: 128px;
     border-radius: 16px;
-    background: bg;
+    // Phones use the software renderer, which can't round gradient corners.
+    background: Store.mobile ? theme.mid : @linear-gradient(165deg, theme.top 0%, theme.bottom 100%);
     border-width: selected ? 2px : 1px;
     border-color: selected ? Theme.accent : Theme.hairline;
-    Rectangle {
-        x: 12px;
-        y: 10px;
-        width: parent.width - 24px;
-        height: 78px;
-        border-radius: 14px;
-        background: root.card;
+    clip: true;
+    card := Rectangle {
+        x: 8px;
+        y: 8px;
+        width: parent.width - 16px;
+        height: parent.height - 38px;
+        border-radius: 12px;
+        background: root.theme.card;
         border-width: 1px;
-        border-color: root.look == 2 ? #0000000f : #ffffff26;
-        drop-shadow-blur: 10px;
-        drop-shadow-color: #00000040;
-        Text { x: 9px; y: 7px; text: "October 2026"; color: root.ink; font-size: 9px; font-weight: 700; }
+        border-color: root.theme.edge;
+        property <length> cw: (self.width - 12px) / 7;
+        property <length> rh: (self.height - 22px) / 3;
+        Text { x: 7px; y: 5px; text: "October"; color: root.theme.ink; font-size: 8px; font-weight: 700; }
+        // The selected range 13–15 as one capsule under the end circles.
+        Rectangle {
+            x: 6px + 1.5 * card.cw - card.rh * 0.42;
+            y: 18px + card.rh + (card.rh - self.height) / 2;
+            width: 2 * card.cw + card.rh * 0.84;
+            height: card.rh * 0.84;
+            border-radius: self.height / 2;
+            background: root.theme.band;
+        }
         for r in 3: Rectangle {
-            y: 24px + r * 16px;
-            height: 14px;
-            for c in 7: Rectangle {
+            y: 18px + r * card.rh;
+            height: card.rh;
+            for c in 7: day := Rectangle {
                 property <int> d: r * 7 + c + 5;
-                x: 6px + c * (parent.width - 12px) / 7;
-                width: (parent.width - 12px) / 7;
-                if d == 14: Rectangle { background: root.band; height: 12px; }
-                if d == 13: Rectangle { x: parent.width / 2; width: parent.width / 2; background: root.band; height: 12px; }
-                if d == 15: Rectangle { width: parent.width / 2; background: root.band; height: 12px; }
+                property <bool> end: d == 13 || d == 15;
+                x: 6px + c * card.cw;
+                width: card.cw;
                 Rectangle {
-                    width: 12px;
-                    height: 12px;
-                    border-radius: 6px;
-                    background: d == 13 || d == 15 ? #0a84ff : transparent;
-                    Text { text: d; font-size: 7px; color: d == 13 || d == 15 ? #ffffff : root.ink; }
+                    width: card.rh * 0.84;
+                    height: self.width;
+                    border-radius: self.width / 2;
+                    background: day.end ? root.theme.accent : transparent;
+                    Text { text: d; font-size: 6.5px; font-weight: day.end ? 700 : 500; color: day.end ? #ffffff : root.theme.ink; }
                 }
             }
         }
     }
     Text {
-        y: parent.height - 30px;
+        y: parent.height - 26px;
         width: parent.width;
-        text: root.label;
+        text: root.theme.name;
         horizontal-alignment: center;
-        font-size: Theme.fs-m;
+        font-size: Theme.fs-s;
         font-weight: 600;
-        color: root.ink;
+        color: root.theme.ink;
+        overflow: elide;
     }
     TouchArea { clicked => { root.picked(); } }
+}
+
+// Removable preset chip.
+component Preset inherits Rectangle {
+    in property <string> text;
+    callback removed();
+    height: Store.mobile ? 32px : 28px;
+    width: lbl.preferred-width + 40px;
+    border-radius: self.height / 2;
+    background: Theme.well;
+    border-width: 1px;
+    border-color: Theme.hairline;
+    lbl := Text { x: 12px; text: root.text; color: Theme.text; font-size: Theme.fs-s; font-weight: 500; }
+    IconButton {
+        x: parent.width - self.width - 4px;
+        icon: "close";
+        size: 20px;
+        icon-size: 10px;
+        round: true;
+        clicked => { root.removed(); }
+    }
 }
 
 component Row inherits HorizontalLayout {
@@ -80,7 +105,7 @@ component Row inherits HorizontalLayout {
 component Card inherits Glass {
     in property <string> title;
     in property <string> icon;
-    fill: Theme.light ? #ffffff : Theme.glass ? #ffffff17 : #141416;
+    fill: Theme.panel-strong;
     sheen: !Theme.matte;
     radius: 16px;
     height: lay.preferred-height;
@@ -132,11 +157,21 @@ export component SettingsPanel inherits Rectangle {
                 Card {
                     title: "Appearance";
                     icon: "layers";
-                    HorizontalLayout {
-                        spacing: 10px;
-                        LookCard { horizontal-stretch: 1; look: 0; label: "Matte Black"; selected: Theme.look == Look.matte; picked => { Actions.set-look(0); } }
-                        LookCard { horizontal-stretch: 1; look: 1; label: "Liquid Glass"; selected: Theme.look == Look.glass; picked => { Actions.set-look(1); } }
-                        LookCard { horizontal-stretch: 1; look: 2; label: "Light"; selected: Theme.look == Look.light; picked => { Actions.set-look(2); } }
+                    themes := Rectangle {
+                        property <int> cols: Store.mobile ? 2 : 5;
+                        property <length> gap: 10px;
+                        property <length> cw: (self.width - (self.cols - 1) * self.gap) / self.cols;
+                        property <length> ch: 112px;
+                        height: Math.ceil(Store.themes.length / self.cols) * (self.ch + self.gap) - self.gap;
+                        for t[i] in Store.themes: ThemePreview {
+                            x: Math.mod(i, themes.cols) * (themes.cw + themes.gap);
+                            y: Math.floor(i / themes.cols) * (themes.ch + themes.gap);
+                            width: themes.cw;
+                            height: themes.ch;
+                            theme: t;
+                            selected: Store.theme == i;
+                            picked => { Actions.set-look(i); }
+                        }
                     }
                     Row {
                         label: "Week starts on Monday";
@@ -145,6 +180,78 @@ export component SettingsPanel inherits Rectangle {
                     Row {
                         label: "24-hour time";
                         Toggle { y: (parent.height - self.height) / 2; checked: Store.time-24h; toggled(v) => { Actions.set-time-24h(v); } }
+                    }
+                }
+
+                presets := Card {
+                    title: "Repeat & alerts";
+                    icon: "repeat";
+                    property <int> n: 2;
+                    property <int> unit: 1;
+                    property <int> amount: 30;
+                    property <int> scale: 0;
+                    Text {
+                        text: "Add your own timings; they appear in every task's Repeat and Alert menus.";
+                        color: Theme.text-2;
+                        font-size: Theme.fs-s;
+                        wrap: word-wrap;
+                    }
+                    SectionLabel { text: "CUSTOM REPEATS"; }
+                    if Store.custom-repeats.length == 0: Text { text: "None yet"; color: Theme.text-3; font-size: Theme.fs-s; }
+                    for r[i] in Store.custom-repeats: HorizontalLayout {
+                        alignment: start;
+                        Preset { text: r; removed => { Actions.remove-custom-repeat(i); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        Text { text: "Every"; color: Theme.text; font-size: Theme.fs-m; vertical-alignment: center; }
+                        IconButton { y: (parent.height - self.height) / 2; icon: "minus"; size: 26px; icon-size: 12px; clicked => { presets.n = Math.max(1, presets.n - 1); } }
+                        Text { text: presets.n; min-width: 22px; horizontal-alignment: center; color: Theme.text; font-size: Theme.fs-l; font-weight: 700; vertical-alignment: center; }
+                        IconButton { y: (parent.height - self.height) / 2; icon: "plus"; size: 26px; icon-size: 12px; clicked => { presets.n = Math.min(365, presets.n + 1); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Segmented {
+                            y: (parent.height - self.height) / 2;
+                            horizontal-stretch: 1;
+                            stretch: true;
+                            items: ["days", "weeks", "months", "years"];
+                            current: presets.unit;
+                            picked(u) => { presets.unit = u; }
+                        }
+                        Button { y: (parent.height - self.height) / 2; text: "Add"; kind: 1; clicked => { Actions.add-custom-repeat(presets.n, presets.unit); } }
+                    }
+                    SectionLabel { text: "CUSTOM ALERTS"; }
+                    if Store.custom-alerts.length == 0: Text { text: "None yet"; color: Theme.text-3; font-size: Theme.fs-s; }
+                    for a[i] in Store.custom-alerts: HorizontalLayout {
+                        alignment: start;
+                        Preset { text: a; removed => { Actions.remove-custom-alert(i); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        IconButton { y: (parent.height - self.height) / 2; icon: "minus"; size: 26px; icon-size: 12px; clicked => { presets.amount = Math.max(1, presets.amount - (presets.scale == 0 ? 5 : 1)); } }
+                        Text { text: presets.amount; min-width: 26px; horizontal-alignment: center; color: Theme.text; font-size: Theme.fs-l; font-weight: 700; vertical-alignment: center; }
+                        IconButton { y: (parent.height - self.height) / 2; icon: "plus"; size: 26px; icon-size: 12px; clicked => { presets.amount = Math.min(999, presets.amount + (presets.scale == 0 ? 5 : 1)); } }
+                        Text { text: "before"; color: Theme.text; font-size: Theme.fs-m; vertical-alignment: center; }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Segmented {
+                            y: (parent.height - self.height) / 2;
+                            horizontal-stretch: 1;
+                            stretch: true;
+                            items: ["min", "hours", "days"];
+                            current: presets.scale;
+                            picked(u) => { presets.scale = u; }
+                        }
+                        Button {
+                            y: (parent.height - self.height) / 2;
+                            text: "Add";
+                            kind: 1;
+                            clicked => { Actions.add-custom-alert(presets.amount * (presets.scale == 0 ? 1 : presets.scale == 1 ? 60 : 1440)); }
+                        }
                     }
                 }
 
@@ -213,9 +320,19 @@ export component SettingsPanel inherits Rectangle {
                     title: "Always on";
                     icon: "pin";
                     Row {
-                        label: "Floating widget";
-                        hint: "A small always-on-top Today panel with quick add.";
+                        label: "Desktop widget";
+                        hint: "Patch's pet with today's tasks and quick add, on your desktop.";
                         Toggle { y: (parent.height - self.height) / 2; checked: Store.widget-on; toggled(v) => { Actions.set-widget(v); } }
+                    }
+                    Row {
+                        label: "Float the widget above apps";
+                        hint: "Off: the widget sits on your desktop like a home-screen widget. On: it hovers above every window.";
+                        Toggle { y: (parent.height - self.height) / 2; checked: Store.widget-float; toggled(v) => { Actions.set-widget-float(v); } }
+                    }
+                    Row {
+                        label: "Keep Patch on top";
+                        hint: "The main window stays above other apps, even when you click elsewhere.";
+                        Toggle { y: (parent.height - self.height) / 2; checked: Store.pinned; toggled(v) => { Actions.set-pinned(v); } }
                     }
                     Row {
                         label: "Start Patch at login";

@@ -1,0 +1,50 @@
+import { Theme } from "theme.slint";
+import { Store } from "store.slint";
+
+// Patch the pixel-art pet. Frames (mood, bob, blink) come from Rust; this
+// scales them crisply, hops when poked and shows a count badge.
+export component Pet inherits Rectangle {
+    in property <int> count: 0;
+    in property <length> size: 52px;
+    in property <bool> show-count: true;
+    property <length> hop: 0px;
+    width: size;
+    height: size;
+
+    hopper := Timer {
+        interval: 200ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            root.hop = 0px;
+        }
+    }
+    Image {
+        // Whole-pixel scaling keeps every sprite pixel the same size.
+        width: Math.max(1, Math.floor(root.size / 20px)) * 20px;
+        height: self.width * 18 / 20;
+        x: (root.size - self.width) / 2;
+        y: root.hop + (root.size - self.height) / 2;
+        source: Store.pet-image;
+        image-rendering: pixelated;
+        animate y { duration: 180ms; easing: ease-out; }
+    }
+    if root.show-count && root.count > 0: Rectangle {
+        x: root.size - self.width * 0.75;
+        y: -root.size * 0.06;
+        width: Math.max(root.size * 0.36, badge.preferred-width + 10px);
+        height: root.size * 0.36;
+        border-radius: self.height / 2;
+        background: Store.pet-mood == 2 ? Theme.danger : Theme.accent;
+        badge := Text {
+            text: root.count;
+            font-size: root.size * 0.2;
+            font-weight: 700;
+            color: #ffffff;
+        }
+    }
+    public function hop-once() {
+        root.hop = -root.size * 0.18;
+        hopper.running = true;
+    }
+}

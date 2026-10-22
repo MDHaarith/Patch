@@ -10,10 +10,15 @@ between your devices **over Tailscale** only.
 |---|---|---|
 | ![](docs/screenshots/desktop-matte-week.jpg) | ![](docs/screenshots/desktop-glass-board.jpg) | ![](docs/screenshots/desktop-light-editor.jpg) |
 
-**Android** — phone layout, plus a floating panel/bubble that sits *over other apps*:
+**Android**: the phone layout, a home-screen widget, and Patch the pet, which
+floats *over other apps* when you want it to.
 
 ![Phone](docs/screenshots/phone.jpg)
 ![Overlay](docs/screenshots/overlay.jpg)
+
+**Ten themes**: Matte Black, Liquid Glass, Light, Midnight, Aurora, Sunset, Forest, Graphite, Paper and Rose.
+
+![Themes](docs/screenshots/themes.jpg)
 
 [![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)
 
@@ -24,13 +29,16 @@ between your devices **over Tailscale** only.
 - **Todo list**: grouped into Overdue, Today, Tomorrow, Next 7 days, Later, Someday and Completed.
 - **Task inspector**:
   - list, status, priority, checklist and notes
-  - repeats (daily, weekdays, weekly, monthly, yearly) and reminders
+  - repeats (daily, weekdays, weekly, monthly, yearly) and reminders, picked from tidy drop-downs
+  - your own repeat intervals ("every 2 weeks") and alert timings ("3 hours before"), added once in Settings → *Repeat & alerts*
   - the date-range picker from the design reference: tap a start, tap an end, set times, then Reset or ✓
 - **Natural-language quick add**: `Dentist tomorrow 3pm #work !!!`, `Conference 13-15 nov`, `Standup every weekday 9:30`, `Gym tmrw 7am for 1h30m`, `Call back in 2 hours`.
-- **Three looks**: Matte Black (default), Liquid Glass and Light.
+- **Ten themes**, each with a live preview in Settings.
+- **Lists with your colours**: open a list's ⋯ menu to recolour, rename or delete it.
+- **Patch the pet**: a pixel-art buddy that bobs, blinks and reacts to your day. It is happy when you're clear, busy when you have work, worried about overdue tasks, and asleep at night.
 - **Always on**:
-  - **Linux**: a frameless always-on-top widget (Today / Upcoming / Board with quick add), a tray icon, start at login, and desktop notifications.
-  - **Android**: a **Display over other apps** floating bubble that expands into the same panel, with system notifications for reminders.
+  - **Linux**: a frameless window with rounded corners and its own controls. The widget (Today / Upcoming / Board with quick add) sits on the desktop like a home-screen widget; pin it to float above your apps, and it stays on top even when you click elsewhere. Also a tray icon, start at login, and desktop notifications.
+  - **Android**: a **home-screen widget** with today's and upcoming tasks and the pet. Turn on *Display over other apps* when you want the pet to hover above other apps; tap it to open the same panel. Reminders arrive as system notifications.
 - **Offline first**: every device keeps a full copy and edits merge field by field, so nothing is lost when two devices change the same task.
 
 ## Sync over Tailscale
@@ -80,7 +88,34 @@ Build dependencies (Debian/Ubuntu): `build-essential pkg-config libfontconfig1-d
 
 ### Android
 
-Download the APK from the latest CI run (*Actions → build → android-apk*) or build it:
+**[Download the latest APK](https://github.com/MDHaarith/Patch/releases/latest)** from the
+Releases page. Numbered versions are published from `v*` tags, and the
+**[nightly](https://github.com/MDHaarith/Patch/releases/tag/nightly)** pre-release is refreshed on every push to `main`.
+Open the `.apk` on your phone to install it, then long-press the home screen →
+*Widgets* → **Patch** to add the widget.
+
+<details>
+<summary>Maintainers: set up the release signing key (once)</summary>
+
+Android only installs an update when it is signed with the same key as the
+installed app, so releases use one permanent key stored as repository secrets:
+
+```sh
+keytool -genkeypair -v -keystore patch-release.jks -alias patch \
+  -keyalg RSA -keysize 4096 -validity 36500
+base64 -w0 patch-release.jks    # → ANDROID_KEYSTORE_BASE64
+```
+
+Add `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` (`patch`)
+and `ANDROID_KEY_PASSWORD` under *Settings → Secrets and variables → Actions*. Keep the
+`.jks` file backed up. Then publish a version:
+
+```sh
+git tag v0.2.0 && git push origin v0.2.0
+```
+</details>
+
+Or build it yourself:
 
 ```sh
 rustup target add aarch64-linux-android x86_64-linux-android
@@ -88,8 +123,8 @@ cargo install cargo-ndk
 cd android && ./gradlew assembleRelease    # needs ANDROID_HOME and NDK 28
 ```
 
-On first launch, open Settings → *Display over other apps* to enable the floating
-bubble. Android will ask you to grant the "Display over other apps" permission.
+To let the pet hover above other apps, open Settings → *Display over other apps*;
+Android will ask you to grant that permission.
 
 ## Using it
 
@@ -125,7 +160,8 @@ Java only hosts the Activity, the overlay window and the keyboard bridge.
 ```sh
 cargo test                                   # core, sync, ui (incl. a UI interaction test)
 cargo clippy --all-targets
-cargo run -p patch-ui --example shots -- screenshots/   # render every screen in all looks
+cargo run -p patch-ui --example shots -- screenshots/   # render every screen in every theme
+cargo run -p patch-ui --example pet_sheet -- pet.png    # the pet's frames; --android <res> regenerates the widget's
 ```
 
 ## License

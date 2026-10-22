@@ -77,27 +77,25 @@ component DesktopMonth inherits Rectangle {
 
         for item[j] in cell.items: Rectangle {
             property <bool> shown: j < root.max-items || (j == root.max-items && cell.items.length == root.max-items + 1 && cell.more == 0);
+            // Bars are capsules: rounded where the item starts or ends, and
+            // at the edges of the week row when it continues.
+            property <bool> round-left: item.kind != 1 || !item.cont-left || Math.mod(i, 7) == 0;
+            property <bool> round-right: item.kind != 1 || !item.cont-right || Math.mod(i, 7) == 6;
+            property <length> radius: root.item-h / 2;
             visible: shown && item.kind != 0;
-            x: item.kind == 1 && item.cont-left ? 0 : 4px;
+            x: self.round-left ? 4px : 0;
             y: 31px + j * (root.item-h + 2px);
-            width: parent.width - (item.kind == 1 && item.cont-left ? 0 : 4px) - (item.kind == 1 && item.cont-right ? 0 : 5px);
+            width: parent.width - (self.round-left ? 4px : 0) - (self.round-right ? 5px : 0);
             height: root.item-h;
-            border-top-left-radius: item.kind == 1 && item.cont-left ? 0 : 4px;
-            border-bottom-left-radius: item.kind == 1 && item.cont-left ? 0 : 4px;
-            border-top-right-radius: item.kind == 1 && item.cont-right ? 0 : 4px;
-            border-bottom-right-radius: item.kind == 1 && item.cont-right ? 0 : 4px;
-            background: item.kind == 1 ? item.color.with-alpha(Theme.light ? 0.22 : 0.32) : ita.has-hover ? Theme.hover : transparent;
+            border-top-left-radius: self.round-left ? self.radius : 0;
+            border-bottom-left-radius: self.round-left ? self.radius : 0;
+            border-top-right-radius: self.round-right ? self.radius : 0;
+            border-bottom-right-radius: self.round-right ? self.radius : 0;
+            background: item.kind == 1 ? item.color.with-alpha(Theme.light ? 0.22 : 0.34) : ita.has-hover ? Theme.hover : transparent;
             opacity: root.dragging && root.drag-id == item.id ? 0.35 : (item.done ? 0.5 : 1);
 
-            if item.kind == 1 && !item.cont-left: Rectangle {
-                x: 0;
-                width: 3px;
-                border-top-left-radius: 4px;
-                border-bottom-left-radius: 4px;
-                background: item.color;
-            }
             HorizontalLayout {
-                padding-left: item.kind == 1 ? 7px : 3px;
+                padding-left: item.kind == 1 ? 9px : 3px;
                 padding-right: 4px;
                 spacing: 5px;
                 if item.kind == 2: Rectangle {

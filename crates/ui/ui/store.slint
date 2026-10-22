@@ -109,6 +109,18 @@ export struct CheckRow {
     done: bool,
 }
 
+export struct ThemeCard {
+    name: string,
+    top: color,
+    bottom: color,
+    mid: color,
+    card: color,
+    ink: color,
+    band: color,
+    accent: color,
+    edge: color,
+}
+
 export struct Choice {
     label: string,
     color: color,
@@ -117,6 +129,10 @@ export struct Choice {
 export global Store {
     // Platform
     in-out property <bool> mobile: false;
+    // The shell has no system title bar: draw our own frame and controls.
+    in-out property <bool> custom-chrome: false;
+    in-out property <bool> maximized: false;
+    in-out property <bool> pinned: false;
     in-out property <bool> can-host: false;
     in-out property <length> safe-top: 0px;
     in-out property <length> safe-bottom: 0px;
@@ -182,9 +198,25 @@ export global Store {
     in-out property <bool> time-24h: true;
     in-out property <bool> autostart: false;
     in-out property <bool> widget-on: false;
+    in-out property <bool> widget-float: false;
     in-out property <bool> overlay-on: false;
     in-out property <bool> overlay-boot: false;
     in-out property <bool> overlay-allowed: true;
+
+    // Themes and list colours
+    in-out property <[ThemeCard]> themes;
+    in-out property <int> theme: 0;
+    in-out property <[color]> palette;
+
+    // Custom repeat / alert presets (Settings)
+    in-out property <[string]> custom-repeats;
+    in-out property <[string]> custom-alerts;
+
+    // The pet: 0 happy, 1 busy, 2 worried, 3 sleepy
+    in-out property <int> pet-mood: 1;
+    // Current pixel-art frame, animated from Rust.
+    in-out property <image> pet-image;
+    in-out property <string> pet-line;
 
     // Sheets
     in-out property <bool> editor-open: false;
@@ -256,7 +288,7 @@ export global Actions {
     callback toggle-list(string);
     callback add-list(string);
     callback rename-list(string, string);
-    callback recolor-list(string);
+    callback set-list-color(string, int);
     callback delete-list(string);
 
     // Editor
@@ -286,6 +318,15 @@ export global Actions {
     callback set-overlay(bool);
     callback set-overlay-boot(bool);
     callback copy-text(string);
+
+    callback add-custom-repeat(int, int);
+    callback remove-custom-repeat(int);
+    callback add-custom-alert(int);
+    callback remove-custom-alert(int);
+    callback set-pinned(bool);
+    callback set-widget-float(bool);
+    // Custom window chrome: 0 drag, 1 resize (edge 0..7), 2 close, 3 minimize, 4 maximize
+    callback window-action(int, int);
 
     // Overlay
     callback overlay-expand(bool);

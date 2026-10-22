@@ -169,6 +169,11 @@ final class PatchNative {
         Reminders.schedule(app, json);
     }
 
+    /** The home-screen widget's state changed: store it, redraw the widgets. */
+    static void publishSnapshot(String json) {
+        main.post(() -> PatchWidget.publish(app, json));
+    }
+
     static void copyText(String text) {
         main.post(() -> clipboard.setPrimaryClip(ClipData.newPlainText("Patch", text)));
     }
@@ -259,4 +264,7 @@ final class PatchNative {
     static native void nativePause();
 
     static native void nativeOpenTask(String taskId);
+
+    /** The widget's "+": open the editor on a new task. */
+    static native void nativeNewTask();
 }

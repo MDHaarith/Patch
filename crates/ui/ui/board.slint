@@ -6,18 +6,18 @@ import { Glass, Check, Priority, IconButton, Field, Scroll } from "widgets.slint
 export component Card inherits Rectangle {
     in property <TaskItem> item;
     in property <bool> ghost: false;
-    border-radius: 12px;
-    background: Theme.light ? #ffffff : Theme.glass ? #ffffff26 : #1c1c1f;
+    border-radius: 14px;
+    background: Theme.card;
     border-width: 1px;
     border-color: Theme.edge;
     drop-shadow-blur: ghost ? 24px : (Theme.light ? 6px : 0px);
     drop-shadow-offset-y: ghost ? 10px : 2px;
     drop-shadow-color: ghost ? #00000080 : (Theme.light ? #00000014 : transparent);
-    Rectangle {
+    if !Store.mobile: Rectangle {
         x: 0;
         y: 0;
         height: parent.height * 0.6;
-        border-radius: 12px;
+        border-radius: 14px;
         background: Theme.sheen;
     }
     // List colour accent
@@ -139,7 +139,7 @@ export component BoardView inherits Rectangle {
             width: root.col-w;
             height: root.content-h - root.pad * 2;
             radius: 18px;
-            fill: Theme.light ? #ffffff99 : Theme.glass ? #ffffff14 : #0f0f11;
+            fill: Theme.content;
             sheen: !Theme.matte;
             border-color: root.dragging && root.drop-col == ci ? Theme.accent.with-alpha(0.6) : Theme.hairline;
 

@@ -71,6 +71,10 @@ impl Host for AndroidHost {
         self.bridge.set_clipboard(text);
     }
 
+    fn publish_snapshot(&self, json: &str) {
+        self.bridge.publish_snapshot(json);
+    }
+
     fn text_focus(&self, _focused: bool) {
         // The keyboard follows the text inputs' own requests (see ime.rs),
         // which also cover re-tapping a field after the keyboard was

@@ -6,7 +6,32 @@ use chrono::{Duration, NaiveDateTime};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Unit {
+    Day,
+    Week,
+    Month,
+    Year,
+}
+
+impl Unit {
+    pub const ALL: [Unit; 4] = [Unit::Day, Unit::Week, Unit::Month, Unit::Year];
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Unit::Day => "day",
+            Unit::Week => "week",
+            Unit::Month => "month",
+            Unit::Year => "year",
+        }
+    }
+
+    fn parse(s: &str) -> Option<Unit> {
+        Unit::ALL.into_iter().find(|u| u.as_str() == s)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Repeat {
     #[default]
     None,
@@ -15,9 +40,12 @@ pub enum Repeat {
     Weekly,
     Monthly,
     Yearly,
+    /// Every `n` units, e.g. every 2 weeks.
+    Every(u16, Unit),
 }
 
 impl Repeat {
+    /// The built-in choices, in menu order.
     pub const ALL: [Repeat; 6] = [
         Repeat::None,
         Repeat::Daily,
@@ -27,34 +55,54 @@ impl Repeat {
         Repeat::Yearly,
     ];
 
-    pub fn as_str(self) -> &'static str {
+    /// Stored form: "weekly", or "every:2:week" for custom intervals.
+    pub fn encode(self) -> String {
         match self {
-            Repeat::None => "none",
-            Repeat::Daily => "daily",
-            Repeat::Weekdays => "weekdays",
-            Repeat::Weekly => "weekly",
-            Repeat::Monthly => "monthly",
-            Repeat::Yearly => "yearly",
+            Repeat::None => "none".into(),
+            Repeat::Daily => "daily".into(),
+            Repeat::Weekdays => "weekdays".into(),
+            Repeat::Weekly => "weekly".into(),
+            Repeat::Monthly => "monthly".into(),
+            Repeat::Yearly => "yearly".into(),
+            Repeat::Every(n, u) => format!("every:{n}:{}", u.as_str()),
         }
     }
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Repeat::None => "Never",
-            Repeat::Daily => "Every day",
-            Repeat::Weekdays => "Weekdays",
-            Repeat::Weekly => "Every week",
-            Repeat::Monthly => "Every month",
-            Repeat::Yearly => "Every year",
+            Repeat::None => "Never".into(),
+            Repeat::Daily => "Every day".into(),
+            Repeat::Weekdays => "Weekdays".into(),
+            Repeat::Weekly => "Every week".into(),
+            Repeat::Monthly => "Every month".into(),
+            Repeat::Yearly => "Every year".into(),
+            Repeat::Every(1, u) => Repeat::Every(1, u).normalized().label(),
+            Repeat::Every(n, u) => format!("Every {n} {}s", u.as_str()),
         }
     }
 
     pub fn parse(s: &str) -> Repeat {
-        Repeat::ALL.into_iter().find(|r| r.as_str() == s).unwrap_or_default()
+        if let Some(rest) = s.strip_prefix("every:") {
+            let mut it = rest.split(':');
+            let n = it.next().and_then(|n| n.parse::<u16>().ok()).filter(|n| *n > 0);
+            let u = it.next().and_then(Unit::parse);
+            return match (n, u) {
+                (Some(n), Some(u)) => Repeat::Every(n, u).normalized(),
+                _ => Repeat::None,
+            };
+        }
+        Repeat::ALL.into_iter().find(|r| r.encode() == s).unwrap_or_default()
     }
 
-    pub fn index(self) -> usize {
-        Repeat::ALL.iter().position(|r| *r == self).unwrap_or(0)
+    /// "Every 1 week" is just weekly.
+    pub fn normalized(self) -> Repeat {
+        match self {
+            Repeat::Every(1, Unit::Day) => Repeat::Daily,
+            Repeat::Every(1, Unit::Week) => Repeat::Weekly,
+            Repeat::Every(1, Unit::Month) => Repeat::Monthly,
+            Repeat::Every(1, Unit::Year) => Repeat::Yearly,
+            r => r,
+        }
     }
 }
 
@@ -155,7 +203,7 @@ impl Task {
             ("end", opt_dt(self.end)),
             ("allDay", json!(self.all_day)),
             ("reminder", json!(self.reminder)),
-            ("repeat", json!(self.repeat.as_str())),
+            ("repeat", json!(self.repeat.encode())),
             ("checklist", serde_json::to_value(&self.checklist).unwrap_or(Value::Null)),
             ("order", json!(self.order)),
             ("created", json!(self.created)),

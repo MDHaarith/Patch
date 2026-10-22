@@ -39,6 +39,9 @@ impl Host for DemoHost {
     fn can_host_hub(&self) -> bool {
         !self.mobile
     }
+    fn custom_chrome(&self) -> bool {
+        !self.mobile
+    }
 }
 
 fn seed(dir: &Path) {
@@ -166,7 +169,7 @@ fn main() {
     slint::platform::set_platform(Box::new(Shared(platform.clone()))).unwrap();
     let only = std::env::var("SHOTS").unwrap_or_default();
     let want = |name: &str| only.is_empty() || only.split(',').any(|o| name.starts_with(o));
-    let looks = ["matte", "glass", "light"];
+    let looks = ["matte", "glass", "light", "midnight", "aurora", "sunset", "forest", "graphite", "paper", "rose"];
 
     // Desktop
     let dir = std::env::temp_dir().join(format!("patch-shots-desktop-{}", std::process::id()));

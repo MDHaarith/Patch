@@ -16,7 +16,8 @@ export component Glass inherits Rectangle {
     drop-shadow-blur: elevated ? 28px : 0px;
     drop-shadow-offset-y: elevated ? 10px : 0px;
     drop-shadow-color: elevated ? Theme.shadow : transparent;
-    if sheen: Rectangle {
+    // Gradient + corner radius needs a GPU renderer; phones skip the sheen.
+    if sheen && !Store.mobile: Rectangle {
         x: 0;
         y: 0;
         width: parent.width;
@@ -132,7 +133,7 @@ export component Segmented inherits Rectangle {
             horizontal-stretch: root.stretch ? 1 : 0;
             min-width: inner.preferred-width + (Store.mobile ? 20px : 22px);
             border-radius: Store.mobile ? 8px : 6px;
-            background: i == root.current ? (Theme.light ? #ffffff : Theme.glass ? #ffffff40 : #3a3a3e) : sta.has-hover ? Theme.hover : transparent;
+            background: i == root.current ? (Theme.light ? #ffffff : Theme.range) : sta.has-hover ? Theme.hover : transparent;
             drop-shadow-blur: i == root.current ? 3px : 0px;
             drop-shadow-offset-y: i == root.current ? 1px : 0px;
             drop-shadow-color: i == root.current ? #0000002e : transparent;
@@ -374,12 +375,12 @@ export component Toast inherits Rectangle {
     height: 36px;
     width: t.preferred-width + 32px;
     border-radius: 18px;
-    background: Theme.light ? #1d1d1fe6 : #f5f5f7e6;
+    background: Theme.toast;
     drop-shadow-blur: 16px;
     drop-shadow-color: #00000066;
     t := Text {
         text: root.text;
-        color: Theme.light ? #ffffff : #111113;
+        color: Theme.toast-text;
         font-size: Theme.fs-m;
         font-weight: 500;
     }

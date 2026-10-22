@@ -11,7 +11,7 @@ use crate::ime::{ImeMode, ImeOp, ImeSnapshot};
 use crate::input::{self, TouchAction};
 use crate::platform::{Created, PatchPlatform};
 use crate::window::SurfaceWindow;
-use patch_ui::{Actions, App, Look, MainWindow, OverlayWindow, Theme};
+use patch_ui::{Actions, App, MainWindow, OverlayWindow, Theme};
 use slint::platform::{WindowAdapter, WindowEvent};
 use slint::{ComponentHandle, PhysicalSize};
 use std::path::PathBuf;
@@ -75,6 +75,10 @@ pub trait Bridge {
     /// The app's look changed (0 matte, 1 glass, 2 light): system bar icons
     /// and the window background follow it.
     fn set_look(&self, look: i32);
+    /// The home-screen widget's state changed (JSON, see
+    /// [`patch_ui::Host::publish_snapshot`]); Java stores it and redraws the
+    /// widgets.
+    fn publish_snapshot(&self, json: &str);
 }
 
 pub enum Msg {
@@ -125,6 +129,9 @@ pub enum Msg {
     /// The activity paused: save, then reply.
     Pause(Option<SyncSender<()>>),
     OpenTask(String),
+    /// The widget's "+": open the editor on a new task, once the main window
+    /// exists if it doesn't yet.
+    NewTask,
     Invoke(Box<dyn FnOnce() + Send>),
 }
 
@@ -237,6 +244,8 @@ pub struct Runtime {
     overlay: Option<Slot>,
     last_frame: Instant,
     look: Option<i32>,
+    /// A [`Msg::NewTask`] arrived before the main window.
+    new_task: bool,
 }
 
 impl Runtime {
@@ -269,6 +278,7 @@ impl Runtime {
             overlay: None,
             last_frame: Instant::now(),
             look: None,
+            new_task: false,
         })
     }
 
@@ -436,6 +446,10 @@ impl Runtime {
                 }
             }
             Msg::OpenTask(id) => self.app.open_task(&id),
+            Msg::NewTask => {
+                self.new_task = true;
+                self.take_new_task();
+            }
             Msg::Invoke(f) => f(),
         }
     }
@@ -476,14 +490,31 @@ impl Runtime {
         else {
             return;
         };
-        let look = match main.global::<Theme>().get_look() {
-            Look::Glass => 1,
-            Look::Light => 2,
-            _ => 0,
+        let theme = main.global::<Theme>();
+        let look = if theme.get_light() {
+            2
+        } else if theme.get_glass() {
+            1
+        } else {
+            0
         };
         if self.look != Some(look) {
             self.look = Some(look);
             self.bridge.set_look(look);
+        }
+    }
+
+    /// Opens the editor on a new task if one was asked for and the main
+    /// window is there to show it.
+    fn take_new_task(&mut self) {
+        if let Some(Slot {
+            component: Component::Main(main),
+            ..
+        }) = &self.main
+        {
+            if std::mem::take(&mut self.new_task) {
+                main.global::<Actions>().invoke_new_task("".into(), -2);
+            }
         }
     }
 
@@ -573,7 +604,10 @@ impl Runtime {
             log::error!("can't show the {kind:?} window: {e}");
         }
         match kind {
-            Kind::Main => self.apply_insets(),
+            Kind::Main => {
+                self.apply_insets();
+                self.take_new_task();
+            }
             // Java sized the overlay from its own copy of the state; make sure
             // it matches the app's.
             Kind::Overlay => {

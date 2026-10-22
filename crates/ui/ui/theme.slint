@@ -1,57 +1,63 @@
-// Design tokens for the three looks from the reference: Matte Black (the
-// default), Liquid Glass and Light.
-
-export enum Look { matte, glass, light }
+// Design tokens. Every colour is set from Rust (src/themes.rs) so themes are
+// data; the defaults here are Matte Black, used until the app applies one.
 
 export global Theme {
-    in-out property <Look> look: Look.matte;
     in-out property <bool> compact: false;
+    // Flavour flags some components use for subtle structural choices.
+    in-out property <bool> light: false;
+    in-out property <bool> glass: false;
+    out property <bool> matte: !light && !glass;
 
-    out property <bool> light: look == Look.light;
-    out property <bool> glass: look == Look.glass;
-    out property <bool> matte: look == Look.matte;
+    // Backdrop and the soft light blooms behind glass themes.
+    in-out property <color> backdrop-top: #0b0b0c;
+    in-out property <color> backdrop-bottom: #060607;
+    out property <brush> backdrop: @linear-gradient(165deg, backdrop-top 0%, backdrop-bottom 100%);
+    in-out property <color> bloom-a: transparent;
+    in-out property <color> bloom-b: transparent;
+    // Opaque base colour for full-screen sheets on phones.
+    in-out property <color> solid: #0b0b0c;
 
-    // Window backdrop.
-    out property <brush> backdrop: light
-        ? @linear-gradient(180deg, #f5f5f7 0%, #ececf0 100%)
-        : glass
-            ? @linear-gradient(160deg, #4b8d88 0%, #2a6a70 38%, #154a5d 72%, #0d3346 100%)
-            : @linear-gradient(180deg, #0b0b0c 0%, #060607 100%);
+    in-out property <color> panel: #121214;
+    in-out property <color> panel-strong: #18181b;
+    in-out property <color> content: #0e0e10;
+    in-out property <color> float: #161618f2;
+    in-out property <color> modal: #111113f7;
+    in-out property <color> dock: #18181bf2;
+    in-out property <color> card: #1c1c1f;
+    in-out property <color> picker: #1c1c1e;
+    in-out property <color> bubble-top: #2a2a2e;
+    in-out property <color> bubble-bottom: #0e0e10;
+    out property <brush> bubble: @linear-gradient(180deg, bubble-top 0%, bubble-bottom 100%);
+    // The pet stays dark on every theme so its white eyes always read.
+    in-out property <color> pet: #202024;
+    in-out property <color> well: #ffffff0a;
+    in-out property <color> hairline: #ffffff12;
+    in-out property <color> edge: #ffffff1f;
+    in-out property <color> sheen-color: #ffffff12;
+    in-out property <float> sheen-reach: 0.45;
+    out property <brush> sheen: @linear-gradient(180deg, sheen-color 0%, sheen-color.with-alpha(0) sheen-reach * 100%);
+    in-out property <color> shadow: #00000099;
 
-    // Panels: sidebar, cards, the calendar body.
-    out property <color> panel: light ? #ffffffd9 : glass ? #ffffff1c : #121214;
-    out property <color> panel-strong: light ? #ffffff : glass ? #ffffff29 : #18181b;
-    // Floating glass: popovers, sheets, the overlay panel.
-    out property <color> float: light ? #fbfbfdf0 : glass ? #2a6a70d9 : #161618f2;
-    out property <color> well: light ? #0000000a : glass ? #ffffff14 : #ffffff0a;
-    out property <color> hairline: light ? #0000001a : glass ? #ffffff38 : #ffffff12;
-    out property <color> edge: light ? #00000014 : glass ? #ffffff59 : #ffffff1f;
-    // Specular highlight along the top edge of glass.
-    out property <brush> sheen: light
-        ? @linear-gradient(180deg, #ffffff 0%, #ffffff00 100%)
-        : glass
-            ? @linear-gradient(180deg, #ffffff40 0%, #ffffff00 55%)
-            : @linear-gradient(180deg, #ffffff12 0%, #ffffff00 45%);
-    out property <color> shadow: light ? #0000001f : #00000099;
+    in-out property <color> text: #f5f5f7;
+    in-out property <color> text-2: #9a9aa1;
+    in-out property <color> text-3: #56565c;
+    in-out property <color> on-accent: #ffffff;
 
-    out property <color> text: light ? #1d1d1f : #f5f5f7;
-    out property <color> text-2: light ? #6e6e73 : glass ? #ffffffbf : #9a9aa1;
-    out property <color> text-3: light ? #aeaeb2 : glass ? #ffffff70 : #56565c;
-    out property <color> on-accent: #ffffff;
+    in-out property <color> accent: #0a84ff;
+    out property <color> accent-soft: accent.with-alpha(light ? 0.12 : 0.2);
+    in-out property <color> today: #ff453a;
+    in-out property <color> danger: #ff453a;
+    in-out property <color> success: #30d158;
+    in-out property <color> warning: #ff9f0a;
 
-    out property <color> accent: light ? #007aff : #0a84ff;
-    out property <color> accent-soft: light ? #007aff1f : #0a84ff33;
-    out property <color> today: light ? #ff3b30 : #ff453a;
-    out property <color> danger: light ? #ff3b30 : #ff453a;
-    out property <color> success: light ? #34c759 : #30d158;
-    out property <color> warning: light ? #ff9500 : #ff9f0a;
-
-    out property <color> hover: light ? #0000000d : #ffffff0f;
-    out property <color> press: light ? #0000001a : #ffffff1a;
-    // The grey band between the ends of a selected date range.
-    out property <color> range: light ? #e3e3e8 : glass ? #ffffff38 : #3a3a3d;
-    out property <color> chip: light ? #e9e9ee : glass ? #ffffff2e : #2c2c2f;
-    out property <color> weekend: light ? #00000005 : #ffffff04;
+    in-out property <color> hover: #ffffff0f;
+    in-out property <color> press: #ffffff1a;
+    // The band between the ends of a selected date range.
+    in-out property <color> range: #3a3a3d;
+    in-out property <color> chip: #2c2c2f;
+    in-out property <color> weekend: #ffffff04;
+    in-out property <color> toast: #f5f5f7e6;
+    in-out property <color> toast-text: #111113;
 
     out property <length> r-s: 6px;
     out property <length> r-m: 10px;
