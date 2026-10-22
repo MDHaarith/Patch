@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Patch" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/backdrop</item>
+        <item name="android:colorBackground">@color/backdrop</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+        <item name="android:enforceStatusBarContrast">false</item>
+        <item name="android:windowSplashScreenBackground">@color/backdrop</item>
+    </style>
+</resources>

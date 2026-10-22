@@ -238,6 +238,8 @@ export global Actions {
     callback new-task(string, int);
     callback toggle-done(string);
     callback quick-add(string);
+    // Quick add from a "Today" list: undated tasks land on today.
+    callback quick-add-today(string);
     callback delete-task(string);
     callback drop-on-date(string, string);
     callback move-block(string, int, int);

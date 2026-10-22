@@ -154,6 +154,8 @@ pub struct App {
     hosted: RefCell<Option<HostedHub>>,
     saved_rev: Cell<u64>,
     focus_count: Cell<i32>,
+    /// The user switched the overlay on but Android still lacked permission.
+    overlay_pending: Cell<bool>,
     timers: RefCell<Vec<Timer>>,
     toast_timer: Timer,
     focus_timer: Timer,
@@ -238,6 +240,7 @@ impl App {
             hosted: RefCell::new(None),
             saved_rev: Cell::new(0),
             focus_count: Cell::new(0),
+            overlay_pending: Cell::new(false),
             timers: RefCell::new(Vec::new()),
             toast_timer: Timer::default(),
             focus_timer: Timer::default(),
@@ -421,6 +424,12 @@ impl App {
 
     pub fn set_overlay_allowed(&self, allowed: bool) {
         self.each_store(|s| s.set_overlay_allowed(allowed));
+        if allowed && self.overlay_pending.replace(false) && self.host.set_overlay(true) {
+            self.prefs.borrow_mut().overlay = true;
+            self.save_prefs();
+            self.each_store(|s| s.set_overlay_on(true));
+            return;
+        }
         if !allowed && self.prefs.borrow().overlay {
             self.prefs.borrow_mut().overlay = false;
             self.save_prefs();
@@ -482,8 +491,9 @@ impl App {
             let done = app.doc.lock().unwrap().task(&id).is_some_and(|t| !t.done);
             app.edit(|d| d.set_done(&id, done));
         });
-        on!(on_quick_add, |app, text| app.quick_add(&text, None));
-        on!(on_quick_add_card, |app, col, text| app.quick_add(&text, Some(col.to_string())));
+        on!(on_quick_add, |app, text| app.quick_add(&text, None, false));
+        on!(on_quick_add_today, |app, text| app.quick_add(&text, None, true));
+        on!(on_quick_add_card, |app, col, text| app.quick_add(&text, Some(col.to_string()), false));
         on!(on_delete_task, |app, id| app.edit(|d| d.delete_task(&id)));
         on!(on_drop_on_date, |app, id, key| app.drop_on_date(&id, &key));
         on!(on_move_block, |app, id, days, minutes| app.move_block(&id, days, minutes));
@@ -649,6 +659,7 @@ impl App {
         });
         on!(on_set_overlay, |app, on| {
             let ok = app.host.set_overlay(on);
+            app.overlay_pending.set(on && !ok);
             let on = on && ok;
             app.prefs.borrow_mut().overlay = on;
             app.save_prefs();
@@ -774,7 +785,7 @@ impl App {
         self.refresh();
     }
 
-    fn quick_add(&self, text: &str, column: Option<String>) {
+    fn quick_add(&self, text: &str, column: Option<String>, default_today: bool) {
         let text = text.trim();
         if text.is_empty() {
             return;
@@ -789,6 +800,10 @@ impl App {
         t.priority = q.priority;
         t.repeat = q.repeat;
         t.list = q.list.clone().unwrap_or_else(|| self.default_list(&lists));
+        if default_today && t.start.is_none() {
+            t.all_day = true;
+            t.start = Some(now_local().date().and_time(NaiveTime::MIN));
+        }
         let when = q.start.map(|s| self.ctx().when(&t, s));
         self.edit(|d| {
             d.add_task(t);
