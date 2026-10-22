@@ -39,7 +39,7 @@ final class PatchInputConnection extends BaseInputConnection {
     public boolean commitText(CharSequence text, int newCursorPosition) {
         view.beginBatch();
         super.commitText(text, newCursorPosition);
-        view.imeEdit(PatchNative.IME_COMMIT, text.toString(), 0, 0);
+        view.imeEdit(PatchNative.IME_COMMIT, text.toString(), newCursorPosition, 0);
         view.endBatch();
         return true;
     }
@@ -48,7 +48,7 @@ final class PatchInputConnection extends BaseInputConnection {
     public boolean setComposingText(CharSequence text, int newCursorPosition) {
         view.beginBatch();
         super.setComposingText(text, newCursorPosition);
-        view.imeEdit(PatchNative.IME_COMPOSE, text.toString(), 0, 0);
+        view.imeEdit(PatchNative.IME_COMPOSE, text.toString(), newCursorPosition, 0);
         view.endBatch();
         return true;
     }

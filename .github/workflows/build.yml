@@ -63,7 +63,12 @@ jobs:
         run: |
           sdkmanager=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | sort -V | tail -1)
           yes | "$sdkmanager" --licenses > /dev/null
-          "$sdkmanager" "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358"
+          # The NDK is a large download that occasionally arrives corrupted.
+          for attempt in 1 2 3; do
+            "$sdkmanager" "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358" && break
+            [ "$attempt" = 3 ] && exit 1
+            sleep 10
+          done
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
         with:

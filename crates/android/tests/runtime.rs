@@ -358,7 +358,7 @@ fn renders_and_drives_both_windows() {
     assert_eq!((kind, mode), (Kind::Overlay, ImeMode::Show));
     h.send(Msg::Ime {
         kind: Kind::Overlay,
-        op: ImeOp::Compose("Buy".into()),
+        op: ImeOp::Compose("Buy".into(), 1),
         seq: 1,
     });
     h.settle();
@@ -375,12 +375,12 @@ fn renders_and_drives_both_windows() {
     );
     h.send(Msg::Ime {
         kind: Kind::Overlay,
-        op: ImeOp::Commit("Buy ".into()),
+        op: ImeOp::Commit("Buy ".into(), 1),
         seq: 2,
     });
     h.send(Msg::Ime {
         kind: Kind::Overlay,
-        op: ImeOp::Compose("milk".into()),
+        op: ImeOp::Compose("milk".into(), 1),
         seq: 3,
     });
     h.send(Msg::Ime {
@@ -393,7 +393,7 @@ fn renders_and_drives_both_windows() {
     });
     h.send(Msg::Ime {
         kind: Kind::Overlay,
-        op: ImeOp::Commit(" milk".into()),
+        op: ImeOp::Commit(" milk".into(), 1),
         seq: 5,
     });
     h.settle();

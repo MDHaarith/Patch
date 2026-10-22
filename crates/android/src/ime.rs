@@ -24,8 +24,10 @@ use slint::SharedString;
 /// inlined at the cursor. The numeric codes are shared with `PatchNative.java`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ImeOp {
-    Commit(String),
-    Compose(String),
+    /// Text plus Android's `newCursorPosition`: 1 puts the cursor right
+    /// after the text, >1 further right, <=0 relative to its start.
+    Commit(String, i32),
+    Compose(String, i32),
     FinishComposing,
     DeleteSurrounding { before: u32, after: u32 },
     SetSelection { start: u32, end: u32 },
@@ -35,10 +37,11 @@ pub enum ImeOp {
 
 impl ImeOp {
     pub fn from_java(op: i32, text: String, a: i32, b: i32) -> Option<ImeOp> {
+        let new_cursor = a;
         let (a, b) = (a.max(0) as u32, b.max(0) as u32);
         Some(match op {
-            0 => ImeOp::Commit(text),
-            1 => ImeOp::Compose(text),
+            0 => ImeOp::Commit(text, new_cursor),
+            1 => ImeOp::Compose(text, new_cursor),
             2 => ImeOp::FinishComposing,
             3 => ImeOp::DeleteSurrounding {
                 before: a,
@@ -91,6 +94,9 @@ pub struct ImeState {
     /// The composition shown at the cursor. Slint only reports it with the
     /// next cursor/text change, so the edits we send keep it current.
     preedit: String,
+    /// A cursor inside the composition (UTF-16 offset), for the composition
+    /// it was set with; otherwise the cursor sits after the composition.
+    preedit_cursor: Option<(String, usize)>,
     pending: Option<ImeMode>,
     /// Sequence number of the last Java edit applied.
     seq: i32,
@@ -168,15 +174,23 @@ impl ImeState {
                 p16 + pre16
             }
         };
-        let (cur16, anc16) = (
-            at(cursor),
-            if anchor == cursor {
-                at(cursor)
-            } else {
-                at(anchor)
-            },
-        );
         let c16 = utf16_len(&text[..cursor]) as i32;
+        let inside = self
+            .preedit_cursor
+            .as_ref()
+            .filter(|(for_text, _)| !pre.is_empty() && for_text == pre)
+            .map(|(_, k)| c16 + *k as i32);
+        let (cur16, anc16) = match inside {
+            Some(k) => (k, k),
+            None => (
+                at(cursor),
+                if anchor == cursor {
+                    at(cursor)
+                } else {
+                    at(anchor)
+                },
+            ),
+        };
         let (input_type, action) = android_input_type(p);
         Some(ImeSnapshot {
             text: format!("{}{}{}", &text[..cursor], pre, &text[cursor..]),
@@ -231,7 +245,13 @@ impl ImeState {
 
         let mut out = Vec::new();
         match op {
-            ImeOp::Commit(t) => {
+            ImeOp::Commit(t, new_cursor) => {
+                // The commit replaces the composition, or else the selection.
+                let (start, end) = if self.preedit.is_empty() {
+                    (anchor.min(cursor), anchor.max(cursor))
+                } else {
+                    (cursor, cursor)
+                };
                 self.preedit.clear();
                 out.push(composition(
                     KeyEventType::CommitComposition,
@@ -240,18 +260,50 @@ impl ImeState {
                     None,
                     None,
                 ));
+                // Slint leaves the cursor after the text; move it if the
+                // IME asked for another spot (e.g. inside "()").
+                if new_cursor != 1 {
+                    let full = format!("{}{}{}", &text[..start], t, &text[end..]);
+                    let start16 = utf16_len(&text[..start]) as i64;
+                    let target = if new_cursor > 0 {
+                        start16 + utf16_len(&t) as i64 + new_cursor as i64 - 1
+                    } else {
+                        start16 + new_cursor as i64
+                    };
+                    let target = target.clamp(0, utf16_len(&full) as i64) as u32;
+                    let b = byte_at_utf16(&full, target) as i32;
+                    out.push(composition(
+                        KeyEventType::UpdateComposition,
+                        "",
+                        "",
+                        None,
+                        Some((b, b)),
+                    ));
+                }
             }
-            ImeOp::Compose(t) => {
+            ImeOp::Compose(t, new_cursor) => {
                 // Without a composition, composing replaces the selection.
                 let range = (self.preedit.is_empty() && anchor != cursor)
                     .then(|| rel(anchor.min(cursor), cursor)..rel(anchor.max(cursor), cursor));
+                // Slint can place a caret inside the composition but not
+                // outside it; other requests keep the caret at its end.
+                let len16 = utf16_len(&t) as i64;
+                let k = if new_cursor > 0 {
+                    len16 + new_cursor as i64 - 1
+                } else {
+                    new_cursor as i64
+                };
+                self.preedit_cursor = (0..len16).contains(&k).then(|| (t.clone(), k as usize));
+                let caret = self.preedit_cursor.as_ref().map(|(_, k)| {
+                    let b = byte_at_utf16(&t, *k as u32) as i32;
+                    b..b
+                });
                 self.preedit = t;
-                out.push(composition(
+                out.push(composition_with_caret(
                     KeyEventType::UpdateComposition,
-                    "",
                     &self.preedit,
                     range,
-                    None,
+                    caret,
                 ));
             }
             ImeOp::FinishComposing => {
@@ -364,6 +416,22 @@ fn composition(
     WindowEvent::internal(ev)
 }
 
+fn composition_with_caret(
+    kind: KeyEventType,
+    preedit: &str,
+    replacement_range: Option<std::ops::Range<i32>>,
+    caret: Option<std::ops::Range<i32>>,
+) -> WindowEvent {
+    let ev = InternalKeyEvent {
+        event_type: kind,
+        preedit_text: preedit.into(),
+        replacement_range,
+        preedit_selection: caret,
+        ..Default::default()
+    };
+    WindowEvent::internal(ev)
+}
+
 fn rel(byte: usize, cursor: usize) -> i32 {
     byte as i32 - cursor as i32
 }
@@ -468,6 +536,16 @@ fn android_input_type(p: &InputMethodProperties) -> (i32, i32) {
 mod tests {
     use super::*;
 
+    fn key(ev: &WindowEvent) -> &InternalKeyEvent {
+        match ev {
+            WindowEvent::Internal(b) => match &**b {
+                i_slint_core::platform::InternalEvent::Key(k) => k,
+                _ => panic!("not a key event"),
+            },
+            _ => panic!("not an internal event"),
+        }
+    }
+
     #[test]
     fn utf16_offsets() {
         let s = "a😀é b";
@@ -499,7 +577,7 @@ mod tests {
     #[test]
     fn snapshot_inlines_composition() {
         let mut st = focused("hi there", 3);
-        st.translate(ImeOp::Compose("wo".into()), 1);
+        st.translate(ImeOp::Compose("wo".into(), 1), 1);
         let (mode, snap, seq) = st.take_pending().unwrap();
         assert_eq!(mode, ImeMode::Show, "focus is still being announced");
         assert_eq!(seq, 1);
@@ -511,9 +589,41 @@ mod tests {
     }
 
     #[test]
+    fn commit_honours_new_cursor_position() {
+        // <= 0 counts from the start of the inserted text.
+        let mut st = focused("ab", 1);
+        let ev = st.translate(ImeOp::Commit("()".into(), 0), 2);
+        assert_eq!(ev.len(), 2, "commit, then move the cursor");
+        let k = key(&ev[1]);
+        assert_eq!((k.cursor_position, k.anchor_position), (Some(1), Some(1)), "a|()b");
+        let mut st = focused("ab", 1);
+        let ev = st.translate(ImeOp::Commit("xy".into(), -1), 2);
+        assert_eq!(key(&ev[1]).cursor_position, Some(0), "|axyb");
+
+        let mut st = focused("ab", 1);
+        let ev = st.translate(ImeOp::Commit("xy".into(), 2), 3);
+        assert_eq!(key(&ev[1]).cursor_position, Some(4), "one past the inserted text: axyb|");
+
+        let mut st = focused("ab", 1);
+        assert_eq!(st.translate(ImeOp::Commit("xy".into(), 1), 4).len(), 1, "the default needs no move");
+    }
+
+    #[test]
+    fn compose_caret_inside_the_composition() {
+        let mut st = focused("hi there", 3);
+        st.translate(ImeOp::Compose("wor".into(), 0), 1);
+        let (_, snap, _) = st.take_pending().unwrap();
+        assert_eq!(snap.text, "hi worthere");
+        assert_eq!((snap.sel_start, snap.sel_end), (3, 3), "caret at the composition's start");
+        st.translate(ImeOp::Compose("word".into(), 1), 2);
+        let (_, snap, _) = st.take_pending().unwrap();
+        assert_eq!((snap.sel_start, snap.sel_end), (7, 7), "back to the end once the IME asks for it");
+    }
+
+    #[test]
     fn edits_without_focus_hide() {
         let mut st = ImeState::default();
-        assert!(st.translate(ImeOp::Commit("x".into()), 4).is_empty());
+        assert!(st.translate(ImeOp::Commit("x".into(), 1), 4).is_empty());
         assert_eq!(st.take_pending().map(|p| p.0), Some(ImeMode::Hide));
     }
 

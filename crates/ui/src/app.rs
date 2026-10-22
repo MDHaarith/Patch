@@ -401,6 +401,11 @@ impl App {
         self.models.bind_editor(&w.global::<Editor>());
         self.wire(&w.global::<Actions>());
         self.refresh();
+        // A task opened before this window existed (e.g. tapped in the
+        // overlay while the app was closed) is shown now.
+        if self.state.borrow().editor.is_some() {
+            self.load_editor();
+        }
     }
 
     /// Wire up the floating overlay (Android) / widget (Linux) window.
