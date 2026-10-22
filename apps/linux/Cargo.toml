@@ -1,6 +1,6 @@
 [package]
 name = "patch-linux"
-description = "Patch for the Linux desktop: calendar, board and todos with an always-on-top widget and a built-in Tailscale sync hub"
+description = "Patch for the Linux desktop: calendar, board and todos with a desktop widget and a built-in Tailscale sync hub"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -40,6 +40,9 @@ notify-rust = { version = "4", default-features = false, features = ["z"] }
 arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"] }
 png = "0.18"
 libc = "0.2"
+# EWMH window states (above/below, sticky, skip taskbar) that winit lacks.
+# Already in the tree through winit; the pure-Rust connection needs no libxcb.
+x11rb = { version = "0.13", default-features = false }
 
 [dev-dependencies]
 chrono.workspace = true
@@ -50,7 +53,7 @@ maintainer = "MDHaarith"
 copyright = "MDHaarith"
 extended-description = """\
 Patch is a calendar, kanban board and todo list in one native app, with a \
-floating always-on-top widget and reminders. Devices sync over Tailscale; \
+desktop widget that can float above other apps, and reminders. Devices sync over Tailscale; \
 this app can host the sync hub itself."""
 section = "utils"
 priority = "optional"
