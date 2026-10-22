@@ -7,7 +7,7 @@ use crate::{
     Actions, CheckRow, Choice, DayCell, Editor, HostedHub, Look, MainWindow, OverlayWindow, Store, Theme,
 };
 use crate::{Bar, Block, BoardCol, DayHead, ListInfo, Section, TaskItem};
-use crate::Host;
+use crate::{Host, Reminder};
 use chrono::{Datelike, Duration, NaiveDate, NaiveTime, Timelike};
 use patch_core::doc::{COL_TODO, DEFAULT_LIST};
 use patch_core::model::{CheckItem, Repeat, Task, PALETTE};
@@ -156,6 +156,9 @@ pub struct App {
     focus_count: Cell<i32>,
     /// The user switched the overlay on but Android still lacked permission.
     overlay_pending: Cell<bool>,
+    /// Reminders last handed to the OS, and whether the OS delivers them.
+    os_reminders: RefCell<Option<Vec<Reminder>>>,
+    os_delivers: Cell<bool>,
     timers: RefCell<Vec<Timer>>,
     toast_timer: Timer,
     focus_timer: Timer,
@@ -241,6 +244,8 @@ impl App {
             saved_rev: Cell::new(0),
             focus_count: Cell::new(0),
             overlay_pending: Cell::new(false),
+            os_reminders: RefCell::new(None),
+            os_delivers: Cell::new(false),
             timers: RefCell::new(Vec::new()),
             toast_timer: Timer::default(),
             focus_timer: Timer::default(),
@@ -999,7 +1004,50 @@ impl App {
         self.fire_reminders();
     }
 
+    /// Reminders due within the next two weeks, soonest first.
+    fn upcoming_reminders(&self) -> Vec<Reminder> {
+        use chrono::TimeZone;
+        let now = now_local();
+        let tasks = self.doc.lock().unwrap().tasks();
+        let ctx = self.ctx();
+        let mut out: Vec<Reminder> = tasks
+            .iter()
+            .filter(|t| !t.done)
+            .filter_map(|t| {
+                let (start, before) = (t.start?, t.reminder?);
+                let at = start - Duration::minutes(before);
+                if at < now - Duration::minutes(1) || at > now + Duration::days(14) {
+                    return None;
+                }
+                let at_ms = chrono::Local.from_local_datetime(&at).earliest()?.timestamp_millis();
+                Some(Reminder {
+                    key: format!("{}@{}", t.id, patch_core::time::fmt_dt(start)),
+                    at_ms,
+                    title: t.title.clone(),
+                    body: ctx.when(t, start),
+                })
+            })
+            .collect();
+        out.sort_by_key(|r| r.at_ms);
+        out.truncate(64);
+        out
+    }
+
+    /// Keeps the OS's copy of upcoming reminders current; only calls the host
+    /// when the set actually changed.
+    fn sync_os_reminders(&self) {
+        let upcoming = self.upcoming_reminders();
+        if self.os_reminders.borrow().as_ref() == Some(&upcoming) {
+            return;
+        }
+        self.os_delivers.set(self.host.schedule_reminders(&upcoming));
+        *self.os_reminders.borrow_mut() = Some(upcoming);
+    }
+
     fn fire_reminders(&self) {
+        if self.os_delivers.get() {
+            return;
+        }
         let now = now_local();
         let tasks = self.doc.lock().unwrap().tasks();
         let mut fired = Vec::new();
@@ -1421,6 +1469,7 @@ impl App {
             s.set_day_agenda_title(agenda_title.clone().into());
         });
         self.refresh_clock();
+        self.sync_os_reminders();
     }
 }
 

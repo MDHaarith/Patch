@@ -165,6 +165,10 @@ final class PatchNative {
         Notifications.reminder(app, title, body);
     }
 
+    static void scheduleReminders(String json) {
+        Reminders.schedule(app, json);
+    }
+
     static void copyText(String text) {
         main.post(() -> clipboard.setPrimaryClip(ClipData.newPlainText("Patch", text)));
     }

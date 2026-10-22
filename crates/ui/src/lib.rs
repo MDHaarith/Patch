@@ -70,10 +70,27 @@ pub trait Host {
     /// Show a system notification (reminders).
     fn notify(&self, _title: &str, _body: &str) {}
 
+    /// Hand the upcoming reminders to the OS so they fire even when the app
+    /// isn't running. Each call replaces the previous set. Return true when
+    /// the host delivers them itself, so the app's own timer stays quiet.
+    fn schedule_reminders(&self, _reminders: &[Reminder]) -> bool {
+        false
+    }
+
     fn copy_text(&self, _text: &str) {}
 
     /// A text field gained or lost focus (Android raises the keyboard).
     fn text_focus(&self, _focused: bool) {}
+}
+
+/// A reminder due at `at_ms` (Unix epoch milliseconds).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Reminder {
+    /// Stable per task occurrence, e.g. `t-abc@2026-10-22T10:00`.
+    pub key: String,
+    pub at_ms: i64,
+    pub title: String,
+    pub body: String,
 }
 
 /// How other tailnet devices reach a hub hosted on this machine.

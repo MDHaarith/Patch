@@ -3295,6 +3295,7 @@ dependencies = [
  "patch-core",
  "patch-ui",
  "png",
+ "serde_json",
  "slint",
 ]
 

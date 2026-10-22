@@ -137,8 +137,14 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         PatchNative.activity = new WeakReference<>(this);
-        // The user may come back from the overlay permission screen.
-        PatchNative.nativeOverlayAllowed(Settings.canDrawOverlays(this));
+        // The user may come back from the overlay permission screen, or have
+        // revoked it: then the overlay service must not linger.
+        boolean allowed = Settings.canDrawOverlays(this);
+        if (!allowed && Prefs.is(this, Prefs.OVERLAY)) {
+            Prefs.set(this, Prefs.OVERLAY, false);
+            OverlayService.stop(this);
+        }
+        PatchNative.nativeOverlayAllowed(allowed);
     }
 
     @Override

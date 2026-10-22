@@ -9,6 +9,12 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Reminders are a calendar's core job: exact alarms on 13+, the
+         user-grantable permission on 12. Without either they're inexact. -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission
+        android:name="android.permission.SCHEDULE_EXACT_ALARM"
+        android:maxSdkVersion="32" />
 
     <application
         android:allowBackup="false"
@@ -40,6 +46,10 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Floating task panel the user keeps on screen over other apps (display over other apps)" />
         </service>
+
+        <receiver
+            android:name=".ReminderReceiver"
+            android:exported="false" />
 
         <!-- Only the system can send these protected broadcasts. -->
         <receiver

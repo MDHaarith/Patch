@@ -64,6 +64,8 @@ pub trait Bridge {
     fn overlay_expand(&self, expanded: bool);
     fn open_app(&self, task_id: Option<&str>);
     fn notify(&self, title: &str, body: &str);
+    /// Replace the reminders Android's AlarmManager will deliver (a JSON array).
+    fn schedule_reminders(&self, json: &str);
     fn set_clipboard(&self, text: &str);
     fn clipboard(&self) -> Option<String>;
     fn ime(&self, kind: Kind, mode: ImeMode, state: &ImeSnapshot, seq: i32);

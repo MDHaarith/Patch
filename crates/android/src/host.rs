@@ -1,7 +1,7 @@
 //! [`patch_ui::Host`] for Android: everything is forwarded to Java.
 
 use crate::runtime::Bridge;
-use patch_ui::Host;
+use patch_ui::{Host, Reminder};
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -56,6 +56,15 @@ impl Host for AndroidHost {
 
     fn notify(&self, title: &str, body: &str) {
         self.bridge.notify(title, body);
+    }
+
+    fn schedule_reminders(&self, reminders: &[Reminder]) -> bool {
+        let list: Vec<serde_json::Value> = reminders
+            .iter()
+            .map(|r| serde_json::json!({ "key": r.key, "at": r.at_ms, "title": r.title, "body": r.body }))
+            .collect();
+        self.bridge.schedule_reminders(&serde_json::Value::Array(list).to_string());
+        true
     }
 
     fn copy_text(&self, text: &str) {

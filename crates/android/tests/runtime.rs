@@ -32,6 +32,7 @@ struct Recorder {
     looks: RefCell<Vec<i32>>,
     clipboard: RefCell<Option<String>>,
     overlay: Cell<bool>,
+    reminders: RefCell<Vec<String>>,
 }
 
 impl Bridge for Recorder {
@@ -48,6 +49,9 @@ impl Bridge for Recorder {
     }
     fn open_app(&self, _task_id: Option<&str>) {}
     fn notify(&self, _title: &str, _body: &str) {}
+    fn schedule_reminders(&self, json: &str) {
+        self.reminders.borrow_mut().push(json.to_string());
+    }
     fn set_clipboard(&self, text: &str) {
         *self.clipboard.borrow_mut() = Some(text.into());
     }
@@ -159,6 +163,7 @@ fn seed(dir: &Path) {
     add("Lunch with Sam", DEFAULT_LIST, COL_TODO, &|t| {
         t.start = Some((t0 + Days::days(1)).and_time(hm(13, 0)));
         t.end = Some((t0 + Days::days(1)).and_time(hm(14, 0)));
+        t.reminder = Some(15);
     });
     add("Ship Android build", LIST_WORK, COL_DOING, &|t| {
         t.start = Some((t0 + Days::days(2)).and_time(hm(15, 0)));
@@ -181,6 +186,15 @@ impl Harness {
     /// Runs the loop like the UI thread does until animations settle.
     fn settle(&mut self) {
         for _ in 0..14 {
+            self.rt.step(&self.rx, Some(Duration::ZERO));
+            std::thread::sleep(Duration::from_millis(30));
+        }
+    }
+
+    /// Runs the loop for ~150ms: well inside the runtime's 400ms resize hold,
+    /// which a full `settle` (~420ms) would outlast.
+    fn settle_within_hold(&mut self) {
+        for _ in 0..5 {
             self.rt.step(&self.rx, Some(Duration::ZERO));
             std::thread::sleep(Duration::from_millis(30));
         }
@@ -267,6 +281,14 @@ fn renders_and_drives_both_windows() {
         "redraw-needed is acknowledged once"
     );
     assert!(main.presents() >= 1);
+    // Reminders go to AlarmManager so they survive the process being killed.
+    let scheduled = h.rec.reminders.borrow().last().cloned().expect("reminders handed to Java");
+    let list: serde_json::Value = serde_json::from_str(&scheduled).unwrap();
+    let lunch = list.as_array().unwrap().iter().find(|r| r["title"] == "Lunch with Sam").expect("lunch reminder");
+    let due = (today() + Days::days(1)).and_time(hm(12, 45));
+    let due_ms = chrono::TimeZone::from_local_datetime(&chrono::Local, &due).earliest().unwrap().timestamp_millis();
+    assert_eq!(lunch["at"].as_i64(), Some(due_ms), "fires 15 minutes before the start");
+    assert_eq!(lunch["body"], "Tomorrow, 13:00");
     assert_eq!(
         h.rec.looks.borrow().first(),
         Some(&0),
@@ -400,7 +422,7 @@ fn renders_and_drives_both_windows() {
         .global::<Actions>()
         .invoke_overlay_expand(false);
     let before = panel.presents();
-    h.settle();
+    h.settle_within_hold();
     assert_eq!(h.rec.expand.borrow().as_slice(), [false]);
     assert_eq!(
         panel.presents(),

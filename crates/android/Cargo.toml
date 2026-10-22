@@ -13,6 +13,7 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+serde_json.workspace = true
 patch-ui.workspace = true
 slint = { workspace = true, features = ["std", "compat-1-2", "renderer-software"] }
 # The public platform API has no way to learn that a TextInput wants the soft

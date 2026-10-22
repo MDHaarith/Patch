@@ -123,6 +123,10 @@ impl Bridge for JniBridge {
         );
     }
 
+    fn schedule_reminders(&self, json: &str) {
+        self.call_void("scheduleReminders", "(Ljava/lang/String;)V", |env| Ok(vec![string(env, json)?]));
+    }
+
     fn set_clipboard(&self, text: &str) {
         self.call_void("copyText", "(Ljava/lang/String;)V", |env| {
             Ok(vec![string(env, text)?])
