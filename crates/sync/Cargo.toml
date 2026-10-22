@@ -1,0 +1,16 @@
+[package]
+name = "patch-sync"
+description = "Patch sync hub and client (HTTP over Tailscale)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+patch-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tiny_http.workspace = true
+
+[[bin]]
+name = "patch-hub"
+path = "src/bin/patch-hub.rs"
