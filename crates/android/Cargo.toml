@@ -1,6 +1,32 @@
 [package]
 name = "patch-android"
-version = "0.1.0"
-edition = "2021"
+description = "Patch for Android: the shared Slint UI rendered in-process into the activity and a floating \"display over other apps\" panel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
 [lib]
+name = "patch_android"
 path = "src/lib.rs"
+# cdylib is what the APK loads; rlib lets the host tests link the platform code.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde_json.workspace = true
+patch-ui.workspace = true
+slint = { workspace = true, features = ["std", "compat-1-2", "renderer-software"] }
+# The public platform API has no way to learn that a TextInput wants the soft
+# keyboard, nor to feed it IME composition. Both live behind
+# `WindowAdapterInternal`/`InternalKeyEvent`. `slint` pins i-slint-core to its
+# own exact version, so this always resolves to the very same crate.
+i-slint-core = "1.18"
+log = "0.4"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21.1"
+
+[dev-dependencies]
+patch-core.workspace = true
+chrono.workspace = true
+png = "0.18"

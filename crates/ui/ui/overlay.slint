@@ -151,6 +151,8 @@ export component OverlayPanel inherits Rectangle {
                         if (t != "") {
                             if (Store.overlay-tab == 2 && root.board-col < Store.board.length) {
                                 Actions.quick-add-card(Store.board[root.board-col].id, t);
+                            } else if (Store.overlay-tab == 0) {
+                                Actions.quick-add-today(t);
                             } else {
                                 Actions.quick-add(t);
                             }

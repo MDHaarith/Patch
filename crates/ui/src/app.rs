@@ -7,7 +7,7 @@ use crate::{
     Actions, CheckRow, Choice, DayCell, Editor, HostedHub, Look, MainWindow, OverlayWindow, Store, Theme,
 };
 use crate::{Bar, Block, BoardCol, DayHead, ListInfo, Section, TaskItem};
-use crate::Host;
+use crate::{Host, Reminder};
 use chrono::{Datelike, Duration, NaiveDate, NaiveTime, Timelike};
 use patch_core::doc::{COL_TODO, DEFAULT_LIST};
 use patch_core::model::{CheckItem, Repeat, Task, PALETTE};
@@ -154,6 +154,11 @@ pub struct App {
     hosted: RefCell<Option<HostedHub>>,
     saved_rev: Cell<u64>,
     focus_count: Cell<i32>,
+    /// The user switched the overlay on but Android still lacked permission.
+    overlay_pending: Cell<bool>,
+    /// Reminders last handed to the OS, and whether the OS delivers them.
+    os_reminders: RefCell<Option<Vec<Reminder>>>,
+    os_delivers: Cell<bool>,
     timers: RefCell<Vec<Timer>>,
     toast_timer: Timer,
     focus_timer: Timer,
@@ -238,6 +243,9 @@ impl App {
             hosted: RefCell::new(None),
             saved_rev: Cell::new(0),
             focus_count: Cell::new(0),
+            overlay_pending: Cell::new(false),
+            os_reminders: RefCell::new(None),
+            os_delivers: Cell::new(false),
             timers: RefCell::new(Vec::new()),
             toast_timer: Timer::default(),
             focus_timer: Timer::default(),
@@ -393,6 +401,11 @@ impl App {
         self.models.bind_editor(&w.global::<Editor>());
         self.wire(&w.global::<Actions>());
         self.refresh();
+        // A task opened before this window existed (e.g. tapped in the
+        // overlay while the app was closed) is shown now.
+        if self.state.borrow().editor.is_some() {
+            self.load_editor();
+        }
     }
 
     /// Wire up the floating overlay (Android) / widget (Linux) window.
@@ -421,6 +434,12 @@ impl App {
 
     pub fn set_overlay_allowed(&self, allowed: bool) {
         self.each_store(|s| s.set_overlay_allowed(allowed));
+        if allowed && self.overlay_pending.replace(false) && self.host.set_overlay(true) {
+            self.prefs.borrow_mut().overlay = true;
+            self.save_prefs();
+            self.each_store(|s| s.set_overlay_on(true));
+            return;
+        }
         if !allowed && self.prefs.borrow().overlay {
             self.prefs.borrow_mut().overlay = false;
             self.save_prefs();
@@ -482,8 +501,9 @@ impl App {
             let done = app.doc.lock().unwrap().task(&id).is_some_and(|t| !t.done);
             app.edit(|d| d.set_done(&id, done));
         });
-        on!(on_quick_add, |app, text| app.quick_add(&text, None));
-        on!(on_quick_add_card, |app, col, text| app.quick_add(&text, Some(col.to_string())));
+        on!(on_quick_add, |app, text| app.quick_add(&text, None, false));
+        on!(on_quick_add_today, |app, text| app.quick_add(&text, None, true));
+        on!(on_quick_add_card, |app, col, text| app.quick_add(&text, Some(col.to_string()), false));
         on!(on_delete_task, |app, id| app.edit(|d| d.delete_task(&id)));
         on!(on_drop_on_date, |app, id, key| app.drop_on_date(&id, &key));
         on!(on_move_block, |app, id, days, minutes| app.move_block(&id, days, minutes));
@@ -649,6 +669,7 @@ impl App {
         });
         on!(on_set_overlay, |app, on| {
             let ok = app.host.set_overlay(on);
+            app.overlay_pending.set(on && !ok);
             let on = on && ok;
             app.prefs.borrow_mut().overlay = on;
             app.save_prefs();
@@ -774,7 +795,7 @@ impl App {
         self.refresh();
     }
 
-    fn quick_add(&self, text: &str, column: Option<String>) {
+    fn quick_add(&self, text: &str, column: Option<String>, default_today: bool) {
         let text = text.trim();
         if text.is_empty() {
             return;
@@ -789,6 +810,10 @@ impl App {
         t.priority = q.priority;
         t.repeat = q.repeat;
         t.list = q.list.clone().unwrap_or_else(|| self.default_list(&lists));
+        if default_today && t.start.is_none() {
+            t.all_day = true;
+            t.start = Some(now_local().date().and_time(NaiveTime::MIN));
+        }
         let when = q.start.map(|s| self.ctx().when(&t, s));
         self.edit(|d| {
             d.add_task(t);
@@ -984,7 +1009,52 @@ impl App {
         self.fire_reminders();
     }
 
+    /// Reminders due within the next two weeks, soonest first.
+    fn upcoming_reminders(&self) -> Vec<Reminder> {
+        use chrono::TimeZone;
+        let now = now_local();
+        let tasks = self.doc.lock().unwrap().tasks();
+        let ctx = self.ctx();
+        let mut out: Vec<Reminder> = tasks
+            .iter()
+            .filter(|t| !t.done)
+            .filter_map(|t| {
+                let (start, before) = (t.start?, t.reminder?);
+                let at = start - Duration::minutes(before);
+                // Only future ones: an alarm set in the past fires at once, so
+                // re-arming one just delivered would notify twice.
+                if at <= now || at > now + Duration::days(14) {
+                    return None;
+                }
+                let at_ms = chrono::Local.from_local_datetime(&at).earliest()?.timestamp_millis();
+                Some(Reminder {
+                    key: format!("{}@{}", t.id, patch_core::time::fmt_dt(start)),
+                    at_ms,
+                    title: t.title.clone(),
+                    body: ctx.when(t, start),
+                })
+            })
+            .collect();
+        out.sort_by_key(|r| r.at_ms);
+        out.truncate(64);
+        out
+    }
+
+    /// Keeps the OS's copy of upcoming reminders current; only calls the host
+    /// when the set actually changed.
+    fn sync_os_reminders(&self) {
+        let upcoming = self.upcoming_reminders();
+        if self.os_reminders.borrow().as_ref() == Some(&upcoming) {
+            return;
+        }
+        self.os_delivers.set(self.host.schedule_reminders(&upcoming));
+        *self.os_reminders.borrow_mut() = Some(upcoming);
+    }
+
     fn fire_reminders(&self) {
+        if self.os_delivers.get() {
+            return;
+        }
         let now = now_local();
         let tasks = self.doc.lock().unwrap().tasks();
         let mut fired = Vec::new();
@@ -1406,6 +1476,7 @@ impl App {
             s.set_day_agenda_title(agenda_title.clone().into());
         });
         self.refresh_clock();
+        self.sync_os_reminders();
     }
 }
 
