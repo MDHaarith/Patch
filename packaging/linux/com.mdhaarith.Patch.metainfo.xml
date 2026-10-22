@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.mdhaarith.Patch</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Patch</name>
+  <summary>Calendar, kanban board and todos, synced over Tailscale</summary>
+  <developer id="com.mdhaarith">
+    <name>MDHaarith</name>
+  </developer>
+  <description>
+    <p>
+      Patch keeps your tasks, your board and your calendar in one native app with a matte black,
+      glassy look. It stays on: a floating widget shows what is left today, reminders arrive even
+      with the window closed, and a tray icon brings it back.
+    </p>
+    <ul>
+      <li>Day, week and month calendar, a kanban board and a list view</li>
+      <li>Quick add in plain language, like “Lunch with Sam tomorrow 1pm”</li>
+      <li>An always-on-top widget that collapses into a bubble</li>
+      <li>Sync between your Linux and Android devices over Tailscale; this computer can host the sync hub itself</li>
+      <li>Matte Black, Liquid Glass and Light looks</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">com.mdhaarith.Patch.desktop</launchable>
+  <url type="homepage">https://github.com/MDHaarith/Patch</url>
+  <url type="vcs-browser">https://github.com/MDHaarith/Patch</url>
+  <provides>
+    <binary>patch</binary>
+    <binary>patch-hub</binary>
+  </provides>
+  <categories>
+    <category>Office</category>
+    <category>Calendar</category>
+    <category>ProjectManagement</category>
+  </categories>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-10-22"/>
+  </releases>
+</component>

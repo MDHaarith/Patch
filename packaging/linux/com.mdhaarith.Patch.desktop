@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Patch
+GenericName=Calendar and Tasks
+Comment=Calendar, kanban board and todos, synced over Tailscale
+Exec=patch
+Icon=com.mdhaarith.Patch
+Terminal=false
+Categories=Office;Calendar;ProjectManagement;
+Keywords=todo;tasks;kanban;board;calendar;reminders;planner;
+StartupNotify=false
+StartupWMClass=com.mdhaarith.Patch
+SingleMainWindow=true
+Actions=Quit;
+
+[Desktop Action Quit]
+Name=Quit Patch
+Exec=patch --quit

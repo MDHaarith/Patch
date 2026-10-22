@@ -1,6 +1,74 @@
 [package]
 name = "patch-linux"
-version = "0.1.0"
-edition = "2021"
+description = "Patch for the Linux desktop: calendar, board and todos with an always-on-top widget and a built-in Tailscale sync hub"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
 [lib]
+name = "patch_linux"
 path = "src/lib.rs"
+
+[[bin]]
+name = "patch"
+path = "src/main.rs"
+
+[dependencies]
+patch-core.workspace = true
+patch-sync.workspace = true
+patch-ui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# Skia gives the best text, shadows and blur. With `-opengl` it tries GL
+# first, then Vulkan (wgpu), then its own CPU rasterizer, so the UI keeps its
+# shadows even without a GPU. `SLINT_BACKEND=winit-skia-software` forces the
+# CPU path.
+slint = { workspace = true, features = [
+    "std",
+    "compat-1-2",
+    "backend-winit",
+    "renderer-skia-opengl",
+    "unstable-winit-030",
+    "accessibility",
+] }
+# StatusNotifierItem tray over D-Bus (pure Rust, no GTK).
+ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
+# Desktop notifications over D-Bus; shares zbus with ksni and accesskit.
+notify-rust = { version = "4", default-features = false, features = ["z"] }
+# Same clipboard crate (and features) Slint's winit backend uses.
+arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"] }
+png = "0.18"
+libc = "0.2"
+
+[dev-dependencies]
+chrono.workspace = true
+
+[package.metadata.deb]
+name = "patch"
+maintainer = "MDHaarith"
+copyright = "MDHaarith"
+extended-description = """\
+Patch is a calendar, kanban board and todo list in one native app, with a \
+floating always-on-top widget and reminders. Devices sync over Tailscale; \
+this app can host the sync hub itself."""
+section = "utils"
+priority = "optional"
+depends = "$auto, libxkbcommon-x11-0, libegl1, libfontconfig1"
+recommends = "tailscale"
+assets = [
+    ["target/release/patch", "usr/bin/", "755"],
+    ["target/release/patch-hub", "usr/bin/", "755"],
+    ["../../packaging/linux/com.mdhaarith.Patch.desktop", "usr/share/applications/", "644"],
+    ["../../packaging/linux/com.mdhaarith.Patch.metainfo.xml", "usr/share/metainfo/", "644"],
+    ["../../packaging/linux/patch-hub.service", "usr/lib/systemd/user/", "644"],
+    ["../../packaging/linux/icons/hicolor/16x16/apps/com.mdhaarith.Patch.png", "usr/share/icons/hicolor/16x16/apps/", "644"],
+    ["../../packaging/linux/icons/hicolor/22x22/apps/com.mdhaarith.Patch.png", "usr/share/icons/hicolor/22x22/apps/", "644"],
+    ["../../packaging/linux/icons/hicolor/24x24/apps/com.mdhaarith.Patch.png", "usr/share/icons/hicolor/24x24/apps/", "644"],
+    ["../../packaging/linux/icons/hicolor/32x32/apps/com.mdhaarith.Patch.png", "usr/share/icons/hicolor/32x32/apps/", "644"],
+    ["../../packaging/linux/icons/hicolor/48x48/apps/com.mdhaarith.Patch.png", "usr/share/icons/hicolor/48x48/apps/", "644"],
+    ["../../packaging/linux/icons/hicolor/64x64/apps/com.mdhaarith.Patch.png", "usr/share/icons/hicolor/64x64/apps/", "644"],
+    ["../../packaging/linux/icons/hicolor/128x128/apps/com.mdhaarith.Patch.png", "usr/share/icons/hicolor/128x128/apps/", "644"],
+    ["../../packaging/linux/icons/hicolor/256x256/apps/com.mdhaarith.Patch.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
+    ["../../packaging/linux/icons/hicolor/512x512/apps/com.mdhaarith.Patch.png", "usr/share/icons/hicolor/512x512/apps/", "644"],
+]

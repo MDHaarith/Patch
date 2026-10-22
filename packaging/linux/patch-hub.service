@@ -1,0 +1,29 @@
+# Headless Patch sync hub for an always-on machine (home server, NAS, Pi).
+#
+#   install -Dm644 patch-hub.service ~/.config/systemd/user/patch-hub.service
+#   systemctl --user enable --now patch-hub
+#   loginctl enable-linger "$USER"     # keep it running while logged out
+#   journalctl --user -u patch-hub     # pairing URL and token
+#
+# Don't also turn on "Host the hub" in the desktop app on the same machine:
+# both want port 4747.
+
+[Unit]
+Description=Patch sync hub (Tailscale)
+Documentation=https://github.com/MDHaarith/Patch
+# No network ordering: user units can't wait for system targets, and the hub
+# listens on 0.0.0.0, so it serves the tailnet whenever Tailscale is up.
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/patch-hub
+Restart=on-failure
+RestartSec=5
+
+# Mount-namespace sandboxing (ProtectSystem=, ProtectHome=) is left out: in a
+# user unit it needs unprivileged user namespaces, which some distributions
+# disable, and the hub asks the `tailscale` CLI for this machine's address.
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
