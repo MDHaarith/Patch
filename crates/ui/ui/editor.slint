@@ -50,6 +50,75 @@ component ChoiceGrid inherits Rectangle {
     }
 }
 
+// A compact dropdown: the current choice, expanding into a list in place.
+component Picker inherits VerticalLayout {
+    in property <string> label;
+    in property <string> icon;
+    in property <[string]> options;
+    in property <int> current;
+    callback picked(int);
+    property <bool> open;
+    spacing: 4px;
+    Rectangle {
+        height: Store.mobile ? 44px : 34px;
+        border-radius: 10px;
+        background: head.pressed ? Theme.press : Theme.well;
+        border-width: 1px;
+        border-color: root.open ? Theme.accent.with-alpha(0.6) : Theme.hairline;
+        HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 10px;
+            spacing: 8px;
+            IconBox { name: root.icon; size: 13px; tint: Theme.text-2; }
+            Text { text: root.label; color: Theme.text-2; font-size: Theme.fs-m; vertical-alignment: center; }
+            Rectangle { horizontal-stretch: 1; }
+            Text {
+                text: root.current >= 0 && root.current < root.options.length ? root.options[root.current] : "";
+                color: Theme.text;
+                font-size: Theme.fs-m;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            IconBox { name: root.open ? "chevron-up" : "chevron-down"; size: 12px; tint: Theme.text-2; }
+        }
+        head := TouchArea { clicked => { root.open = !root.open; } }
+    }
+    if root.open: Rectangle {
+        height: list.preferred-height;
+        border-radius: 12px;
+        background: Theme.float;
+        border-width: 1px;
+        border-color: Theme.hairline;
+        list := VerticalLayout {
+            padding: 4px;
+            for o[i] in root.options: Rectangle {
+                height: Store.mobile ? 42px : 32px;
+                border-radius: 8px;
+                background: i == root.current ? Theme.accent-soft : ota.has-hover ? Theme.hover : transparent;
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: o;
+                        color: i == root.current ? Theme.accent : Theme.text;
+                        font-size: Theme.fs-m;
+                        font-weight: i == root.current ? 600 : 400;
+                        vertical-alignment: center;
+                    }
+                    if i == root.current: IconBox { name: "check"; size: 12px; tint: Theme.accent; }
+                }
+                ota := TouchArea {
+                    clicked => {
+                        root.picked(i);
+                        root.open = false;
+                    }
+                }
+            }
+        }
+    }
+}
+
 component Group inherits VerticalLayout {
     in property <string> title;
     in property <string> icon;
@@ -173,26 +242,20 @@ export component EditorPanel inherits Rectangle {
                     }
                 }
 
-                if Editor.scheduled: Group {
-                    title: "REPEAT";
+                if Editor.scheduled: Picker {
+                    label: "Repeat";
                     icon: "repeat";
-                    ChoiceGrid {
-                        labels: Editor.repeats;
-                        current: Editor.repeat-index;
-                        cols: 3;
-                        picked(i) => { Editor.repeat-index = i; }
-                    }
+                    options: Editor.repeats;
+                    current: Editor.repeat-index;
+                    picked(i) => { Editor.repeat-index = i; }
                 }
 
-                if Editor.scheduled: Group {
-                    title: "ALERT";
+                if Editor.scheduled: Picker {
+                    label: "Alert";
                     icon: "bell";
-                    ChoiceGrid {
-                        labels: Editor.reminders;
-                        current: Editor.reminder-index;
-                        cols: 3;
-                        picked(i) => { Editor.reminder-index = i; }
-                    }
+                    options: Editor.reminders;
+                    current: Editor.reminder-index;
+                    picked(i) => { Editor.reminder-index = i; }
                 }
 
                 Group {

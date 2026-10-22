@@ -18,13 +18,23 @@ use std::sync::Arc;
 pub enum TrayAction {
     Open,
     SetWidget(bool),
+    SetWidgetFloat(bool),
+    SetPinned(bool),
     Quit,
 }
 
 type Dispatch = Arc<dyn Fn(TrayAction) + Send + Sync>;
 
+/// What the menu's checkboxes show.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Toggles {
+    pub widget: bool,
+    pub widget_float: bool,
+    pub pinned: bool,
+}
+
 struct Item {
-    widget_on: bool,
+    toggles: Toggles,
     hub: Option<u16>,
     icon_name: String,
     pixmaps: Vec<ksni::Icon>,
@@ -69,10 +79,28 @@ impl ksni::Tray for Item {
                 ..Default::default()
             }
             .into(),
+            MenuItem::Separator,
             CheckmarkItem {
-                label: "Floating widget".into(),
-                checked: self.widget_on,
-                activate: Box::new(|t: &mut Item| (t.dispatch)(TrayAction::SetWidget(!t.widget_on))),
+                label: "Show widget".into(),
+                checked: self.toggles.widget,
+                activate: Box::new(|t: &mut Item| (t.dispatch)(TrayAction::SetWidget(!t.toggles.widget))),
+                ..Default::default()
+            }
+            .into(),
+            CheckmarkItem {
+                label: "Float widget above apps".into(),
+                checked: self.toggles.widget_float,
+                enabled: self.toggles.widget,
+                activate: Box::new(|t: &mut Item| {
+                    (t.dispatch)(TrayAction::SetWidgetFloat(!t.toggles.widget_float))
+                }),
+                ..Default::default()
+            }
+            .into(),
+            CheckmarkItem {
+                label: "Keep Patch on top".into(),
+                checked: self.toggles.pinned,
+                activate: Box::new(|t: &mut Item| (t.dispatch)(TrayAction::SetPinned(!t.toggles.pinned))),
                 ..Default::default()
             }
             .into(),
@@ -106,10 +134,10 @@ pub struct Tray {
 
 impl Tray {
     /// Registers the tray icon. `dispatch` runs on the tray's D-Bus thread.
-    pub fn spawn(widget_on: bool, dispatch: impl Fn(TrayAction) + Send + Sync + 'static) -> Result<Tray, String> {
+    pub fn spawn(toggles: Toggles, dispatch: impl Fn(TrayAction) + Send + Sync + 'static) -> Result<Tray, String> {
         let live = Arc::new(AtomicBool::new(true));
         let item = Item {
-            widget_on,
+            toggles,
             hub: None,
             // Prefer the themed icon (sharp at any panel size) once installed.
             icon_name: if icon::themed_icon_installed() { APP_ID.into() } else { String::new() },
@@ -129,8 +157,8 @@ impl Tray {
         self.live.load(Ordering::SeqCst) && !self.handle.is_closed()
     }
 
-    pub fn set_widget(&self, on: bool) {
-        self.handle.update(|t| t.widget_on = on);
+    pub fn set_toggles(&self, toggles: Toggles) {
+        self.handle.update(|t| t.toggles = toggles);
     }
 
     pub fn set_hub(&self, port: Option<u16>) {

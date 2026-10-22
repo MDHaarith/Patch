@@ -132,13 +132,13 @@ export component RangePicker inherits Rectangle {
     }
 
     border-radius: Theme.r-xl;
-    background: Theme.glass ? #ffffff1f : Theme.light ? #ffffff : #1c1c1e;
+    background: Theme.picker;
     border-width: 1px;
     border-color: Theme.edge;
     drop-shadow-blur: Theme.light ? 18px : 24px;
     drop-shadow-offset-y: 6px;
     drop-shadow-color: Theme.light ? #0000001c : #00000080;
-    Rectangle {
+    if !Store.mobile: Rectangle {
         x: 0;
         y: 0;
         width: parent.width;
@@ -189,13 +189,23 @@ export component RangePicker inherits Rectangle {
                 y: Math.floor(i / 7) * root.cell-h;
                 width: days.width / 7;
                 height: root.cell-h;
-                // Range band
+                // Range band: a capsule per week row, rounded wherever the
+                // range starts, ends or wraps to the next row.
+                property <bool> col-first: Math.mod(i, 7) == 0 || cell.day == 1;
+                property <bool> col-last: Math.mod(i, 7) == 6 || (i + 1 < Editor.picker-cells.length && !Editor.picker-cells[i + 1].in-month);
+                property <length> band-h: root.cell-h - 6px;
                 if (cell.in-range || (self.ends && !self.single)) && cell.in-month: Rectangle {
-                    x: cell.range-start ? parent.width / 2 : 0;
-                    width: cell.range-start || cell.range-end ? parent.width / 2 : parent.width;
+                    property <bool> round-left: !cell.range-start && day-cell.col-first;
+                    property <bool> round-right: !cell.range-end && day-cell.col-last;
+                    x: cell.range-start ? parent.width / 2 : (self.round-left ? 3px : 0);
+                    width: (cell.range-start || cell.range-end ? parent.width / 2 : parent.width) - (self.round-left ? 3px : 0) - (self.round-right ? 3px : 0);
                     y: (parent.height - self.height) / 2;
-                    height: root.cell-h - 6px;
+                    height: day-cell.band-h;
                     background: Theme.range;
+                    border-top-left-radius: self.round-left ? self.height / 2 : 0;
+                    border-bottom-left-radius: self.round-left ? self.height / 2 : 0;
+                    border-top-right-radius: self.round-right ? self.height / 2 : 0;
+                    border-bottom-right-radius: self.round-right ? self.height / 2 : 0;
                 }
                 Rectangle {
                     width: root.cell-h - 6px;

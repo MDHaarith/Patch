@@ -13,6 +13,8 @@
 mod app;
 mod models;
 pub mod prefs;
+mod themes;
+pub mod pet;
 
 slint::include_modules!();
 
@@ -81,6 +83,40 @@ pub trait Host {
 
     /// A text field gained or lost focus (Android raises the keyboard).
     fn text_focus(&self, _focused: bool) {}
+
+    /// Whether the shell draws no system title bar, so the UI shows its own
+    /// window controls and rounded frame (Linux desktop).
+    fn custom_chrome(&self) -> bool {
+        false
+    }
+
+    /// A press in the custom title bar or frame (move, resize, buttons).
+    fn window_action(&self, _action: WindowAction) {}
+
+    /// Keep the main window above every other app.
+    fn set_pinned(&self, _on: bool) {}
+
+    /// The widget floats above other apps (`true`) or sits on the desktop
+    /// layer like a home-screen widget (`false`).
+    fn set_widget_float(&self, _float: bool) {}
+
+    /// Latest state for a native home-screen widget (Android). JSON:
+    /// `{"date":"Thursday, 22 October","open":3,"mood":"busy",
+    ///   "today":[{"id","title","when","color":"#RRGGBB","done","overdue"}],
+    ///   "upcoming":[...same...]}`. Only called when it changed.
+    fn publish_snapshot(&self, _json: &str) {}
+}
+
+/// Window-management requests from the custom chrome.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowAction {
+    /// Start moving the window with the pointer (press in the title bar).
+    Drag,
+    /// Start resizing from an edge: 0 N, 1 NE, 2 E, 3 SE, 4 S, 5 SW, 6 W, 7 NW.
+    Resize(u8),
+    Close,
+    Minimize,
+    ToggleMaximize,
 }
 
 /// A reminder due at `at_ms` (Unix epoch milliseconds).

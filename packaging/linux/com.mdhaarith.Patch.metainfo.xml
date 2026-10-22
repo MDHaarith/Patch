@@ -11,13 +11,13 @@
   <description>
     <p>
       Patch keeps your tasks, your board and your calendar in one native app with a matte black,
-      glassy look. It stays on: a floating widget shows what is left today, reminders arrive even
+      glassy look. It stays on: a desktop widget shows what is left today, reminders arrive even
       with the window closed, and a tray icon brings it back.
     </p>
     <ul>
       <li>Day, week and month calendar, a kanban board and a list view</li>
       <li>Quick add in plain language, like “Lunch with Sam tomorrow 1pm”</li>
-      <li>An always-on-top widget that collapses into a bubble</li>
+      <li>A desktop widget that can float above other apps and collapses into a bubble</li>
       <li>Sync between your Linux and Android devices over Tailscale; this computer can host the sync hub itself</li>
       <li>Matte Black, Liquid Glass and Light looks</li>
     </ul>

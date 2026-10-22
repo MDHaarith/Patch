@@ -315,3 +315,9 @@ pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeOpenTask(
         send(Msg::OpenTask(id));
     }
 }
+
+/// The widget's "+": open the editor on a new task.
+#[no_mangle]
+pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeNewTask(_env: JNIEnv, _: JClass) {
+    send(Msg::NewTask);
+}

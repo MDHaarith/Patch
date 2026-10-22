@@ -3,7 +3,7 @@
 //! CI and store listings. Restores the look and widget size afterwards.
 
 use crate::shell::Shell;
-use patch_ui::{Actions, Look, MainWindow, Store, Theme};
+use patch_ui::{Actions, Store};
 use slint::{ComponentHandle, LogicalSize, Rgba8Pixel, SharedPixelBuffer, Timer};
 use std::cell::Cell;
 use std::collections::VecDeque;
@@ -47,7 +47,7 @@ pub fn start(shell: &Rc<Shell>, dir: PathBuf) -> io::Result<()> {
     let o = original.clone();
     steps.push_back(Box::new(move |s| {
         if let Some(main) = s.main() {
-            o.set((current_look(main), main.global::<Store>().get_overlay_expanded()));
+            o.set((s.look(), main.global::<Store>().get_overlay_expanded()));
         }
         s.show_main_sized(LogicalSize::new(1320.0, 840.0));
         // The widget without touching the saved preference.
@@ -103,14 +103,6 @@ pub fn start(shell: &Rc<Shell>, dir: PathBuf) -> io::Result<()> {
     }));
     run(Rc::downgrade(shell), steps);
     Ok(())
-}
-
-fn current_look(main: &MainWindow) -> i32 {
-    match main.global::<Theme>().get_look() {
-        Look::Glass => 1,
-        Look::Light => 2,
-        _ => 0,
-    }
 }
 
 fn run(shell: Weak<Shell>, mut steps: VecDeque<Step>) {

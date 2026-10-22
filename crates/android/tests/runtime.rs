@@ -33,6 +33,7 @@ struct Recorder {
     clipboard: RefCell<Option<String>>,
     overlay: Cell<bool>,
     reminders: RefCell<Vec<String>>,
+    snapshots: RefCell<Vec<String>>,
 }
 
 impl Bridge for Recorder {
@@ -69,6 +70,9 @@ impl Bridge for Recorder {
     }
     fn set_look(&self, look: i32) {
         self.looks.borrow_mut().push(look);
+    }
+    fn publish_snapshot(&self, json: &str) {
+        self.snapshots.borrow_mut().push(json.to_string());
     }
 }
 
@@ -289,6 +293,17 @@ fn renders_and_drives_both_windows() {
     let due_ms = chrono::TimeZone::from_local_datetime(&chrono::Local, &due).earliest().unwrap().timestamp_millis();
     assert_eq!(lunch["at"].as_i64(), Some(due_ms), "fires 15 minutes before the start");
     assert_eq!(lunch["body"], "Tomorrow, 13:00");
+    // The home-screen widget gets today's agenda as JSON.
+    let snapshot = h.rec.snapshots.borrow().last().cloned().expect("widget snapshot handed to Java");
+    let snapshot: serde_json::Value = serde_json::from_str(&snapshot).unwrap();
+    let today_titles: Vec<&str> = snapshot["today"]
+        .as_array()
+        .expect("today list")
+        .iter()
+        .filter_map(|t| t["title"].as_str())
+        .collect();
+    assert!(today_titles.contains(&"Gym"), "today's tasks in the snapshot: {snapshot}");
+    assert!(snapshot["upcoming"].is_array() && snapshot["date"].is_string() && snapshot["mood"].is_string());
     assert_eq!(
         h.rec.looks.borrow().first(),
         Some(&0),
@@ -313,6 +328,13 @@ fn renders_and_drives_both_windows() {
     h.send(Msg::Back);
     h.settle();
     assert_eq!(h.rec.back.borrow().as_slice(), [false]);
+
+    // The widget's "+" opens the editor on a new task; Back closes it.
+    h.send(Msg::NewTask);
+    h.settle();
+    h.send(Msg::Back);
+    h.settle();
+    assert_eq!(h.rec.back.borrow().as_slice(), [false, true], "editor was open");
 
     // Surface lost and recreated (pause/resume): the kept frame is presented
     // again in full without waiting for a change.

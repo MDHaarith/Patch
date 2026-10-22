@@ -13,9 +13,10 @@ Options:
                      reminders keep running). Used by \"Launch at login\".
   --quit             Ask the running Patch to save and exit.
   --x11              Use X11 (XWayland on a Wayland session). Wayland doesn't let
-                     apps keep the widget above other windows or remember where
-                     it was; Patch picks X11 on its own when the widget is on.
-  --wayland          Use native Wayland even when the widget is on.
+                     apps keep a window above or below others or remember where
+                     it was; Patch picks X11 on its own when the widget or
+                     \"Keep Patch on top\" is on.
+  --wayland          Use native Wayland even then.
   --data-dir DIR     Keep data in DIR instead of $XDG_DATA_HOME/patch.
   --screenshot DIR   Render the main window in every look and the widget to PNG
                      files in DIR, then exit (needs a display, e.g. xvfb-run).
@@ -26,7 +27,7 @@ Launching Patch while it is already running shows its window.";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Windowing {
-    /// X11 when the widget is enabled (it needs always-on-top and window
+    /// X11 when the widget or pinning is enabled (they need window layers and
     /// positions), the session's native protocol otherwise.
     #[default]
     Auto,

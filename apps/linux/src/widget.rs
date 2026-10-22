@@ -1,5 +1,7 @@
-//! The floating widget: the shared `OverlayWindow` (frameless, transparent,
-//! always on top) as a 340×500 panel or a 60×60 bubble.
+//! The widget: the shared `OverlayWindow` (frameless, transparent) as a
+//! 340×500 panel or a 60×60 bubble. It sits on the desktop below other
+//! windows like a home-screen widget, or floats above them when the user
+//! turns "float" on; the shell sets that layer (see `layers`).
 //!
 //! Frameless windows have no title bar to drag, so the widget starts a
 //! window-manager move itself: from the panel's header (left of its buttons)
@@ -17,7 +19,6 @@ use patch_ui::{OverlayWindow, Store};
 use slint::platform::{PointerEventButton, WindowEvent as SlintEvent};
 use slint::winit_030::winit::dpi::PhysicalPosition;
 use slint::winit_030::winit::event::{ElementState, MouseButton, WindowEvent};
-use slint::winit_030::winit::window::WindowLevel;
 use slint::winit_030::{EventResult, WinitWindowAccessor};
 use slint::{ComponentHandle, LogicalPosition, LogicalSize};
 use std::cell::Cell;
@@ -27,9 +28,9 @@ pub const PANEL: (f32, f32) = (340.0, 500.0);
 pub const BUBBLE: (f32, f32) = (60.0, 60.0);
 /// The panel's header row (clock and date); see `OverlayPanel`.
 const HEADER_HEIGHT: f64 = 52.0;
-/// The header's "open" and "collapse" buttons on the right (12px padding,
-/// two 32px buttons, spacing), which stay plain buttons.
-const HEADER_BUTTONS: f64 = 84.0;
+/// The header's "float", "open" and "collapse" buttons on the right (12px
+/// padding, three 32px buttons, 8px spacing), which stay plain buttons.
+const HEADER_BUTTONS: f64 = 124.0;
 /// Logical pixels the pointer must travel before a press becomes a drag.
 const DRAG_SLOP: f64 = 4.0;
 
@@ -59,8 +60,13 @@ struct Pointer {
 
 impl Widget {
     /// Wraps an overlay already attached to the `App`. `on_moved` gets the new
-    /// top-left corner (physical pixels) whenever the window manager moves it.
-    pub fn new(window: OverlayWindow, on_moved: impl Fn(i32, i32) + 'static) -> Widget {
+    /// top-left corner (physical pixels) whenever the window manager moves it,
+    /// `on_focus` focus changes.
+    pub fn new(
+        window: OverlayWindow,
+        on_moved: impl Fn(i32, i32) + 'static,
+        on_focus: impl Fn(bool) + 'static,
+    ) -> Widget {
         let pointer = Rc::new(Pointer::default());
         let weak = window.as_weak();
         window.window().on_winit_window_event(move |w, event| {
@@ -103,6 +109,7 @@ impl Widget {
                     }
                 }
                 WindowEvent::Moved(p) => on_moved(p.x, p.y),
+                WindowEvent::Focused(f) => on_focus(*f),
                 _ => {}
             }
             EventResult::Propagate
@@ -169,12 +176,9 @@ impl Widget {
         })
     }
 
-    /// Re-applies what the window manager may have dropped while mapping the
-    /// window. winit asks for "always on top" when it creates the window, but
-    /// EWMH window managers ignore state requests for windows that aren't
-    /// mapped yet; some also ignore the initial position.
+    /// Re-applies the position some window managers ignore while mapping the
+    /// window. (The shell re-applies the layer.)
     pub fn settle(&self, place: Option<WidgetPlace>) {
-        self.window.window().with_winit_window(|ww| ww.set_window_level(WindowLevel::AlwaysOnTop));
         if let Some(place) = place {
             if self.place_now().is_some_and(|now| (now.x, now.y) != (place.x, place.y)) {
                 self.window.window().set_position(slint::PhysicalPosition::new(place.x, place.y));

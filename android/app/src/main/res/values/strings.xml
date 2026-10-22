@@ -8,4 +8,28 @@
     <string name="overlay_title">Patch is floating</string>
     <string name="overlay_text">Tap to open Patch</string>
     <string name="overlay_hide">Hide</string>
+
+    <!-- Home-screen widget -->
+    <string name="widget_label">Patch</string>
+    <string name="widget_description">Today\'s tasks and what\'s coming up, with your Patch pet</string>
+    <string name="widget_upcoming">Upcoming</string>
+    <string name="widget_nothing_today">Nothing left for today</string>
+    <string name="widget_empty">Nothing planned. Tap + to add a task.</string>
+    <string name="widget_stale">A new day! Open Patch to load today\'s tasks.</string>
+    <string name="widget_stale_count">Tap to refresh</string>
+    <string name="widget_all_clear">All clear</string>
+    <plurals name="widget_open">
+        <item quantity="one">%d open</item>
+        <item quantity="other">%d open</item>
+    </plurals>
+    <string name="widget_add">New task</string>
+    <string name="widget_pet">Patch pet</string>
+    <string name="widget_preview_date">Thursday, 22 October</string>
+    <string name="widget_preview_open">3 open</string>
+    <string name="widget_preview_task1">Design review</string>
+    <string name="widget_preview_when1">10:00</string>
+    <string name="widget_preview_task2">Gym</string>
+    <string name="widget_preview_when2">18:30</string>
+    <string name="widget_preview_task3">Lunch with Sam</string>
+    <string name="widget_preview_when3">Tomorrow</string>
 </resources>

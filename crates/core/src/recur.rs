@@ -1,6 +1,6 @@
 //! Expansion of repeating tasks into concrete occurrences.
 
-use crate::model::{Repeat, Task};
+use crate::model::{Repeat, Task, Unit};
 use crate::time::add_months;
 use chrono::{Datelike, Duration, NaiveDateTime, Weekday};
 
@@ -30,6 +30,15 @@ fn nth(base: NaiveDateTime, repeat: Repeat, k: u32) -> Option<NaiveDateTime> {
         Repeat::Weekly => base + Duration::weeks(k64),
         Repeat::Monthly => add_months(base.date(), k as i32).and_time(base.time()),
         Repeat::Yearly => add_months(base.date(), 12 * k as i32).and_time(base.time()),
+        Repeat::Every(n, unit) => {
+            let steps = n as i64 * k64;
+            match unit {
+                Unit::Day => base + Duration::days(steps),
+                Unit::Week => base + Duration::weeks(steps),
+                Unit::Month => add_months(base.date(), steps as i32).and_time(base.time()),
+                Unit::Year => add_months(base.date(), 12 * steps as i32).and_time(base.time()),
+            }
+        }
         Repeat::Weekdays => {
             // Walk weekday by weekday; callers jump close to the window first.
             let mut d = base;
@@ -54,9 +63,15 @@ pub fn occurrences(task: &Task, from: NaiveDateTime, to: NaiveDateTime) -> Vec<O
     let mut out = Vec::new();
 
     // Skip ahead for fixed-length rules so long-running repeats stay cheap.
-    let mut k: u32 = match task.repeat {
-        Repeat::Daily | Repeat::Weekly => {
-            let step = if task.repeat == Repeat::Daily { 1 } else { 7 };
+    let fixed_step = match task.repeat {
+        Repeat::Daily => Some(1),
+        Repeat::Weekly => Some(7),
+        Repeat::Every(n, Unit::Day) => Some(n as i64),
+        Repeat::Every(n, Unit::Week) => Some(7 * n as i64),
+        _ => None,
+    };
+    let mut k: u32 = match fixed_step {
+        Some(step) => {
             let gap = (from - dur - start).num_days();
             if gap > step {
                 (gap / step - 1).max(0) as u32
@@ -64,7 +79,7 @@ pub fn occurrences(task: &Task, from: NaiveDateTime, to: NaiveDateTime) -> Vec<O
                 0
             }
         }
-        _ => 0,
+        None => 0,
     };
 
     let mut base = start;
@@ -144,6 +159,21 @@ mod tests {
 
         let far = occurrences(&w, parse_dt("2027-03-01").unwrap(), parse_dt("2027-03-08").unwrap());
         assert_eq!(far.len(), 5);
+    }
+
+    #[test]
+    fn custom_intervals() {
+        let t = task("2026-01-05T08:00", None, Repeat::Every(2, Unit::Week));
+        let occ = occurrences(&t, parse_dt("2026-10-01").unwrap(), parse_dt("2026-11-01").unwrap());
+        let days: Vec<_> = occ.iter().map(|o| o.start.date().to_string()).collect();
+        assert_eq!(days, vec!["2026-10-12", "2026-10-26"]);
+        let q = task("2026-01-31T09:00", None, Repeat::Every(3, Unit::Month));
+        assert_eq!(next_start(&q), parse_dt("2026-04-30T09:00"));
+        assert_eq!(Repeat::parse("every:2:week"), Repeat::Every(2, Unit::Week));
+        assert_eq!(Repeat::parse("every:1:day"), Repeat::Daily);
+        assert_eq!(Repeat::Every(2, Unit::Week).encode(), "every:2:week");
+        assert_eq!(Repeat::Every(3, Unit::Day).label(), "Every 3 days");
+        assert_eq!(Repeat::parse("every:x:week"), Repeat::None);
     }
 
     #[test]

@@ -83,16 +83,15 @@ export component TimeGrid inherits Rectangle {
             double-clicked => { Actions.new-task(d.key, -1); }
         }
         for bar in Store.grid-bars: Rectangle {
-            x: root.gutter + bar.col * root.col-w + (bar.cont-left ? 0 : 2px);
+            x: root.gutter + bar.col * root.col-w + 3px;
             y: 4px + bar.lane * (root.bar-h + 2px);
-            width: bar.span * root.col-w - (bar.cont-left ? 0 : 2px) - (bar.cont-right ? 0 : 3px);
+            width: bar.span * root.col-w - 6px;
             height: root.bar-h;
-            border-radius: 4px;
-            background: bar.color.with-alpha(Theme.light ? 0.22 : 0.32);
+            border-radius: root.bar-h / 2;
+            background: bar.color.with-alpha(Theme.light ? 0.22 : 0.34);
             opacity: bar.done ? 0.5 : 1;
-            Rectangle { x: 0; width: 3px; border-radius: 2px; background: bar.color; visible: !bar.cont-left; }
             Text {
-                x: 8px;
+                x: 10px;
                 width: parent.width - 12px;
                 text: bar.title;
                 font-size: Theme.fs-s;
@@ -183,16 +182,16 @@ export component TimeGrid inherits Rectangle {
                 y: parent.active && root.dragging ? root.snap-min / 60 * root.hour-h : 0;
                 width: parent.width;
                 height: parent.active && root.resizing ? Math.max(parent.height + root.snap-min / 60 * root.hour-h, root.hour-h / 4) : parent.height;
-                border-radius: 5px;
+                border-radius: 8px;
                 background: Theme.light ? b.color.with-alpha(0.18) : Theme.glass ? b.color.with-alpha(0.38) : b.color.with-alpha(0.26);
                 border-width: parent.active ? 1px : 0px;
                 border-color: b.color;
                 opacity: b.done ? 0.5 : 1;
                 drop-shadow-blur: parent.active ? 16px : 0px;
                 drop-shadow-color: #00000066;
-                Rectangle { x: 0; width: 3px; border-top-left-radius: 5px; border-bottom-left-radius: 5px; background: b.color; }
+                Rectangle { x: 3px; y: 4px; width: 3px; height: parent.height - 8px; border-radius: 1.5px; background: b.color; }
                 VerticalLayout {
-                    padding-left: 8px;
+                    padding-left: 10px;
                     padding-right: 4px;
                     padding-top: 3px;
                     spacing: 0px;

@@ -1,6 +1,7 @@
 //! `patch`: Patch for the Linux desktop.
 
 mod icon;
+mod layers;
 mod notify;
 mod screen;
 mod shell;
@@ -91,14 +92,15 @@ fn forward(paths: &Paths, args: &Args) -> ExitCode {
     }
 }
 
-/// X11 when asked, or automatically while the widget is on and XWayland is
-/// available: Wayland can't keep a window above others or place it.
+/// X11 when asked, or automatically while the widget or "Keep Patch on top"
+/// is on and XWayland is available: Wayland can't keep a window above or
+/// below others, or place it.
 fn use_x11(windowing: Windowing, prefs: &Prefs) -> bool {
     let has = |var: &str| std::env::var_os(var).is_some_and(|v| !v.is_empty());
     match windowing {
         Windowing::X11 => true,
         Windowing::Wayland => false,
-        Windowing::Auto => prefs.widget && has("WAYLAND_DISPLAY") && has("DISPLAY"),
+        Windowing::Auto => (prefs.widget || prefs.pinned) && has("WAYLAND_DISPLAY") && has("DISPLAY"),
     }
 }
 

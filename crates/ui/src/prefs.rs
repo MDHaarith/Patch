@@ -6,7 +6,7 @@ use std::path::Path;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prefs {
-    /// 0 matte black, 1 liquid glass, 2 light
+    /// Index into the theme list (0 Matte Black, 1 Liquid Glass, 2 Light, ...).
     pub look: i32,
     pub week_monday: bool,
     pub time_24h: bool,
@@ -18,6 +18,14 @@ pub struct Prefs {
     pub hosting: bool,
     pub autostart: bool,
     pub widget: bool,
+    /// The widget floats above other apps instead of sitting on the desktop.
+    pub widget_float: bool,
+    /// The main window stays above other apps.
+    pub pinned: bool,
+    /// User-defined repeats, e.g. "every:2:week".
+    pub custom_repeats: Vec<String>,
+    /// User-defined alert offsets in minutes before the start.
+    pub custom_alerts: Vec<i64>,
     pub overlay: bool,
     pub overlay_boot: bool,
     pub overlay_expanded: bool,
@@ -39,6 +47,10 @@ impl Default for Prefs {
             hosting: false,
             autostart: false,
             widget: false,
+            widget_float: false,
+            pinned: false,
+            custom_repeats: Vec::new(),
+            custom_alerts: Vec::new(),
             overlay: false,
             overlay_boot: false,
             overlay_expanded: true,

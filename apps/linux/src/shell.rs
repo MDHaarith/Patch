@@ -8,10 +8,20 @@
 //! which asks for reminders around the clock). Otherwise closing quits.
 //! Quitting is in the tray menu, the launcher's right-click menu
 //! (`patch --quit`) and on SIGTERM.
+//!
+//! The main window has no system title bar: the shared UI draws its own
+//! rounded frame, window buttons and drag area (`Host::custom_chrome`) and
+//! asks the shell to move, resize, minimize, maximize or close the window
+//! (`Host::window_action`). It can be pinned above other apps. The widget
+//! sits on the desktop layer below other windows, or floats above them.
+//! Both layers are kept up on X11 by `layers`: set when a window is shown,
+//! checked again on focus changes and every few seconds, because window
+//! managers drop states requested before a window is mapped.
 
+use crate::layers::{self, Hints, Layer, Wm};
 use crate::notify::Notifier;
 use crate::screen::{self, Screen};
-use crate::tray::{Tray, TrayAction};
+use crate::tray::{Toggles, Tray, TrayAction};
 use crate::widget::Widget;
 use patch_linux::cli::Windowing;
 use patch_linux::instance::Request;
@@ -19,13 +29,18 @@ use patch_linux::paths::Paths;
 use patch_linux::state::{DesktopState, MainSize};
 use patch_linux::{autostart, hosting};
 use patch_sync::Hub;
-use patch_ui::{Actions, App, Host, HostedHub, MainWindow, OverlayWindow};
-use slint::winit_030::winit::window::UserAttentionType;
-use slint::winit_030::WinitWindowAccessor;
+use patch_ui::{Actions, App, Host, HostedHub, MainWindow, OverlayWindow, Store, WindowAction};
+use slint::platform::WindowEvent as SlintEvent;
+use slint::winit_030::winit::event::WindowEvent;
+use slint::winit_030::winit::window::{ResizeDirection, UserAttentionType, WindowLevel};
+use slint::winit_030::{EventResult, WinitWindowAccessor};
 use slint::{CloseRequestResponse, ComponentHandle, LogicalSize, Timer, TimerMode};
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::{Rc, Weak};
 use std::time::Duration;
+
+/// How often the layers are checked again while a window needs one.
+const LAYER_CHECK: Duration = Duration::from_secs(2);
 
 thread_local! {
     static SHELL: RefCell<Weak<Shell>> = const { RefCell::new(Weak::new()) };
@@ -67,6 +82,14 @@ pub struct Shell {
     widget: RefCell<Option<Widget>>,
     widget_wanted: Cell<bool>,
     widget_pending: Cell<bool>,
+    /// The widget floats above apps instead of sitting on the desktop.
+    widget_float: Cell<bool>,
+    /// The main window stays above other apps.
+    pinned: Cell<bool>,
+    /// EWMH connection for the layers; `None` until needed or off X11.
+    wm: RefCell<Option<Wm>>,
+    wm_tried: Cell<bool>,
+    layer_timer: Timer,
     hub: RefCell<Option<Hub>>,
     tray: RefCell<Option<Tray>>,
     notifier: Option<Notifier>,
@@ -95,6 +118,11 @@ impl Shell {
             widget: RefCell::new(None),
             widget_wanted: Cell::new(false),
             widget_pending: Cell::new(false),
+            widget_float: Cell::new(false),
+            pinned: Cell::new(false),
+            wm: RefCell::new(None),
+            wm_tried: Cell::new(false),
+            layer_timer: Timer::default(),
             hub: RefCell::new(None),
             tray: RefCell::new(None),
             notifier,
@@ -116,6 +144,11 @@ impl Shell {
         self.main.get()
     }
 
+    /// The look (theme index) in the preferences.
+    pub fn look(&self) -> i32 {
+        self.app().map_or(0, |a| a.prefs().look)
+    }
+
     pub fn widget_window(&self) -> Option<OverlayWindow> {
         self.widget.borrow().as_ref().map(|w| w.window().clone_strong())
     }
@@ -131,11 +164,48 @@ impl Shell {
             }
             CloseRequestResponse::HideWindow
         });
+        // Focus moving to another app is when a window manager may drop "above".
+        let me = self.me.clone();
+        // Resized also follows maximizing from the window manager (keyboard
+        // shortcut, window menu) into the custom title bar's button.
+        main.window().on_winit_window_event(move |_, event| {
+            match event {
+                WindowEvent::Focused(_) => {
+                    if let Some(s) = me.upgrade() {
+                        s.layers_soon();
+                    }
+                }
+                WindowEvent::Resized(_) => {
+                    let me = me.clone();
+                    later(move || {
+                        if let Some(main) = me.upgrade().as_ref().and_then(|s| s.main.get()) {
+                            let maximized = main.window().is_maximized();
+                            let store = main.global::<Store>();
+                            if store.get_maximized() != maximized {
+                                store.set_maximized(maximized);
+                            }
+                        }
+                    });
+                }
+                _ => {}
+            }
+            EventResult::Propagate
+        });
         app.attach_main(&main);
         let _ = self.main.set(main);
 
         let prefs = app.prefs();
+        // The App applies these too; reading them here covers windows created
+        // before it does.
+        self.widget_float.set(prefs.widget_float);
+        self.pinned.set(prefs.pinned);
         self.reconcile_autostart(prefs.autostart);
+        let me = self.me.clone();
+        self.layer_timer.start(TimerMode::Repeated, LAYER_CHECK, move || {
+            if let Some(s) = me.upgrade() {
+                s.apply_layers(false);
+            }
+        });
         // The App only starts the hub by itself; the widget is ours to restore.
         if prefs.widget {
             self.set_widget(true);
@@ -143,9 +213,18 @@ impl Shell {
         Ok(())
     }
 
+    fn toggles(&self) -> Toggles {
+        Toggles { widget: self.widget_wanted.get(), widget_float: self.widget_float.get(), pinned: self.pinned.get() }
+    }
+
+    fn update_tray(&self) {
+        if let Some(tray) = self.tray.borrow().as_ref() {
+            tray.set_toggles(self.toggles());
+        }
+    }
+
     pub fn start_tray(&self) {
-        let widget_on = self.widget_wanted.get();
-        match Tray::spawn(widget_on, |action| {
+        match Tray::spawn(self.toggles(), |action| {
             post(move |s| s.on_tray(action));
         }) {
             Ok(tray) => {
@@ -167,6 +246,14 @@ impl Shell {
             TrayAction::SetWidget(on) => match self.main.get() {
                 Some(main) => main.global::<Actions>().invoke_set_widget(on),
                 None => self.set_widget(on),
+            },
+            TrayAction::SetWidgetFloat(float) => match self.main.get() {
+                Some(main) => main.global::<Actions>().invoke_set_widget_float(float),
+                None => self.set_widget_float(float),
+            },
+            TrayAction::SetPinned(on) => match self.main.get() {
+                Some(main) => main.global::<Actions>().invoke_set_pinned(on),
+                None => self.set_pinned(on),
             },
             TrayAction::Quit => self.quit(),
         }
@@ -200,6 +287,7 @@ impl Shell {
         if let Err(e) = main.show() {
             eprintln!("patch: can't show the window: {e}");
         }
+        self.layers_after_show();
     }
 
     pub fn show_main_sized(&self, size: LogicalSize) {
@@ -209,6 +297,7 @@ impl Shell {
             if let Err(e) = main.show() {
                 eprintln!("patch: can't show the window: {e}");
             }
+            self.layers_after_show();
         }
     }
 
@@ -340,11 +429,20 @@ impl Shell {
             CloseRequestResponse::HideWindow
         });
         let me = self.me.clone();
-        let widget = Widget::new(window, move |x, y| {
-            if let Some(s) = me.upgrade() {
-                s.widget_moved(x, y);
-            }
-        });
+        let me2 = self.me.clone();
+        let widget = Widget::new(
+            window,
+            move |x, y| {
+                if let Some(s) = me.upgrade() {
+                    s.widget_moved(x, y);
+                }
+            },
+            move |_| {
+                if let Some(s) = me2.upgrade() {
+                    s.layers_soon();
+                }
+            },
+        );
         let place = widget.place(screen, self.state.borrow().widget);
         if let Err(e) = widget.show() {
             eprintln!("patch: can't show the widget: {e}");
@@ -352,6 +450,7 @@ impl Shell {
             return;
         }
         *self.widget.borrow_mut() = Some(widget);
+        self.layers_after_show();
         if let Some(place) = place {
             self.state.borrow_mut().widget = Some(place);
         }
@@ -364,7 +463,7 @@ impl Shell {
             }
         });
         if screen.wayland {
-            self.wayland_widget_hint();
+            self.wayland_layer_hint();
         }
     }
 
@@ -392,21 +491,101 @@ impl Shell {
         self.save_state_soon();
     }
 
-    fn wayland_widget_hint(&self) {
+    // ------------------------------------------------------------------ layers
+
+    fn main_hints(&self) -> Hints {
+        let layer = if self.pinned.get() { Layer::Above } else { Layer::Normal };
+        Hints { layer, sticky: false, skip_taskbar: false }
+    }
+
+    fn widget_hints(&self) -> Hints {
+        let layer = if self.widget_float.get() { Layer::Above } else { Layer::Below };
+        Hints { layer, sticky: true, skip_taskbar: true }
+    }
+
+    /// Sets `hints` on a shown window. Without `strict`, only adds what is
+    /// missing (see `Wm::apply`).
+    fn apply_layer(&self, window: &slint::Window, hints: Hints, strict: bool) {
+        if !window.is_visible() {
+            return;
+        }
+        if let Some(id) = layers::x11_id(window) {
+            if !self.wm_tried.replace(true) {
+                match Wm::connect() {
+                    Ok(wm) => *self.wm.borrow_mut() = Some(wm),
+                    Err(e) => eprintln!("patch: can't talk to the window manager: {e}"),
+                }
+            }
+            if let Some(wm) = self.wm.borrow().as_ref() {
+                if let Err(e) = wm.apply(id, hints, strict) {
+                    eprintln!("patch: can't set the window layer: {e}");
+                }
+                return;
+            }
+        }
+        // Wayland (where this asks the compositor in vain) or no X connection.
+        if strict {
+            let level = match hints.layer {
+                Layer::Normal => WindowLevel::Normal,
+                Layer::Above => WindowLevel::AlwaysOnTop,
+                Layer::Below => WindowLevel::AlwaysOnBottom,
+            };
+            window.with_winit_window(|w| w.set_window_level(level));
+        }
+    }
+
+    fn apply_layers(&self, strict: bool) {
+        if let Some(main) = self.main.get() {
+            // An unpinned window needs nothing kept up.
+            if strict || self.pinned.get() {
+                self.apply_layer(main.window(), self.main_hints(), strict);
+            }
+        }
+        let widget = self.widget_window();
+        if let Some(w) = widget {
+            self.apply_layer(w.window(), self.widget_hints(), strict);
+        }
+    }
+
+    /// Checks the layers once the current event is handled.
+    fn layers_soon(&self) {
+        let me = self.me.clone();
+        later(move || {
+            if let Some(s) = me.upgrade() {
+                s.apply_layers(false);
+            }
+        });
+    }
+
+    /// Sets the layers on a window that was just shown, and again once the
+    /// window manager has mapped it.
+    fn layers_after_show(&self) {
+        self.apply_layers(true);
+        for ms in [150, 600] {
+            let me = self.me.clone();
+            Timer::single_shot(Duration::from_millis(ms), move || {
+                if let Some(s) = me.upgrade() {
+                    s.apply_layers(true);
+                }
+            });
+        }
+    }
+
+    fn wayland_layer_hint(&self) {
         if self.state.borrow().wayland_widget_hint {
             return;
         }
         let body = match self.opts.windowing {
             Windowing::Auto => {
-                "Wayland doesn't let apps keep a window on top. From the next start Patch runs through \
-                 XWayland while the widget is on, so it stays above other windows."
+                "Wayland doesn't let apps keep a window above or below others. From the next start Patch \
+                 runs through XWayland while the widget or “Keep Patch on top” is on, so they stay put."
             }
             _ => {
-                "Wayland doesn't let apps keep a window on top. Use your desktop's “Always on Top” \
-                 window option for the widget, or start Patch with --x11."
+                "Wayland doesn't let apps keep a window above or below others. Use your desktop's \
+                 “Keep Above/Below Others” window options, or start Patch with --x11."
             }
         };
-        self.notify_user("Floating widget", body);
+        self.notify_user("Window layers", body);
         self.state.borrow_mut().wayland_widget_hint = true;
         self.save_state_soon();
     }
@@ -528,13 +707,86 @@ impl Host for Shell {
 
     fn set_widget(&self, on: bool) {
         self.widget_wanted.set(on);
-        if let Some(tray) = self.tray.borrow().as_ref() {
-            tray.set_widget(on);
-        }
+        self.update_tray();
         let me = self.me.clone();
         later(move || {
             if let Some(s) = me.upgrade() {
                 s.sync_widget();
+            }
+        });
+    }
+
+    fn custom_chrome(&self) -> bool {
+        true
+    }
+
+    fn window_action(&self, action: WindowAction) {
+        let Some(main) = self.main.get() else { return };
+        let window = main.window();
+        match action {
+            WindowAction::Drag | WindowAction::Resize(_) => {
+                let result = window.with_winit_window(|w| match action {
+                    WindowAction::Resize(edge) => w.drag_resize_window(resize_direction(edge)),
+                    _ => w.drag_window(),
+                });
+                if let Some(Err(e)) = result {
+                    eprintln!("patch: can't move the window: {e}");
+                }
+                // The window manager takes the pointer, release included, for
+                // the move: end the press so the title bar doesn't stay grabbed.
+                let weak = main.as_weak();
+                later(move || {
+                    if let Some(m) = weak.upgrade() {
+                        m.window().dispatch_event(SlintEvent::PointerExited);
+                    }
+                });
+            }
+            // Like the window manager's close button used to: hide, and keep
+            // running or quit by the same rules.
+            WindowAction::Close => {
+                let me = self.me.clone();
+                later(move || {
+                    if let Some(s) = me.upgrade() {
+                        s.main_closed();
+                        if let Some(m) = s.main.get() {
+                            let _ = m.hide();
+                        }
+                    }
+                });
+            }
+            WindowAction::Minimize => window.set_minimized(true),
+            WindowAction::ToggleMaximize => {
+                let maximized = window.is_maximized();
+                window.set_maximized(!maximized);
+            }
+        }
+    }
+
+    fn set_pinned(&self, on: bool) {
+        self.pinned.set(on);
+        self.update_tray();
+        if on && self.wayland.get() && self.main.get().is_some_and(|m| m.window().is_visible()) {
+            self.wayland_layer_hint();
+        }
+        let me = self.me.clone();
+        later(move || {
+            if let Some(s) = me.upgrade() {
+                if let Some(main) = s.main.get() {
+                    s.apply_layer(main.window(), s.main_hints(), true);
+                }
+            }
+        });
+    }
+
+    fn set_widget_float(&self, float: bool) {
+        self.widget_float.set(float);
+        self.update_tray();
+        let me = self.me.clone();
+        later(move || {
+            if let Some(s) = me.upgrade() {
+                if let Some(w) = s.widget_window() {
+                    s.apply_layer(w.window(), s.widget_hints(), true);
+                }
             }
         });
     }
@@ -567,5 +819,18 @@ impl Host for Shell {
                 eprintln!("patch: can't copy: {e}");
             }
         }
+    }
+}
+
+fn resize_direction(edge: u8) -> ResizeDirection {
+    match edge {
+        0 => ResizeDirection::North,
+        1 => ResizeDirection::NorthEast,
+        2 => ResizeDirection::East,
+        3 => ResizeDirection::SouthEast,
+        4 => ResizeDirection::South,
+        5 => ResizeDirection::SouthWest,
+        6 => ResizeDirection::West,
+        _ => ResizeDirection::NorthWest,
     }
 }

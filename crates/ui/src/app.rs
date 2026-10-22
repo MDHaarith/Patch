@@ -4,13 +4,14 @@
 use crate::models::{self, color, Ctx};
 use crate::prefs::Prefs;
 use crate::{
-    Actions, CheckRow, Choice, DayCell, Editor, HostedHub, Look, MainWindow, OverlayWindow, Store, Theme,
+    Actions, CheckRow, Choice, DayCell, Editor, HostedHub, MainWindow, OverlayWindow, Store, Theme,
 };
+use crate::{themes, WindowAction};
 use crate::{Bar, Block, BoardCol, DayHead, ListInfo, Section, TaskItem};
 use crate::{Host, Reminder};
 use chrono::{Datelike, Duration, NaiveDate, NaiveTime, Timelike};
 use patch_core::doc::{COL_TODO, DEFAULT_LIST};
-use patch_core::model::{CheckItem, Repeat, Task, PALETTE};
+use patch_core::model::{CheckItem, Repeat, Task, Unit, PALETTE};
 use patch_core::time::{add_months, fmt_hour_label, hm, minutes_of, month_start, now_local};
 use patch_core::{quick, Doc};
 use patch_sync::{SyncClient, SyncConfig, SyncEvent, SyncStatus};
@@ -23,6 +24,21 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration as StdDuration;
 
 const REMINDER_CHOICES: [Option<i64>; 6] = [None, Some(0), Some(5), Some(15), Some(60), Some(1440)];
+
+/// "15 min", "2 hours", "1 day" before the start.
+fn alert_label(minutes: Option<i64>) -> String {
+    match minutes {
+        None => "None".into(),
+        Some(0) => "At time".into(),
+        Some(m) if m % 1440 == 0 => plural(m / 1440, "day"),
+        Some(m) if m % 60 == 0 => plural(m / 60, "hour"),
+        Some(m) => format!("{m} min"),
+    }
+}
+
+fn plural(n: i64, unit: &str) -> String {
+    if n == 1 { format!("1 {unit}") } else { format!("{n} {unit}s") }
+}
 
 thread_local! {
     // Lets work posted from the sync thread find the App on the UI thread.
@@ -51,6 +67,12 @@ struct Models {
     checklist: Rc<VecModel<CheckRow>>,
     editor_lists: Rc<VecModel<Choice>>,
     editor_columns: Rc<VecModel<Choice>>,
+    themes: Rc<VecModel<crate::ThemeCard>>,
+    palette: Rc<VecModel<slint::Color>>,
+    custom_repeats: Rc<VecModel<SharedString>>,
+    custom_alerts: Rc<VecModel<SharedString>>,
+    repeat_labels: Rc<VecModel<SharedString>>,
+    alert_labels: Rc<VecModel<SharedString>>,
 }
 
 impl Models {
@@ -75,6 +97,12 @@ impl Models {
             checklist: Rc::default(),
             editor_lists: Rc::default(),
             editor_columns: Rc::default(),
+            themes: Rc::new(VecModel::from(themes::cards())),
+            palette: Rc::new(VecModel::from(PALETTE.iter().map(|(_, h)| color(h)).collect::<Vec<_>>())),
+            custom_repeats: Rc::default(),
+            custom_alerts: Rc::default(),
+            repeat_labels: Rc::default(),
+            alert_labels: Rc::default(),
         }
     }
 
@@ -94,6 +122,10 @@ impl Models {
         s.set_hour_labels(self.hours.clone().into());
         s.set_weekdays(self.weekdays.clone().into());
         s.set_weekdays_short(self.weekdays_short.clone().into());
+        s.set_themes(self.themes.clone().into());
+        s.set_palette(self.palette.clone().into());
+        s.set_custom_repeats(self.custom_repeats.clone().into());
+        s.set_custom_alerts(self.custom_alerts.clone().into());
     }
 
     fn bind_editor(&self, e: &Editor) {
@@ -101,6 +133,8 @@ impl Models {
         e.set_checklist(self.checklist.clone().into());
         e.set_lists(self.editor_lists.clone().into());
         e.set_columns(self.editor_columns.clone().into());
+        e.set_repeats(self.repeat_labels.clone().into());
+        e.set_reminders(self.alert_labels.clone().into());
     }
 }
 
@@ -123,6 +157,9 @@ fn update<T: Clone + PartialEq + 'static>(m: &VecModel<T>, rows: Vec<T>) {
 }
 
 struct EditorState {
+    /// The repeat and alert each menu row stands for.
+    repeat_options: Vec<Repeat>,
+    alert_options: Vec<Option<i64>>,
     task: Task,
     is_new: bool,
     /// Next tap in the range picker sets the end date.
@@ -159,6 +196,9 @@ pub struct App {
     /// Reminders last handed to the OS, and whether the OS delivers them.
     os_reminders: RefCell<Option<Vec<Reminder>>>,
     os_delivers: Cell<bool>,
+    snapshot: RefCell<String>,
+    pet_tick: Cell<u32>,
+    pet_mood: Cell<i32>,
     timers: RefCell<Vec<Timer>>,
     toast_timer: Timer,
     focus_timer: Timer,
@@ -246,6 +286,9 @@ impl App {
             overlay_pending: Cell::new(false),
             os_reminders: RefCell::new(None),
             os_delivers: Cell::new(false),
+            snapshot: RefCell::new(String::new()),
+            pet_tick: Cell::new(0),
+            pet_mood: Cell::new(1),
             timers: RefCell::new(Vec::new()),
             toast_timer: Timer::default(),
             focus_timer: Timer::default(),
@@ -256,6 +299,16 @@ impl App {
         CURRENT.with(|c| *c.borrow_mut() = Rc::downgrade(&app));
         app.saved_rev.set(app.doc.lock().unwrap().rev());
         app.configure_sync();
+        {
+            let p = app.prefs.borrow();
+            if p.pinned {
+                app.host.set_pinned(true);
+            }
+            if p.widget {
+                app.host.set_widget_float(p.widget_float);
+            }
+        }
+        app.refresh_presets();
         app.start_timers();
         app.refresh();
         app
@@ -286,6 +339,15 @@ impl App {
         t.start(TimerMode::Repeated, StdDuration::from_millis(1500), move || {
             if let Some(app) = weak.upgrade() {
                 app.save_if_dirty();
+            }
+        });
+        timers.push(t);
+        // The pet's idle animation: bob and shuffle, blinking now and then.
+        let weak = Rc::downgrade(self);
+        let t = Timer::default();
+        t.start(TimerMode::Repeated, StdDuration::from_millis(450), move || {
+            if let Some(app) = weak.upgrade() {
+                app.animate_pet();
             }
         });
         timers.push(t);
@@ -355,9 +417,15 @@ impl App {
 
     fn init_store(&self, s: &Store, theme: &Theme) {
         self.models.bind(s);
+        s.set_pet_image(crate::pet::image(
+            crate::pet::Mood::from_index(self.pet_mood.get()),
+            self.pet_tick.get(),
+            false,
+        ));
         let mobile = self.host.is_mobile();
         s.set_mobile(mobile);
         s.set_can_host(self.host.can_host_hub());
+        s.set_custom_chrome(self.host.custom_chrome());
         s.set_version(env!("CARGO_PKG_VERSION").into());
         s.set_grain(self.grain.clone());
         s.set_app_icon(self.icon.clone());
@@ -371,11 +439,10 @@ impl App {
 
     fn apply_prefs_to(&self, s: &Store, theme: &Theme) {
         let p = self.prefs.borrow();
-        theme.set_look(match p.look {
-            1 => Look::Glass,
-            2 => Look::Light,
-            _ => Look::Matte,
-        });
+        themes::apply(theme, p.look);
+        s.set_theme(p.look);
+        s.set_pinned(p.pinned);
+        s.set_widget_float(p.widget_float);
         s.set_week_monday(p.week_monday);
         s.set_time_24h(p.time_24h);
         s.set_autostart(p.autostart);
@@ -564,13 +631,85 @@ impl App {
                 });
             }
         });
-        on!(on_recolor_list, |app, id| app.edit(|d| {
-            if let Some(mut l) = d.list(&id) {
-                let i = PALETTE.iter().position(|(_, h)| h.eq_ignore_ascii_case(&l.color)).map(|i| i + 1).unwrap_or(0);
-                l.color = PALETTE[i % PALETTE.len()].1.to_string();
+        on!(on_set_list_color, |app, id, i| app.edit(|d| {
+            if let (Some(mut l), Some((_, hex))) = (d.list(&id), PALETTE.get(i.max(0) as usize)) {
+                l.color = hex.to_string();
                 d.save_list(&l);
             }
         }));
+        on!(on_add_custom_repeat, |app, n, unit| {
+            let unit = Unit::ALL.get(unit.max(0) as usize).copied().unwrap_or(Unit::Week);
+            let code = Repeat::Every(n.clamp(1, 999) as u16, unit).normalized().encode();
+            let builtin = Repeat::ALL.iter().any(|r| r.encode() == code);
+            {
+                let mut p = app.prefs.borrow_mut();
+                if !builtin && !p.custom_repeats.contains(&code) {
+                    p.custom_repeats.push(code);
+                }
+            }
+            if builtin {
+                app.toast("That one is already built in");
+            }
+            app.save_prefs();
+            app.refresh_presets();
+        });
+        on!(on_remove_custom_repeat, |app, i| {
+            {
+                let mut p = app.prefs.borrow_mut();
+                if (i as usize) < p.custom_repeats.len() {
+                    p.custom_repeats.remove(i as usize);
+                }
+            }
+            app.save_prefs();
+            app.refresh_presets();
+        });
+        on!(on_add_custom_alert, |app, minutes| {
+            let m = minutes.clamp(1, 60 * 24 * 365) as i64;
+            {
+                let mut p = app.prefs.borrow_mut();
+                if !REMINDER_CHOICES.contains(&Some(m)) && !p.custom_alerts.contains(&m) {
+                    p.custom_alerts.push(m);
+                    p.custom_alerts.sort_unstable();
+                }
+            }
+            app.save_prefs();
+            app.refresh_presets();
+        });
+        on!(on_remove_custom_alert, |app, i| {
+            {
+                let mut p = app.prefs.borrow_mut();
+                if (i as usize) < p.custom_alerts.len() {
+                    p.custom_alerts.remove(i as usize);
+                }
+            }
+            app.save_prefs();
+            app.refresh_presets();
+        });
+        on!(on_set_pinned, |app, on| {
+            app.prefs.borrow_mut().pinned = on;
+            app.save_prefs();
+            app.each_store(|s| s.set_pinned(on));
+            app.host.set_pinned(on);
+        });
+        on!(on_set_widget_float, |app, on| {
+            app.prefs.borrow_mut().widget_float = on;
+            app.save_prefs();
+            app.each_store(|s| s.set_widget_float(on));
+            app.host.set_widget_float(on);
+        });
+        on!(on_window_action, |app, kind, edge| {
+            let action = match kind {
+                0 => WindowAction::Drag,
+                1 => WindowAction::Resize(edge.clamp(0, 7) as u8),
+                2 => WindowAction::Close,
+                3 => WindowAction::Minimize,
+                _ => {
+                    app.each_store(|s| s.set_maximized(!s.get_maximized()));
+                    WindowAction::ToggleMaximize
+                }
+            };
+            app.host.window_action(action);
+        });
         on!(on_delete_list, |app, id| app.edit(|d| {
             d.delete_list(&id);
         }));
@@ -615,13 +754,8 @@ impl App {
         on!(on_set_look, |app, look| {
             app.prefs.borrow_mut().look = look;
             app.save_prefs();
-            app.each_theme(|t| {
-                t.set_look(match look {
-                    1 => Look::Glass,
-                    2 => Look::Light,
-                    _ => Look::Matte,
-                })
-            });
+            app.each_theme(|t| themes::apply(t, look));
+            app.each_store(|s| s.set_theme(look));
             app.refresh();
         });
         on!(on_set_week_monday, |app, v| {
@@ -666,6 +800,9 @@ impl App {
             app.save_prefs();
             app.each_store(|s| s.set_widget_on(on));
             app.host.set_widget(on);
+            if on {
+                app.host.set_widget_float(app.prefs.borrow().widget_float);
+            }
         });
         on!(on_set_overlay, |app, on| {
             let ok = app.host.set_overlay(on);
@@ -1090,7 +1227,7 @@ impl App {
     pub fn open_task(&self, id: &str) {
         let Some(task) = self.doc.lock().unwrap().task(id) else { return };
         let month = month_start(task.start.map(|s| s.date()).unwrap_or(self.state.borrow().selected));
-        self.state.borrow_mut().editor = Some(EditorState { task, is_new: false, picking_end: false, picker_month: month });
+        self.state.borrow_mut().editor = Some(EditorState { repeat_options: Vec::new(), alert_options: Vec::new(), task, is_new: false, picking_end: false, picker_month: month });
         self.load_editor();
     }
 
@@ -1125,11 +1262,12 @@ impl App {
             }
             _ => {}
         }
-        self.state.borrow_mut().editor = Some(EditorState { task: t, is_new: true, picking_end: true, picker_month: month_start(day) });
+        self.state.borrow_mut().editor = Some(EditorState { repeat_options: Vec::new(), alert_options: Vec::new(), task: t, is_new: true, picking_end: true, picker_month: month_start(day) });
         self.load_editor();
     }
 
     fn load_editor(&self) {
+        self.editor_options();
         let (lists, columns) = {
             let d = self.doc.lock().unwrap();
             (d.lists(), d.columns())
@@ -1156,8 +1294,8 @@ impl App {
             ed.set_end_key(end_day.to_string().into());
             ed.set_start_min(minutes_of(start) as i32);
             ed.set_end_min(if t.all_day { minutes_of(start) as i32 + 60 } else { minutes_of(end) as i32 });
-            ed.set_repeat_index(t.repeat.index() as i32);
-            ed.set_reminder_index(REMINDER_CHOICES.iter().position(|r| *r == t.reminder).unwrap_or(0) as i32);
+            ed.set_repeat_index(e.repeat_options.iter().position(|r| *r == t.repeat).unwrap_or(0) as i32);
+            ed.set_reminder_index(e.alert_options.iter().position(|r| *r == t.reminder).unwrap_or(0) as i32);
         });
         update(&self.models.checklist, checklist_rows(&t.checklist));
         drop(st);
@@ -1185,8 +1323,8 @@ impl App {
             t.column = c.id.clone();
         }
         t.priority = ed.get_priority().clamp(0, 3) as u8;
-        t.repeat = Repeat::ALL.get(ed.get_repeat_index().max(0) as usize).copied().unwrap_or_default();
-        t.reminder = REMINDER_CHOICES.get(ed.get_reminder_index().max(0) as usize).copied().flatten();
+        t.repeat = e.repeat_options.get(ed.get_repeat_index().max(0) as usize).copied().unwrap_or_default();
+        t.reminder = e.alert_options.get(ed.get_reminder_index().max(0) as usize).copied().flatten();
         if !ed.get_scheduled() {
             t.start = None;
             t.end = None;
@@ -1354,6 +1492,87 @@ impl App {
         self.refresh();
     }
 
+    /// Custom repeat/alert presets for Settings.
+    fn refresh_presets(&self) {
+        let p = self.prefs.borrow();
+        update(&self.models.custom_repeats, p.custom_repeats.iter().map(|c| Repeat::parse(c).label().into()).collect());
+        update(&self.models.custom_alerts, p.custom_alerts.iter().map(|m| format!("{} before", alert_label(Some(*m))).into()).collect());
+    }
+
+    /// The editor's Repeat and Alert menus: built-ins, then the user's
+    /// presets, then the task's own value if it's neither.
+    fn editor_options(&self) {
+        let p = self.prefs.borrow().clone();
+        let mut st = self.state.borrow_mut();
+        let Some(e) = st.editor.as_mut() else { return };
+        let mut repeats: Vec<Repeat> = Repeat::ALL.to_vec();
+        repeats.extend(p.custom_repeats.iter().map(|c| Repeat::parse(c)).filter(|r| *r != Repeat::None));
+        if !repeats.contains(&e.task.repeat) {
+            repeats.push(e.task.repeat);
+        }
+        repeats.dedup();
+        let mut alerts: Vec<Option<i64>> = REMINDER_CHOICES.to_vec();
+        alerts.extend(p.custom_alerts.iter().map(|m| Some(*m)));
+        if !alerts.contains(&e.task.reminder) {
+            alerts.push(e.task.reminder);
+        }
+        alerts[1..].sort_by_key(|m| m.unwrap_or(0));
+        alerts.dedup();
+        update(&self.models.repeat_labels, repeats.iter().map(|r| r.label().into()).collect());
+        update(&self.models.alert_labels, alerts.iter().map(|m| alert_label(*m).into()).collect());
+        e.repeat_options = repeats;
+        e.alert_options = alerts;
+    }
+
+    fn animate_pet(&self) {
+        let tick = self.pet_tick.get().wrapping_add(1);
+        self.pet_tick.set(tick);
+        let blink = tick.is_multiple_of(9);
+        let img = crate::pet::image(crate::pet::Mood::from_index(self.pet_mood.get()), tick, blink);
+        self.each_store(|s| s.set_pet_image(img.clone()));
+    }
+
+    /// The pet's mood and one-line status.
+    fn pet(&self, ctx: &Ctx, open_today: usize) -> (i32, String) {
+        let overdue = ctx.tasks.iter().filter(|t| !ctx.hidden.contains(&t.list) && t.is_overdue(ctx.now)).count();
+        let hour = ctx.now.hour();
+        if overdue > 0 {
+            (2, if overdue == 1 { "1 overdue — let's catch up".into() } else { format!("{overdue} overdue — let's catch up") })
+        } else if !(6..23).contains(&hour) {
+            (3, if open_today == 0 { "All done. Sleep well".into() } else { format!("Late night · {open_today} left") })
+        } else if open_today == 0 {
+            (0, "All clear today ✓".into())
+        } else {
+            (1, if open_today == 1 { "1 thing left today".into() } else { format!("{open_today} things left today") })
+        }
+    }
+
+    fn publish_snapshot(&self, ctx: &Ctx, mood: i32, open: usize) {
+        let mood = ["happy", "busy", "worried", "sleepy"][mood.clamp(0, 3) as usize];
+        let item = |i: &TaskItem| {
+            serde_json::json!({
+                "id": i.id.as_str(),
+                "title": i.title.as_str(),
+                "when": i.when.as_str(),
+                "color": format!("#{:02X}{:02X}{:02X}", i.color.red(), i.color.green(), i.color.blue()),
+                "done": i.done,
+                "overdue": i.overdue,
+            })
+        };
+        let json = serde_json::json!({
+            "date": ctx.now.format("%A, %-d %B").to_string(),
+            "open": open,
+            "mood": mood,
+            "today": self.models.today.iter().map(|i| item(&i)).collect::<Vec<_>>(),
+            "upcoming": self.models.up_next.iter().map(|i| item(&i)).collect::<Vec<_>>(),
+        })
+        .to_string();
+        if *self.snapshot.borrow() != json {
+            self.host.publish_snapshot(&json);
+            *self.snapshot.borrow_mut() = json;
+        }
+    }
+
     // ------------------------------------------------------------------ refresh
 
     fn ctx(&self) -> Ctx {
@@ -1462,6 +1681,7 @@ impl App {
             3 => ("Board".into(), String::new(), format!("{open_cards} open")),
             _ => ("Tasks".into(), String::new(), format!("{open_tasks} open")),
         };
+        let (mood, pet_line) = self.pet(&ctx, today_open);
         let agenda_title = format!("{} · {}", ctx.day_name(selected).to_uppercase(), selected.format("%-d %B").to_string().to_uppercase());
         self.each_store(|s| {
             s.set_view(view);
@@ -1474,7 +1694,13 @@ impl App {
             s.set_board_tallest(tallest);
             s.set_today_open(today_open as i32);
             s.set_day_agenda_title(agenda_title.clone().into());
+            s.set_pet_mood(mood);
+            s.set_pet_line(pet_line.clone().into());
         });
+        if self.pet_mood.replace(mood) != mood || self.pet_tick.get() == 0 {
+            self.animate_pet();
+        }
+        self.publish_snapshot(&ctx, mood, today_open);
         self.refresh_clock();
         self.sync_os_reminders();
     }

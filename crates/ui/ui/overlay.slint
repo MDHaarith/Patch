@@ -3,34 +3,18 @@ import { Icon } from "icons.slint";
 import { Store, Actions, TaskItem } from "store.slint";
 import { Glass, Field, IconButton, Segmented, Scroll, Check, Priority } from "widgets.slint";
 import { TaskRow } from "rows.slint";
+import { Pet } from "pet.slint";
 
-// Collapsed overlay: a floating matte-glass bubble with today's open count.
+// Collapsed overlay: Patch's pet, with today's open count.
 export component Bubble inherits Rectangle {
     width: 60px;
     height: 60px;
-    Rectangle {
-        x: 4px;
-        y: 4px;
-        width: 52px;
-        height: 52px;
-        border-radius: 26px;
-        background: Theme.light
-            ? @linear-gradient(180deg, #ffffff 0%, #f0f0f4 100%)
-            : Theme.glass
-                ? @linear-gradient(180deg, #4b8d88 0%, #1d555e 100%)
-                : @linear-gradient(180deg, #2a2a2e 0%, #0e0e10 100%);
-        border-width: 1.5px;
-        border-color: Store.today-open > 0 ? Theme.accent : Theme.edge;
-        drop-shadow-blur: 8px;
-        drop-shadow-offset-y: 2px;
-        drop-shadow-color: #00000080;
-        if Store.today-open > 0: Text {
-            text: Store.today-open;
-            font-size: 20px;
-            font-weight: 700;
-            color: Theme.text;
-        }
-        if Store.today-open == 0: Icon { name: "check"; size: 22px; tint: Theme.success; stroke-width: 2.5px; }
+    pet := Pet {
+        size: 52px;
+        count: Store.today-open;
+    }
+    public function hop() {
+        pet.hop-once();
     }
 }
 
@@ -51,14 +35,27 @@ export component OverlayPanel inherits Rectangle {
             spacing: 8px;
             HorizontalLayout {
                 height: 44px;
-                spacing: 4px;
+                spacing: 8px;
+                Pet {
+                    y: (parent.height - self.height) / 2;
+                    size: 40px;
+                    count: 0;
+                    show-count: false;
+                }
                 // Grip
                 VerticalLayout {
                     horizontal-stretch: 1;
                     alignment: center;
                     spacing: 1px;
                     Text { text: Store.clock; font-size: 20px; font-weight: 700; color: Theme.text; }
-                    Text { text: Store.today-label; font-size: Theme.fs-s; color: Theme.text-2; overflow: elide; }
+                    Text { text: Store.pet-line; font-size: Theme.fs-s; color: Theme.text-2; overflow: elide; }
+                }
+                if !Store.mobile: IconButton {
+                    y: (parent.height - self.height) / 2;
+                    icon: "pin";
+                    size: 32px;
+                    active: Store.widget-float;
+                    clicked => { Actions.set-widget-float(!Store.widget-float); }
                 }
                 IconButton {
                     y: (parent.height - self.height) / 2;
@@ -181,7 +178,7 @@ export component OverlayWindow inherits Window {
         height: parent.height;
         radius: Store.mobile ? 24px : 20px;
     }
-    if !Store.overlay-expanded: Bubble {
+    if !Store.overlay-expanded: bubble := Bubble {
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         TouchArea { clicked => { Actions.overlay-expand(true); } }

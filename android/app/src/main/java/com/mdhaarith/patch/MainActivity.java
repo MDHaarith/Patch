@@ -23,6 +23,8 @@ import java.lang.ref.WeakReference;
 /** The app screen: one edge-to-edge surface Rust renders the Slint MainWindow into. */
 public final class MainActivity extends Activity {
     static final String EXTRA_TASK_ID = "task_id";
+    /** From the home-screen widget's "+". */
+    static final String EXTRA_NEW_TASK = "new_task";
 
     private PatchSurfaceView view;
     private OnBackInvokedCallback backCallback;
@@ -130,6 +132,9 @@ public final class MainActivity extends Activity {
         if (id != null) {
             intent.removeExtra(EXTRA_TASK_ID);
             PatchNative.nativeOpenTask(id);
+        } else if (intent != null && intent.getBooleanExtra(EXTRA_NEW_TASK, false)) {
+            intent.removeExtra(EXTRA_NEW_TASK);
+            PatchNative.nativeNewTask();
         }
     }
 
