@@ -56,7 +56,7 @@ final class Reminders {
             for (int i = 0; i < list.length(); i++) {
                 JSONObject r = list.getJSONObject(i);
                 long at = r.getLong("at");
-                if (at < now - 60_000) {
+                if (at <= now) {
                     continue;
                 }
                 int code = r.getString("key").hashCode();

@@ -80,6 +80,26 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y pkg-config libfontconfig1-dev
       - name: Host tests (JNI contract, runtime)
         run: cargo test -p patch-android
+      # Releases must always be signed with the same key, or Android refuses
+      # to install them as updates. Add the four repository secrets once; tag
+      # builds fail without them instead of shipping a throwaway debug key.
+      - name: Release signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > android/app/release.jks
+            printf 'storeFile=release.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+              "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > android/keystore.properties
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "::error::Release builds need the ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD secrets"
+            exit 1
+          else
+            echo "No release key configured: this build's release APK is debug-signed (fine for testing, not for publishing)."
+          fi
       - name: Build APKs and lint
         working-directory: android
         run: ./gradlew --no-daemon assembleDebug assembleRelease lintDebug

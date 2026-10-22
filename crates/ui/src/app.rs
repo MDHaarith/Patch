@@ -1021,7 +1021,9 @@ impl App {
             .filter_map(|t| {
                 let (start, before) = (t.start?, t.reminder?);
                 let at = start - Duration::minutes(before);
-                if at < now - Duration::minutes(1) || at > now + Duration::days(14) {
+                // Only future ones: an alarm set in the past fires at once, so
+                // re-arming one just delivered would notify twice.
+                if at <= now || at > now + Duration::days(14) {
                     return None;
                 }
                 let at_ms = chrono::Local.from_local_datetime(&at).earliest()?.timestamp_millis();
