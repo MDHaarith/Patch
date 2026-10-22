@@ -70,6 +70,9 @@ jobs:
           targets: aarch64-linux-android,x86_64-linux-android
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-ndk --locked
+      # The host-side tests build Slint for Linux, which links fontconfig.
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libfontconfig1-dev
       - name: Host tests (JNI contract, runtime)
         run: cargo test -p patch-android
       - name: Build APKs and lint
