@@ -401,11 +401,11 @@ export component SettingsPanel inherits Rectangle {
                 }
 
                 if Store.mobile: Card {
-                    title: "Display over other apps";
+                    title: "Floating bubble";
                     icon: "pin";
                     Row {
                         label: "Floating Patch bubble";
-                        hint: Store.overlay-allowed ? "Today's tasks and quick add, floating above every app." : "Android needs the “Display over other apps” permission — you'll be taken to the setting.";
+                        hint: Store.overlay-allowed ? "Today's tasks and quick add, floating above every app." : "Allow Patch's bubbles (“Display over other apps” before Android 11) — you'll be taken to the setting.";
                         Toggle { y: (parent.height - self.height) / 2; checked: Store.overlay-on; toggled(v) => { Actions.set-overlay(v); } }
                     }
                     Row {

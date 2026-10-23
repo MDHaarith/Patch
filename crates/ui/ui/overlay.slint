@@ -56,7 +56,7 @@ export component OverlayPanel inherits Rectangle {
                     size: 32px;
                     clicked => { Actions.open-app(""); }
                 }
-                IconButton {
+                if !Store.in-bubble: IconButton {
                     y: (parent.height - self.height) / 2;
                     icon: "minus";
                     size: 32px;

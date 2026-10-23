@@ -8,6 +8,9 @@
     <string name="overlay_title">Patch is floating</string>
     <string name="overlay_text">Tap to open Patch</string>
     <string name="overlay_hide">Hide</string>
+    <string name="channel_bubble">Floating bubble</string>
+    <string name="channel_bubble_desc">Patch\'s bubble with today\'s tasks</string>
+    <string name="bubble_text">Tap the bubble for today\'s tasks</string>
 
     <!-- Home-screen widget -->
     <string name="widget_label">Patch</string>
