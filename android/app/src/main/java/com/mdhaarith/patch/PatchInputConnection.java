@@ -100,11 +100,45 @@ final class PatchInputConnection extends BaseInputConnection {
 
     @Override
     public boolean setSelection(int start, int end) {
+        if (start < 0 || end < 0 || start > view.editable.length() || end > view.editable.length()) {
+            return false;
+        }
         view.beginBatch();
         super.setSelection(start, end);
         view.imeEdit(PatchNative.IME_SELECT, null, start, end);
         view.endBatch();
         return true;
+    }
+
+    @Override
+    public boolean performContextMenuAction(int id) {
+        switch (id) {
+            case android.R.id.selectAll:
+                finishComposingText();
+                return setSelection(0, view.editable.length());
+            case android.R.id.copy:
+            case android.R.id.cut: {
+                finishComposingText();
+                CharSequence selected = getSelectedText(0);
+                if (selected != null) {
+                    PatchNative.copyText(selected.toString());
+                    if (id == android.R.id.cut) {
+                        commitText("", 1);
+                    }
+                }
+                return true;
+            }
+            case android.R.id.paste:
+            case android.R.id.pasteAsPlainText: {
+                String text = PatchNative.clipboardText();
+                if (text != null) {
+                    commitText(text, 1);
+                }
+                return true;
+            }
+            default:
+                return super.performContextMenuAction(id);
+        }
     }
 
     @Override

@@ -165,8 +165,12 @@ export component Segmented inherits Rectangle {
     }
 }
 
-// Single or multi-line text field. Tells the platform when it gains focus so
-// Android can raise the soft keyboard.
+// Mouse-drag panning is a touch idiom; desktops use the wheel and trackpad.
+export component Scroll inherits Flickable {
+    mouse-drag-pan-enabled: Store.mobile;
+}
+
+// Wrapped text field. `multiline` makes Enter insert a newline instead of submit.
 export component Field inherits Rectangle {
     in-out property <string> text <=> input.text;
     in property <string> placeholder;
@@ -180,9 +184,10 @@ export component Field inherits Rectangle {
     callback accepted(string);
     callback edited(string);
     callback escaped();
+    min-width: 0px;
     min-height: multiline ? 72px : (Store.mobile ? 40px : 30px);
-    max-height: multiline ? 100000px : (Store.mobile ? 40px : 30px);
-    vertical-stretch: multiline ? 1 : 0;
+    preferred-height: Math.max(self.min-height, multiline ? input.preferred-height + 16px : Math.min(160px, input.preferred-height + 16px));
+    vertical-stretch: 0;
     border-radius: Store.mobile ? 12px : 8px;
     background: boxed ? Theme.well : transparent;
     border-width: boxed ? 1px : 0px;
@@ -216,16 +221,48 @@ export component Field inherits Rectangle {
     HorizontalLayout {
         padding-left: root.boxed ? 10px : 0px;
         padding-right: root.boxed ? 10px : 0px;
-        padding-top: root.multiline ? 8px : 0px;
-        padding-bottom: root.multiline ? 8px : 0px;
+        padding-top: 8px;
+        padding-bottom: 8px;
         spacing: 7px;
         if root.icon != "": IconBox {
             name: root.icon;
             size: 14px;
             tint: Theme.text-3;
         }
-        Rectangle {
+        text-scroll := Scroll {
             horizontal-stretch: 1;
+            min-width: 0px;
+            content-width: self.width;
+            content-height: Math.max(self.height, input.preferred-height);
+            menu-area := TouchArea {
+                mouse-cursor: MouseCursor.text;
+                clicked => { input.focus(); }
+                pointer-event(e) => {
+                    if (e.button == PointerEventButton.right && e.kind == PointerEventKind.up) {
+                        input.focus();
+                        edit-menu.show();
+                    }
+                }
+            }
+            edit-menu := PopupWindow {
+                x: Math.max(0px, Math.min(menu-area.mouse-x, parent.width - self.width));
+                y: menu-area.mouse-y;
+                width: 160px;
+                height: menu-items.preferred-height;
+                Rectangle {
+                    background: Theme.float;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: Theme.hairline;
+                    menu-items := VerticalLayout {
+                        padding: 4px;
+                        Button { text: "Copy"; enabled: input.text != ""; clicked => { input.copy(); edit-menu.close(); } }
+                        Button { text: "Cut"; enabled: input.text != ""; clicked => { input.cut(); edit-menu.close(); } }
+                        Button { text: "Paste"; clicked => { input.paste(); edit-menu.close(); } }
+                        Button { text: "Select all"; enabled: input.text != ""; clicked => { input.select-all(); edit-menu.close(); } }
+                    }
+                }
+            }
             placeholder-text := Text {
                 x: 0;
                 y: root.multiline ? 0 : (parent.height - self.height) / 2;
@@ -239,20 +276,32 @@ export component Field inherits Rectangle {
             }
             input := TextInput {
                 x: 0;
-                y: root.multiline ? 0 : (parent.height - self.height) / 2;
+                y: 0;
                 width: parent.width;
-                height: root.multiline ? parent.height : self.preferred-height;
+                height: text-scroll.content-height;
                 color: Theme.text;
                 font-size: root.font-size;
                 font-weight: root.font-weight;
-                single-line: !root.multiline;
-                wrap: root.multiline ? word-wrap : no-wrap;
+                single-line: false;
+                wrap: word-wrap;
+                min-width: 0px;
                 input-type: root.input-type;
                 selection-background-color: Theme.accent.with-alpha(0.4);
                 selection-foreground-color: Theme.text;
                 accepted => { root.accepted(self.text); }
                 edited => { root.edited(self.text); }
+                cursor-position-changed(pos) => {
+                    if (pos.y + text-scroll.content-y < 0px) {
+                        text-scroll.content-y = -pos.y;
+                    } else if (pos.y + text-scroll.content-y > text-scroll.height - root.font-size * 1.5) {
+                        text-scroll.content-y = Math.min(0px, text-scroll.height - pos.y - root.font-size * 1.5);
+                    }
+                }
                 key-pressed(e) => {
+                    if (e.text == Key.Return && !root.multiline) {
+                        root.accepted(self.text);
+                        return accept;
+                    }
                     if (e.text == Key.Escape) {
                         self.clear-focus();
                         root.escaped();
@@ -373,12 +422,6 @@ export component Priority inherits Text {
     font-weight: 800;
     font-size: Theme.fs-s;
     vertical-alignment: center;
-}
-
-// A scrolling area. Mouse-drag panning is a touch idiom, so only Android
-// enables it; desktops scroll with the wheel and trackpad.
-export component Scroll inherits Flickable {
-    mouse-drag-pan-enabled: Store.mobile;
 }
 
 export component Toast inherits Rectangle {

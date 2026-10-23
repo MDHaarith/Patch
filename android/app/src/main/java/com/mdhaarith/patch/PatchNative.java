@@ -40,6 +40,7 @@ final class PatchNative {
     static final int TOUCH_MOVE = 1;
     static final int TOUCH_UP = 2;
     static final int TOUCH_CANCEL = 3;
+    static final int TOUCH_LONG_PRESS = 4;
 
     static final int IME_COMMIT = 0;
     static final int IME_COMPOSE = 1;
@@ -52,6 +53,7 @@ final class PatchNative {
     static final int IME_HIDE = 0;
     static final int IME_UPDATE = 1;
     static final int IME_SHOW = 2;
+    static final int IME_SHOW_ACTIONS = 3;
 
     /** Look of the app: 0 matte black, 1 liquid glass, 2 light. */
     static volatile int look = 0;
@@ -261,7 +263,12 @@ final class PatchNative {
     }
 
     static void copyText(String text) {
-        main.post(() -> clipboard.setPrimaryClip(ClipData.newPlainText("Patch", text)));
+        Runnable copy = () -> clipboard.setPrimaryClip(ClipData.newPlainText("Patch", text));
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            copy.run();
+        } else {
+            main.post(copy);
+        }
     }
 
     static String clipboardText() {
