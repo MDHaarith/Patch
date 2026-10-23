@@ -34,7 +34,8 @@ public final class Bubble extends BroadcastReceiver {
         return Build.VERSION.SDK_INT >= 30;
     }
 
-    /** Notifications on and the user lets Patch's conversations bubble. */
+    /** Notifications on and bubbles not switched off for Patch. Under "Selected
+     * conversations" the notification carries a bubble button the user taps. */
     @TargetApi(30)
     static boolean allowed(Context context) {
         NotificationManager nm = context.getSystemService(NotificationManager.class);
@@ -42,11 +43,12 @@ public final class Bubble extends BroadcastReceiver {
             return false;
         }
         if (Build.VERSION.SDK_INT >= 31) {
-            return nm.getBubblePreference() == NotificationManager.BUBBLE_PREFERENCE_ALL;
+            return nm.getBubblePreference() != NotificationManager.BUBBLE_PREFERENCE_NONE;
         }
         return areBubblesAllowed(nm);
     }
 
+    @TargetApi(29)
     @SuppressWarnings("deprecation")
     private static boolean areBubblesAllowed(NotificationManager nm) {
         return nm.areBubblesAllowed();

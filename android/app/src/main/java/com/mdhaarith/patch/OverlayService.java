@@ -179,6 +179,7 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
         expanded = Prefs.is(this, Prefs.OVERLAY_EXPANDED);
         view = new PatchSurfaceView(this, PatchNative.OVERLAY);
         view.setFocusHost(this);
+        view.routedTouches = true;
         view.setElevation(dp(ELEVATION_DP));
         view.setOutlineProvider(new ViewOutlineProvider() {
             @Override

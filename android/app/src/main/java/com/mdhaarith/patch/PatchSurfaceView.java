@@ -112,7 +112,7 @@ final class PatchSurfaceView extends SurfaceView implements SurfaceHolder.Callba
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        if (kind != PatchNative.MAIN) {
+        if (routedTouches) {
             return false; // The overlay frame routes its touches itself.
         }
         if (event.getActionMasked() == MotionEvent.ACTION_DOWN && !hasFocus()) {
@@ -172,6 +172,9 @@ final class PatchSurfaceView extends SurfaceView implements SurfaceHolder.Callba
     }
 
     /** A synthetic tap, for the overlay's drag handles. */
+    /** Set by {@link OverlayService}, whose frame drags and forwards touches itself. */
+    boolean routedTouches;
+
     void tap(float x, float y) {
         PatchNative.nativeTouch(kind, PatchNative.TOUCH_DOWN, x, y);
         PatchNative.nativeTouch(kind, PatchNative.TOUCH_UP, x, y);
