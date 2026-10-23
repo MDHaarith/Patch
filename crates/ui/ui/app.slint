@@ -446,7 +446,10 @@ component DesktopShell inherits Rectangle {
     callback focus-search();
     property <length> gap: 10px;
     property <length> side-w: Store.sidebar-open && self.width > 760px ? 248px : 0px;
-    property <length> inspector-w: Store.editor-open ? 360px : 0px;
+    // 0..1 so the inspector slides in and the main pane reflows smoothly.
+    property <float> inspector-t: Store.editor-open ? 1 : 0;
+    animate inspector-t { duration: 220ms; easing: ease-out; }
+    property <length> inspector-w: 360px * root.inspector-t;
 
     // With the custom frame, empty space moves the window.
     if Store.custom-chrome: TouchArea {
@@ -466,7 +469,7 @@ component DesktopShell inherits Rectangle {
     main := Glass {
         x: root.side-w > 0 ? root.side-w + 2 * root.gap : root.gap;
         y: root.gap;
-        width: parent.width - self.x - root.gap - (root.inspector-w > 0 ? root.inspector-w + root.gap : 0px);
+        width: parent.width - self.x - root.gap - (root.inspector-w + root.gap * root.inspector-t);
         height: parent.height - 2 * root.gap;
         radius: 18px;
         fill: Theme.content;
@@ -495,10 +498,11 @@ component DesktopShell inherits Rectangle {
             width: 340px;
         }
     }
-    if root.inspector-w > 0: Glass {
-        x: parent.width - root.inspector-w - root.gap;
+    if root.inspector-t > 0: Glass {
+        x: parent.width - root.inspector-w - root.gap * root.inspector-t;
         y: root.gap;
-        width: root.inspector-w;
+        width: 360px;
+        opacity: root.inspector-t;
         height: parent.height - 2 * root.gap;
         radius: 18px;
         fill: Theme.float;
@@ -618,7 +622,11 @@ component MobileShell inherits Rectangle {
         }
     }
 
-    if Store.editor-open: Rectangle {
+    property <float> editor-t: Store.editor-open ? 1 : 0;
+    animate editor-t { duration: 220ms; easing: ease-out; }
+    if root.editor-t > 0: Rectangle {
+        y: parent.height * (1 - root.editor-t) * 0.25;
+        opacity: root.editor-t;
         background: Theme.solid;
         TouchArea {}
         VerticalLayout {

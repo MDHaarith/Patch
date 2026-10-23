@@ -215,6 +215,9 @@ fn desktop_interactions() {
     let (ex, ey) = cell_xy((empty - grid0).num_days() as f32);
     ui.double_click(ex + cell_w / 2.0, ey + cell_h - 12.0);
     assert!(main.global::<Store>().get_editor_open(), "double-click opens the editor");
+    // Let the inspector finish sliding in before clicking inside it.
+    std::thread::sleep(StdDuration::from_millis(250));
+    ui.settle();
     ui.type_text("Conference");
     // Picker cells: find them by key through the model and click via the
     // picker geometry inside the 360px inspector.
