@@ -8,6 +8,8 @@ use std::path::Path;
 pub struct Prefs {
     /// Index into the theme list (0 Matte Black, 1 Liquid Glass, 2 Light, ...).
     pub look: i32,
+    /// Index into `pet::SKINS`.
+    pub pet_skin: i32,
     pub week_monday: bool,
     pub time_24h: bool,
     /// 0 day, 1 week, 2 month, 3 board, 4 list
@@ -38,6 +40,7 @@ impl Default for Prefs {
     fn default() -> Self {
         Prefs {
             look: 0,
+            pet_skin: 0,
             week_monday: true,
             time_24h: true,
             view: 2,

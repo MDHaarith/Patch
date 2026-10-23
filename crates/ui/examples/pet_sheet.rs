@@ -32,7 +32,7 @@ fn main() {
         let dir = Path::new(&args[1]).join("drawable-nodpi");
         std::fs::create_dir_all(&dir).unwrap();
         for (m, name) in moods {
-            write(&dir.join(format!("pet_{name}.png")), &frame(m, 0, false), 8, 1, 1);
+            write(&dir.join(format!("pet_{name}.png")), &frame(m, 0, false, 0), 8, 1, 1);
         }
         return;
     }
@@ -40,8 +40,13 @@ fn main() {
     let mut px = Vec::new();
     for (m, _) in moods {
         for tick in 0..4 {
-            px.extend(frame(m, tick, tick == 3));
+            px.extend(frame(m, tick, tick == 3, 0));
         }
     }
-    write(Path::new(out), &px, 10, 4, moods.len());
+    for skin in 0..patch_ui::pet::SKINS.len() {
+        for (m, _) in moods {
+            px.extend(frame(m, 0, false, skin));
+        }
+    }
+    write(Path::new(out), &px, 10, 4, moods.len() + patch_ui::pet::SKINS.len());
 }

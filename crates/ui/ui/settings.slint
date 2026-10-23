@@ -174,6 +174,24 @@ export component SettingsPanel inherits Rectangle {
                         }
                     }
                     Row {
+                        label: "Patch's colour";
+                        HorizontalLayout {
+                            alignment: end;
+                            spacing: 6px;
+                            for c[i] in Store.pet-skins: Rectangle {
+                                y: (parent.height - self.height) / 2;
+                                width: 22px;
+                                height: 22px;
+                                border-radius: self.width / 2;
+                                background: c;
+                                border-width: Store.pet-skin == i ? 2px : 0px;
+                                border-color: Theme.text;
+                                if Store.pet-skin == i: Icon { name: "check"; size: 12px; tint: #ffffff; stroke-width: 3px; }
+                                TouchArea { clicked => { Actions.set-pet-skin(i); } }
+                            }
+                        }
+                    }
+                    Row {
                         label: "Week starts on Monday";
                         Toggle { y: (parent.height - self.height) / 2; checked: Store.week-monday; toggled(v) => { Actions.set-week-monday(v); } }
                     }

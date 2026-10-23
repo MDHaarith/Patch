@@ -220,6 +220,9 @@ export global Store {
     // Current pixel-art frame, animated from Rust.
     in-out property <image> pet-image;
     in-out property <string> pet-line;
+    // Body colours to pick from, and the chosen one.
+    in-out property <[color]> pet-skins;
+    in-out property <int> pet-skin: 0;
 
     // Sheets
     in-out property <bool> editor-open: false;
@@ -311,6 +314,7 @@ export global Actions {
 
     // Settings
     callback set-look(int);
+    callback set-pet-skin(int);
     callback set-week-monday(bool);
     callback set-time-24h(bool);
     callback connect-hub(string, string);

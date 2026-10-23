@@ -425,11 +425,7 @@ impl App {
 
     fn init_store(&self, s: &Store, theme: &Theme) {
         self.models.bind(s);
-        s.set_pet_image(crate::pet::image(
-            crate::pet::Mood::from_index(self.pet_mood.get()),
-            self.pet_tick.get(),
-            false,
-        ));
+        s.set_pet_skins(Rc::new(VecModel::from(crate::pet::SKINS.iter().map(|(_, [b, ..])| slint::Color::from_rgb_u8(b[0], b[1], b[2])).collect::<Vec<_>>())).into());
         let mobile = self.host.is_mobile();
         s.set_mobile(mobile);
         s.set_can_host(self.host.can_host_hub());
@@ -449,6 +445,13 @@ impl App {
         let p = self.prefs.borrow();
         themes::apply(theme, p.look);
         s.set_theme(p.look);
+        s.set_pet_skin(p.pet_skin);
+        s.set_pet_image(crate::pet::image(
+            crate::pet::Mood::from_index(self.pet_mood.get()),
+            self.pet_tick.get(),
+            false,
+            p.pet_skin.max(0) as usize,
+        ));
         s.set_pinned(p.pinned);
         s.set_widget_float(p.widget_float);
         s.set_week_monday(p.week_monday);
@@ -777,6 +780,12 @@ impl App {
             app.each_theme(|t| themes::apply(t, look));
             app.each_store(|s| s.set_theme(look));
             app.refresh();
+        });
+        on!(on_set_pet_skin, |app, i| {
+            app.prefs.borrow_mut().pet_skin = i;
+            app.save_prefs();
+            app.each_store(|s| s.set_pet_skin(i));
+            app.animate_pet();
         });
         on!(on_set_week_monday, |app, v| {
             app.prefs.borrow_mut().week_monday = v;
@@ -1548,7 +1557,8 @@ impl App {
         let tick = self.pet_tick.get().wrapping_add(1);
         self.pet_tick.set(tick);
         let blink = tick.is_multiple_of(9);
-        let img = crate::pet::image(crate::pet::Mood::from_index(self.pet_mood.get()), tick, blink);
+        let skin = self.prefs.borrow().pet_skin.max(0) as usize;
+        let img = crate::pet::image(crate::pet::Mood::from_index(self.pet_mood.get()), tick, blink, skin);
         self.each_store(|s| s.set_pet_image(img.clone()));
     }
 
