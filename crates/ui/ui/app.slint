@@ -510,7 +510,8 @@ component DesktopShell inherits Rectangle {
         clip: true;
         EditorPanel {}
     }
-    if Store.settings-open: Rectangle {
+    // A hidden desktop panel still creates its controls and usage timer on phones.
+    if !Store.mobile && Store.settings-open: Rectangle {
         background: #00000066;
         TouchArea { clicked => { Store.settings-open = false; } }
         Glass {
@@ -532,6 +533,7 @@ component DesktopShell inherits Rectangle {
 component MobileShell inherits Rectangle {
     property <bool> searching;
     VerticalLayout {
+        visible: !Store.settings-open;
         Rectangle { height: Store.safe-top; }
         HorizontalLayout {
             height: 56px;
@@ -589,6 +591,7 @@ component MobileShell inherits Rectangle {
 
     // Bottom quick-add dock
     dock := Glass {
+        visible: !Store.settings-open;
         x: 12px;
         y: parent.height - self.height - 12px - Store.safe-bottom;
         width: parent.width - 24px;
@@ -625,6 +628,7 @@ component MobileShell inherits Rectangle {
     property <float> editor-t: Store.editor-open ? 1 : 0;
     animate editor-t { duration: 220ms; easing: ease-out; }
     if root.editor-t > 0: Rectangle {
+        visible: !Store.settings-open;
         y: parent.height * (1 - root.editor-t) * 0.25;
         opacity: root.editor-t;
         background: Theme.solid;
@@ -712,6 +716,8 @@ export component MainWindow inherits Window {
         }
 
         frame := Rectangle {
+            // The phone's opaque Settings sheet covers this entire backdrop.
+            visible: !Store.mobile || !Store.settings-open;
             border-radius: root.corner;
             clip: true;
             border-width: root.framed ? 1px : 0px;
