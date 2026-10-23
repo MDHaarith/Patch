@@ -13,7 +13,7 @@
 //! rounded frame, window buttons and drag area (`Host::custom_chrome`) and
 //! asks the shell to move, resize, minimize, maximize or close the window
 //! (`Host::window_action`). It can be pinned above other apps. The pet always
-//! stays above apps; the separate desk tile board sits below them unless floated.
+//! stays above visible apps and hides on the desktop; the desk tile board stays there.
 //! These layers are kept up on X11 by `layers`: set when a window is shown,
 //! checked again on focus changes and every few seconds, because window
 //! managers drop states requested before a window is mapped.
@@ -39,7 +39,7 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::{Rc, Weak};
 use std::time::Duration;
 
-/// How often the layers are checked again while a window needs one.
+/// How often window layers and desktop pet visibility are checked again.
 const LAYER_CHECK: Duration = Duration::from_secs(2);
 
 thread_local! {
@@ -83,8 +83,6 @@ pub struct Shell {
     desk: RefCell<Option<Widget>>,
     widget_wanted: Cell<bool>,
     widget_pending: Cell<bool>,
-    /// The desk tile board floats above apps instead of sitting on the desktop.
-    widget_float: Cell<bool>,
     /// The main window stays above other apps.
     pinned: Cell<bool>,
     /// EWMH connection for the layers; `None` until needed or off X11.
@@ -120,7 +118,6 @@ impl Shell {
             desk: RefCell::new(None),
             widget_wanted: Cell::new(false),
             widget_pending: Cell::new(false),
-            widget_float: Cell::new(false),
             pinned: Cell::new(false),
             wm: RefCell::new(None),
             wm_tried: Cell::new(false),
@@ -199,7 +196,6 @@ impl Shell {
         let prefs = app.prefs();
         // The App applies these too; reading them here covers windows created
         // before it does.
-        self.widget_float.set(prefs.widget_float);
         self.pinned.set(prefs.pinned);
         self.reconcile_autostart(prefs.autostart);
         let me = self.me.clone();
@@ -216,7 +212,7 @@ impl Shell {
     }
 
     fn toggles(&self) -> Toggles {
-        Toggles { widget: self.widget_wanted.get(), widget_float: self.widget_float.get(), pinned: self.pinned.get() }
+        Toggles { widget: self.widget_wanted.get(), pinned: self.pinned.get() }
     }
 
     fn update_tray(&self) {
@@ -248,10 +244,6 @@ impl Shell {
             TrayAction::SetWidget(on) => match self.main.get() {
                 Some(main) => main.global::<Actions>().invoke_set_widget(on),
                 None => self.set_widget(on),
-            },
-            TrayAction::SetWidgetFloat(float) => match self.main.get() {
-                Some(main) => main.global::<Actions>().invoke_set_widget_float(float),
-                None => self.set_widget_float(float),
             },
             TrayAction::SetPinned(on) => match self.main.get() {
                 Some(main) => main.global::<Actions>().invoke_set_pinned(on),
@@ -401,9 +393,15 @@ impl Shell {
             let me = self.me.clone();
             screen::query(move |screen| {
                 let Some(s) = me.upgrade() else { return };
-                s.widget_pending.set(false);
-                if s.widget_wanted.get() && s.widget.borrow().is_none() {
-                    s.create_widget(&screen);
+                let shell = s.clone();
+                if let Err(e) = slint::spawn_local(async move {
+                    if shell.widget_wanted.get() && shell.widget.borrow().is_none() {
+                        shell.create_widget(&screen).await;
+                    }
+                    shell.widget_pending.set(false);
+                }) {
+                    s.widget_pending.set(false);
+                    eprintln!("patch: can't start the widget: {e}");
                 }
             });
         } else if !want && have {
@@ -411,10 +409,10 @@ impl Shell {
         }
     }
 
-    fn create_widget(&self, screen: &Screen) {
+    async fn create_widget(&self, screen: &Screen) {
         let Some(app) = self.app() else { return };
         self.wayland.set(screen.wayland);
-        for (mode, slot) in [(Mode::Pet, &self.widget), (Mode::Desk, &self.desk)] {
+        for (mode, slot) in [(Mode::Desk, &self.desk), (Mode::Pet, &self.widget)] {
             let window = match OverlayWindow::new() {
                 Ok(w) => w,
                 Err(e) => {
@@ -458,7 +456,22 @@ impl Shell {
                 }
             };
             let place = widget.place(screen, saved);
-            if let Err(e) = widget.show() {
+            if let Err(e) = widget.window().window().winit_window().await {
+                eprintln!("patch: can't create the native {mode:?} widget: {e}");
+                self.destroy_widget();
+                return;
+            }
+            if !self.widget_wanted.get() {
+                self.destroy_widget();
+                return;
+            }
+            let hints = match mode {
+                Mode::Pet => self.widget_hints(),
+                Mode::Desk => self.desk_hints(),
+            };
+            self.apply_layer(widget.window().window(), hints, true);
+            let show = mode == Mode::Desk || self.pet_visible(widget.window().window());
+            if let Err(e) = if show { widget.show() } else { Ok(()) } {
                 eprintln!("patch: can't show the {mode:?} widget: {e}");
                 widget.hide();
                 self.destroy_widget();
@@ -539,16 +552,25 @@ impl Shell {
     }
 
     fn desk_hints(&self) -> Hints {
-        let layer = if self.widget_float.get() { Layer::Above } else { Layer::Below };
-        Hints { layer, sticky: true, skip_taskbar: true }
+        Hints { layer: Layer::Desktop, sticky: true, skip_taskbar: true }
     }
 
-    /// Sets `hints` on a shown window. Without `strict`, only adds what is
+    fn pet_visible(&self, window: &slint::Window) -> bool {
+        let own: Vec<_> = self
+            .main
+            .get()
+            .map(|m| m.window())
+            .into_iter()
+            .chain(std::iter::once(window))
+            .filter_map(layers::x11_id)
+            .chain(self.desk.borrow().as_ref().and_then(|d| layers::x11_id(d.window().window())))
+            .collect();
+        self.wm.borrow().as_ref().is_none_or(|wm| wm.pet_visible(&own).unwrap_or(true))
+    }
+
+    /// Sets `hints` before or after mapping. Without `strict`, only adds what is
     /// missing (see `Wm::apply`).
     fn apply_layer(&self, window: &slint::Window, hints: Hints, strict: bool) {
-        if !window.is_visible() {
-            return;
-        }
         if let Some(id) = layers::x11_id(window) {
             if !self.wm_tried.replace(true) {
                 match Wm::connect() {
@@ -568,7 +590,7 @@ impl Shell {
             let level = match hints.layer {
                 Layer::Normal => WindowLevel::Normal,
                 Layer::Above => WindowLevel::AlwaysOnTop,
-                Layer::Below => WindowLevel::AlwaysOnBottom,
+                Layer::Desktop => WindowLevel::AlwaysOnBottom,
             };
             window.with_winit_window(|w| w.set_window_level(level));
         }
@@ -581,12 +603,21 @@ impl Shell {
                 self.apply_layer(main.window(), self.main_hints(), strict);
             }
         }
-        let widget = self.widget_window();
-        if let Some(w) = widget {
-            self.apply_layer(w.window(), self.widget_hints(), strict);
-        }
         if let Some(w) = self.desk.borrow().as_ref() {
             self.apply_layer(w.window().window(), self.desk_hints(), strict);
+        }
+        if let Some(w) = self.widget_window() {
+            let visible = self.pet_visible(w.window());
+            let changed = visible != w.window().is_visible();
+            if changed {
+                let result = if visible { w.show() } else { w.hide() };
+                if let Err(e) = result {
+                    eprintln!("patch: can't change pet visibility: {e}");
+                }
+            }
+            if visible {
+                self.apply_layer(w.window(), self.widget_hints(), strict || changed);
+            }
         }
     }
 
@@ -822,17 +853,12 @@ impl Host for Shell {
         });
     }
 
-    fn set_widget_float(&self, float: bool) {
-        self.widget_float.set(float);
-        self.update_tray();
-        let me = self.me.clone();
-        later(move || {
-            if let Some(s) = me.upgrade() {
-                if let Some(w) = s.desk.borrow().as_ref() {
-                    s.apply_layer(w.window().window(), s.desk_hints(), true);
-                }
-            }
-        });
+    fn overlay_expand(&self, expanded: bool) {
+        let place = self.widget.borrow().as_ref().and_then(|w| w.resize(expanded));
+        if let Some(place) = place {
+            self.state.borrow_mut().widget = Some(place);
+            self.save_state_soon();
+        }
     }
 
     fn open_app(&self, _task_id: Option<&str>) {
@@ -876,18 +902,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn floating_only_changes_the_desk_layer() {
+    fn pet_and_desk_have_separate_layers() {
         let shell = Shell::new(
             Paths::from_env(Some("/nonexistent/patch-layer-test".into())),
             Options { windowing: Windowing::Auto, headless_extras: true },
         );
-        for float in [false, true] {
-            shell.widget_float.set(float);
-            assert_eq!(shell.widget_hints(), Hints { layer: Layer::Above, sticky: true, skip_taskbar: true });
-            assert_eq!(
-                shell.desk_hints(),
-                Hints { layer: if float { Layer::Above } else { Layer::Below }, sticky: true, skip_taskbar: true }
-            );
-        }
+        assert_eq!(shell.widget_hints(), Hints { layer: Layer::Above, sticky: true, skip_taskbar: true });
+        assert_eq!(shell.desk_hints(), Hints { layer: Layer::Desktop, sticky: true, skip_taskbar: true });
     }
 }

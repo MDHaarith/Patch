@@ -68,19 +68,18 @@ fn independent_pet_and_desk_share_updates_and_open_tasks() {
     let pw = platform.0.borrow()[1].clone();
 
     assert_eq!(pet.get_mode(), 0);
-    actions.invoke_overlay_expand(false);
-    render(&pw, 60);
-    click(&pw, 30.0, 30.0);
-    assert!(pet.global::<Store>().get_overlay_expanded());
-    assert!(host.0.borrow().is_empty());
-
-    pet.set_mode(1);
-    for expanded in [true, false] {
-        actions.invoke_overlay_expand(expanded);
+    for mode in [0, 1] {
+        pet.set_mode(mode);
+        actions.invoke_overlay_expand(false);
         render(&pw, 60);
         click(&pw, 30.0, 30.0);
-        assert_eq!(pet.global::<Store>().get_overlay_expanded(), expanded);
+        assert!(pet.global::<Store>().get_overlay_expanded());
+        assert!(host.0.borrow().is_empty(), "pet click expands without opening the app");
+        render(&pw, 340);
+        click(&pw, 272.0, 30.0);
         assert_eq!(host.0.borrow_mut().pop(), Some(None));
+        click(&pw, 312.0, 30.0);
+        assert!(!pet.global::<Store>().get_overlay_expanded());
     }
 
     let desk = OverlayWindow::new().unwrap();

@@ -12,7 +12,7 @@
 //!
 //! KWin, Mutter, Xfwm, Openbox and the other EWMH window managers keep an
 //! `_ABOVE` window above normal ones even while another window is active,
-//! and a `_BELOW` window above the desktop but under normal windows.
+//! and a `_DESKTOP` window on the desktop, including during Show Desktop.
 
 use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slint::winit_030::WinitWindowAccessor;
@@ -26,8 +26,8 @@ pub enum Layer {
     Normal,
     /// Above other apps, even while one of them is active.
     Above,
-    /// On the desktop: below every normal window.
-    Below,
+    /// On the desktop, including while Show Desktop is active.
+    Desktop,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,6 +42,7 @@ pub struct Hints {
 x11rb::atom_manager! {
     Atoms: AtomsCookie {
         _NET_WM_STATE,
+        _NET_WM_STATE_HIDDEN,
         _NET_WM_STATE_ABOVE,
         _NET_WM_STATE_BELOW,
         _NET_WM_STATE_STICKY,
@@ -49,6 +50,13 @@ x11rb::atom_manager! {
         _NET_WM_STATE_SKIP_PAGER,
         _KDE_NET_WM_STATE_SKIP_SWITCHER,
         _NET_WM_DESKTOP,
+        _NET_WM_WINDOW_TYPE,
+        _NET_WM_WINDOW_TYPE_DESKTOP,
+        _NET_WM_WINDOW_TYPE_DOCK,
+        _NET_SHOWING_DESKTOP,
+        _NET_CURRENT_DESKTOP,
+        _NET_CLIENT_LIST_STACKING,
+        _NET_CLIENT_LIST,
         _NET_SUPPORTED,
     }
 }
@@ -58,6 +66,10 @@ const ADD: u32 = 1;
 /// "Normal application" as the source of a `_NET_WM_STATE` request.
 const SOURCE_APP: u32 = 1;
 const ALL_DESKTOPS: u32 = 0xFFFF_FFFF;
+
+fn pet_visible(showing_desktop: bool, visible_app: Option<bool>) -> bool {
+    !showing_desktop && visible_app.unwrap_or(true)
+}
 
 /// The X11 id of a Slint window, `None` on Wayland or before it exists.
 pub fn x11_id(window: &slint::Window) -> Option<Window> {
@@ -107,7 +119,7 @@ impl Wm {
                 add.push(a._NET_WM_STATE_ABOVE);
                 remove.push(a._NET_WM_STATE_BELOW);
             }
-            Layer::Below => {
+            Layer::Desktop => {
                 add.push(a._NET_WM_STATE_BELOW);
                 remove.push(a._NET_WM_STATE_ABOVE);
             }
@@ -133,10 +145,56 @@ impl Wm {
         Ok(reply.value32().map(|v| v.collect()).unwrap_or_default())
     }
 
-    fn mapped(&self, win: Window) -> Result<bool, String> {
+    fn map_state(&self, win: Window) -> Result<MapState, String> {
         let attrs =
             self.conn.get_window_attributes(win).map_err(|e| e.to_string())?.reply().map_err(|e| e.to_string())?;
-        Ok(attrs.map_state != MapState::UNMAPPED)
+        Ok(attrs.map_state)
+    }
+
+    /// Missing EWMH workspace/client data leaves the pet visible.
+    pub fn pet_visible(&self, own: &[Window]) -> Result<bool, String> {
+        let a = &self.atoms;
+        let showing = self.property(self.root, a._NET_SHOWING_DESKTOP, AtomEnum::CARDINAL)?.first() == Some(&1);
+        if showing {
+            return Ok(pet_visible(true, None));
+        }
+        let desktop = self.property(self.root, a._NET_CURRENT_DESKTOP, AtomEnum::CARDINAL)?;
+        let Some(desktop) = desktop.first() else { return Ok(pet_visible(false, None)) };
+        let clients = self
+            .conn
+            .get_property(false, self.root, a._NET_CLIENT_LIST_STACKING, AtomEnum::WINDOW, 0, u32::MAX)
+            .map_err(|e| e.to_string())?
+            .reply()
+            .map_err(|e| e.to_string())?;
+        let clients = if clients.type_ == 0 {
+            self.conn
+                .get_property(false, self.root, a._NET_CLIENT_LIST, AtomEnum::WINDOW, 0, u32::MAX)
+                .map_err(|e| e.to_string())?
+                .reply()
+                .map_err(|e| e.to_string())?
+        } else {
+            clients
+        };
+        let Some(clients) = clients.value32() else { return Ok(pet_visible(false, None)) };
+        for win in clients.filter(|w| !own.contains(w)) {
+            // Clients can disappear between reading the list and their properties.
+            let visible = (|| -> Result<bool, String> {
+                let workspace = self.property(win, a._NET_WM_DESKTOP, AtomEnum::CARDINAL)?;
+                if !workspace.first().is_some_and(|d| d == desktop || *d == ALL_DESKTOPS) {
+                    return Ok(false);
+                }
+                let types = self.property(win, a._NET_WM_WINDOW_TYPE, AtomEnum::ATOM)?;
+                let states = self.property(win, a._NET_WM_STATE, AtomEnum::ATOM)?;
+                Ok(!types.contains(&a._NET_WM_WINDOW_TYPE_DESKTOP)
+                    && !types.contains(&a._NET_WM_WINDOW_TYPE_DOCK)
+                    && !states.contains(&a._NET_WM_STATE_HIDDEN)
+                    && self.map_state(win)? == MapState::VIEWABLE)
+            })();
+            if visible.unwrap_or(false) {
+                return Ok(pet_visible(false, Some(true)));
+            }
+        }
+        Ok(pet_visible(false, Some(false)))
     }
 
     fn request(&self, win: Window, type_: u32, data: [u32; 5]) -> Result<(), String> {
@@ -152,6 +210,22 @@ impl Wm {
     /// explicit change, so a periodic check never undoes the user's own
     /// "keep above" from the window menu). Returns whether anything was sent.
     pub fn apply(&self, win: Window, hints: Hints, strict: bool) -> Result<bool, String> {
+        if hints.layer == Layer::Desktop
+            && !self
+                .property(win, self.atoms._NET_WM_WINDOW_TYPE, AtomEnum::ATOM)?
+                .contains(&self.atoms._NET_WM_WINDOW_TYPE_DESKTOP)
+        {
+            self.conn
+                .change_property32(
+                    PropMode::REPLACE,
+                    win,
+                    self.atoms._NET_WM_WINDOW_TYPE,
+                    AtomEnum::ATOM,
+                    &[self.atoms._NET_WM_WINDOW_TYPE_DESKTOP],
+                )
+                .map_err(|e| e.to_string())?;
+            self.conn.flush().map_err(|e| e.to_string())?;
+        }
         let (add, remove) = self.wanted(hints);
         let current = self.property(win, self.atoms._NET_WM_STATE, AtomEnum::ATOM)?;
         let missing: Vec<u32> = add.iter().copied().filter(|a| !current.contains(a)).collect();
@@ -163,7 +237,7 @@ impl Wm {
         if missing.is_empty() && extra.is_empty() && all_desktops {
             return Ok(false);
         }
-        if !self.mapped(win)? {
+        if self.map_state(win)? == MapState::UNMAPPED {
             // Withdrawn: the window manager reads the property when it maps it.
             let mut state: Vec<u32> = current.into_iter().filter(|a| !extra.contains(a)).collect();
             state.extend(&missing);
@@ -172,9 +246,13 @@ impl Wm {
                 .map_err(|e| e.to_string())?;
             if !all_desktops {
                 self.conn
-                    .change_property32(PropMode::REPLACE, win, self.atoms._NET_WM_DESKTOP, AtomEnum::CARDINAL, &[
-                        ALL_DESKTOPS,
-                    ])
+                    .change_property32(
+                        PropMode::REPLACE,
+                        win,
+                        self.atoms._NET_WM_DESKTOP,
+                        AtomEnum::CARDINAL,
+                        &[ALL_DESKTOPS],
+                    )
                     .map_err(|e| e.to_string())?;
             }
         } else {
@@ -192,5 +270,20 @@ impl Wm {
         }
         self.conn.flush().map_err(|e| e.to_string())?;
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pet_visible;
+
+    #[test]
+    fn pet_follows_apps_and_falls_back_without_ewmh() {
+        for apps in [None, Some(false), Some(true)] {
+            assert!(!pet_visible(true, apps));
+        }
+        assert!(!pet_visible(false, Some(false)));
+        assert!(pet_visible(false, Some(true)));
+        assert!(pet_visible(false, None));
     }
 }

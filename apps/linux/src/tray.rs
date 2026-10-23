@@ -18,7 +18,6 @@ use std::sync::Arc;
 pub enum TrayAction {
     Open,
     SetWidget(bool),
-    SetWidgetFloat(bool),
     SetPinned(bool),
     Quit,
 }
@@ -29,7 +28,6 @@ type Dispatch = Arc<dyn Fn(TrayAction) + Send + Sync>;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Toggles {
     pub widget: bool,
-    pub widget_float: bool,
     pub pinned: bool,
 }
 
@@ -84,16 +82,6 @@ impl ksni::Tray for Item {
                 label: "Show widget".into(),
                 checked: self.toggles.widget,
                 activate: Box::new(|t: &mut Item| (t.dispatch)(TrayAction::SetWidget(!t.toggles.widget))),
-                ..Default::default()
-            }
-            .into(),
-            CheckmarkItem {
-                label: "Float desk widget above apps".into(),
-                checked: self.toggles.widget_float,
-                enabled: self.toggles.widget,
-                activate: Box::new(|t: &mut Item| {
-                    (t.dispatch)(TrayAction::SetWidgetFloat(!t.toggles.widget_float))
-                }),
                 ..Default::default()
             }
             .into(),

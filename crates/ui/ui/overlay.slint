@@ -50,13 +50,6 @@ export component OverlayPanel inherits Rectangle {
                     Text { text: Store.clock; font-size: 20px; font-weight: 700; color: Theme.text; }
                     Text { text: Store.pet-line; font-size: Theme.fs-s; color: Theme.text-2; overflow: elide; }
                 }
-                if !Store.mobile: IconButton {
-                    y: (parent.height - self.height) / 2;
-                    icon: "pin";
-                    size: 32px;
-                    active: Store.widget-float;
-                    clicked => { Actions.set-widget-float(!Store.widget-float); }
-                }
                 IconButton {
                     y: (parent.height - self.height) / 2;
                     icon: "open";
@@ -329,19 +322,16 @@ export component OverlayWindow inherits Window {
     preferred-height: 500px;
     min-width: 60px;
     min-height: 60px;
-    if root.mode == 0 && Store.overlay-expanded: OverlayPanel {
+    if root.mode != 2 && Store.overlay-expanded: OverlayPanel {
         width: parent.width;
         height: parent.height;
         radius: Store.mobile ? 24px : 20px;
     }
-    if root.mode == 1 || (root.mode == 0 && !Store.overlay-expanded): bubble := Bubble {
+    if root.mode != 2 && !Store.overlay-expanded: bubble := Bubble {
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         TouchArea {
-            clicked => {
-                if (root.mode == 1) { Actions.open-app(""); }
-                else { Actions.overlay-expand(true); }
-            }
+            clicked => { Actions.overlay-expand(true); }
         }
     }
     if root.mode == 2: DeskBoard {
