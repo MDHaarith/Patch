@@ -198,6 +198,8 @@ export global Store {
     in-out property <image> host-qr;
     // Android: scan a hub's pairing QR code with the camera.
     in-out property <bool> can-scan: false;
+    // The overlay panel lives in an Android system bubble (no collapse button).
+    in-out property <bool> in-bubble: false;
 
     // Settings → Usage: Patch's own CPU/memory line, and on Android whether
     // battery optimization is 0 n/a, 1 restricting Patch, 2 off for Patch.
