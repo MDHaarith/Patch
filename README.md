@@ -108,7 +108,10 @@ base64 -w0 patch-release.jks    # → ANDROID_KEYSTORE_BASE64
 
 Add `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` (`patch`)
 and `ANDROID_KEY_PASSWORD` under *Settings → Secrets and variables → Actions*. Keep the
-`.jks` file backed up. Then publish a version:
+`.jks` file backed up. Then publish a version: bump `version` in the root
+`Cargo.toml` (the Linux binaries and the Android `versionName`/`versionCode` all
+read it), merge to `main`, and push a matching tag. CI refuses a tag that does
+not match.
 
 ```sh
 git tag v0.2.0 && git push origin v0.2.0

@@ -18,6 +18,9 @@ if (keystoreFile.exists()) {
     keystoreFile.withInputStream { keystore.load(it) }
 }
 
+// The workspace Cargo.toml is the single source of the version; tags are v<version>.
+def cargoVersion = (rootProject.file("../Cargo.toml").text =~ /(?m)^version = "(\d+)\.(\d+)\.(\d+)"/)[0]
+
 android {
     namespace "com.mdhaarith.patch"
     compileSdk 35
@@ -27,8 +30,8 @@ android {
         applicationId "com.mdhaarith.patch"
         minSdk 26
         targetSdk 35
-        versionCode 1
-        versionName "0.1.0"
+        versionCode cargoVersion[1].toInteger() * 10000 + cargoVersion[2].toInteger() * 100 + cargoVersion[3].toInteger()
+        versionName "${cargoVersion[1]}.${cargoVersion[2]}.${cargoVersion[3]}"
         ndk {
             abiFilters "arm64-v8a", "x86_64"
         }
