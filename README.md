@@ -16,7 +16,7 @@ floats *over other apps* when you want it to.
 ![Phone](docs/screenshots/phone.jpg)
 ![Overlay](docs/screenshots/overlay.jpg)
 
-**Ten themes**: Matte Black, Liquid Glass, Light, Midnight, Aurora, Sunset, Forest, Graphite, Paper and Rose.
+**Eleven themes**: Matte Black, Liquid Glass, Light, Midnight, Aurora, Sunset, Forest, Graphite, Paper, Rose and Graphite Glass.
 
 ![Themes](docs/screenshots/themes.jpg)
 

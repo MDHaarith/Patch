@@ -33,6 +33,9 @@ export global Theme {
     in-out property <color> well: #ffffff0a;
     in-out property <color> hairline: #ffffff12;
     in-out property <color> edge: #ffffff1f;
+    // Liquid Glass specular rim: bright where light enters (top) and exits (bottom).
+    in-out property <color> glint: transparent;
+    out property <brush> rim: glass ? @linear-gradient(170deg, glint 0%, hairline 30%, hairline.transparentize(0.6) 65%, glint.transparentize(0.55) 100%) : hairline;
     in-out property <color> sheen-color: #ffffff12;
     in-out property <float> sheen-reach: 0.45;
     out property <brush> sheen: @linear-gradient(180deg, sheen-color 0%, sheen-color.with-alpha(0) sheen-reach * 100%);
