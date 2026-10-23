@@ -7,9 +7,15 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.Surface;
+import android.widget.Toast;
+
+import com.google.mlkit.vision.barcode.common.Barcode;
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions;
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayDeque;
@@ -174,6 +180,51 @@ final class PatchNative {
         main.post(() -> PatchWidget.publish(app, json));
     }
 
+    /** Google's code scanner: no camera permission, the camera UI is Play services'. */
+    static void scanQr() {
+        main.post(() -> {
+            Context context = activity.get() != null ? activity.get() : app;
+            GmsBarcodeScannerOptions options = new GmsBarcodeScannerOptions.Builder()
+                    .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+                    .build();
+            GmsBarcodeScanning.getClient(context, options).startScan()
+                    .addOnSuccessListener(code -> {
+                        if (code.getRawValue() != null) {
+                            nativeScanned(code.getRawValue());
+                        }
+                    })
+                    .addOnFailureListener(e -> {
+                        Log.w(TAG, "QR scanner unavailable", e);
+                        Toast.makeText(app, "Scanner unavailable: type the hub address and token instead", Toast.LENGTH_LONG).show();
+                    });
+        });
+    }
+
+    static boolean batteryUnrestricted() {
+        PowerManager power = app.getSystemService(PowerManager.class);
+        return power != null && power.isIgnoringBatteryOptimizations(app.getPackageName());
+    }
+
+    static void requestBatteryUnrestricted() {
+        main.post(() -> {
+            Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:" + app.getPackageName()));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            try {
+                app.startActivity(intent);
+            } catch (RuntimeException e) {
+                // Some vendors drop the direct prompt; fall back to the list.
+                Intent list = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                list.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                try {
+                    app.startActivity(list);
+                } catch (RuntimeException e2) {
+                    Log.w(TAG, "no battery optimization settings", e2);
+                }
+            }
+        });
+    }
+
     static void copyText(String text) {
         main.post(() -> clipboard.setPrimaryClip(ClipData.newPlainText("Patch", text)));
     }
@@ -267,4 +318,7 @@ final class PatchNative {
 
     /** The widget's "+": open the editor on a new task. */
     static native void nativeNewTask();
+
+    /** Text of a QR code scanned for pairing. */
+    static native void nativeScanned(String text);
 }

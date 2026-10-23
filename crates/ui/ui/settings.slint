@@ -308,10 +308,34 @@ export component SettingsPanel inherits Rectangle {
                                 Text { horizontal-stretch: 1; text: Store.host-token; color: Theme.text; font-size: Theme.fs-l; font-weight: 700; letter-spacing: 1px; vertical-alignment: center; }
                                 Button { text: "Copy"; kind: 3; clicked => { Actions.copy-text(Store.host-token); } }
                             }
+                            if Store.host-urls != "": HorizontalLayout {
+                                spacing: 12px;
+                                Image {
+                                    width: 148px;
+                                    height: 148px;
+                                    source: Store.host-qr;
+                                    image-rendering: pixelated;
+                                    accessible-role: image;
+                                    accessible-label: "Pairing QR code";
+                                }
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: "On your phone: Patch → Settings → Scan pairing QR code.";
+                                    color: Theme.text-2;
+                                    font-size: Theme.fs-s;
+                                    wrap: word-wrap;
+                                    vertical-alignment: center;
+                                }
+                            }
                         }
                     }
 
                     SectionLabel { text: Store.can-host ? "OR CONNECT TO ANOTHER HUB" : "HUB"; }
+                    if Store.can-scan: Button {
+                        text: "Scan pairing QR code";
+                        kind: 1;
+                        clicked => { Actions.scan-pair(); }
+                    }
                     Field {
                         text <=> root.url-input;
                         placeholder: "Hub address, e.g. my-laptop or 100.101.102.103";
@@ -330,6 +354,29 @@ export component SettingsPanel inherits Rectangle {
                             kind: 1;
                             enabled: root.url-input != "" && root.token-input != "";
                             clicked => { Actions.connect-hub(root.url-input, root.token-input); }
+                        }
+                    }
+                }
+
+                Card {
+                    title: "Usage";
+                    icon: "clock";
+                    // Refreshes only while Settings is open.
+                    Timer {
+                        interval: 2s;
+                        running: true;
+                        triggered => { Actions.refresh-usage(); }
+                    }
+                    init => { Actions.refresh-usage(); }
+                    Text { text: Store.usage; color: Theme.text-2; font-size: Theme.fs-s; wrap: word-wrap; }
+                    if Store.battery-state != 0: Row {
+                        label: Store.battery-state == 2 ? "Battery optimization is off for Patch" : "Android may pause Patch to save battery";
+                        hint: Store.battery-state == 2 ? "Reminders, sync and the bubble keep running in the background." : "Late reminders or a vanishing bubble? Let Patch run unrestricted.";
+                        if Store.battery-state == 1: Button {
+                            y: (parent.height - self.height) / 2;
+                            text: "Allow";
+                            kind: 3;
+                            clicked => { Actions.battery-unrestrict(); }
                         }
                     }
                 }

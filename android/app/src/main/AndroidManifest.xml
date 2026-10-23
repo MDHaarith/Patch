@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Settings → Usage: let Patch ask to run unrestricted (reminders, sync, bubble). -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Reminders are a calendar's core job: exact alarms on 13+, the
          user-grantable permission on 12. Without either they're inexact. -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />

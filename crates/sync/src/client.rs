@@ -23,6 +23,39 @@ impl SyncConfig {
         }
         Ok(SyncConfig { base: Base::parse(url)?, token: token.to_string() })
     }
+
+    /// What a hub's pairing QR code encodes. Tailnet URLs and tokens need no escaping.
+    pub fn pair_link(url: &str, token: &str) -> String {
+        format!("patch://pair?hub={url}&token={token}")
+    }
+
+    /// Reads a scanned [`SyncConfig::pair_link`].
+    pub fn from_pair_link(link: &str) -> Result<SyncConfig, String> {
+        let query = link.trim().strip_prefix("patch://pair?").ok_or("That QR code isn't a Patch pairing code")?;
+        let (mut hub, mut token) = ("", "");
+        for pair in query.split('&') {
+            match pair.split_once('=') {
+                Some(("hub", v)) => hub = v,
+                Some(("token", v)) => token = v,
+                _ => {}
+            }
+        }
+        SyncConfig::new(hub, token)
+    }
+}
+
+#[cfg(test)]
+mod pair_tests {
+    use super::SyncConfig;
+
+    #[test]
+    fn pair_link_round_trips() {
+        let link = SyncConfig::pair_link("http://100.101.102.103:4747", "K7QF-2MZD-9XPA-T4RH");
+        let cfg = SyncConfig::from_pair_link(&link).unwrap();
+        assert_eq!(cfg, SyncConfig::new("http://100.101.102.103:4747", "K7QF-2MZD-9XPA-T4RH").unwrap());
+        assert!(SyncConfig::from_pair_link("https://example.com").is_err());
+        assert!(SyncConfig::from_pair_link("patch://pair?hub=http://100.1.2.3:4747").is_err(), "token required");
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

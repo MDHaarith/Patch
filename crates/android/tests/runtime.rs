@@ -74,6 +74,11 @@ impl Bridge for Recorder {
     fn publish_snapshot(&self, json: &str) {
         self.snapshots.borrow_mut().push(json.to_string());
     }
+    fn scan_qr(&self) {}
+    fn battery_unrestricted(&self) -> bool {
+        false
+    }
+    fn request_battery_unrestricted(&self) {}
 }
 
 /// Stands in for an ANativeWindow: a tightly packed RGBA buffer.

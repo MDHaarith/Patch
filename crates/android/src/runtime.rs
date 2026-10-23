@@ -79,6 +79,10 @@ pub trait Bridge {
     /// [`patch_ui::Host::publish_snapshot`]); Java stores it and redraws the
     /// widgets.
     fn publish_snapshot(&self, json: &str);
+    /// Opens the camera QR scanner; the result comes back as [`Msg::Scanned`].
+    fn scan_qr(&self);
+    fn battery_unrestricted(&self) -> bool;
+    fn request_battery_unrestricted(&self);
 }
 
 pub enum Msg {
@@ -132,6 +136,8 @@ pub enum Msg {
     /// The widget's "+": open the editor on a new task, once the main window
     /// exists if it doesn't yet.
     NewTask,
+    /// Text of a scanned QR code.
+    Scanned(String),
     Invoke(Box<dyn FnOnce() + Send>),
 }
 
@@ -450,6 +456,7 @@ impl Runtime {
                 self.new_task = true;
                 self.take_new_task();
             }
+            Msg::Scanned(text) => self.app.pair_from_link(&text),
             Msg::Invoke(f) => f(),
         }
     }

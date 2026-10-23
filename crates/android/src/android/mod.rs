@@ -321,3 +321,13 @@ pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeOpenTask(
 pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeNewTask(_env: JNIEnv, _: JClass) {
     send(Msg::NewTask);
 }
+
+/// A QR code scanned for pairing.
+#[no_mangle]
+pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeScanned(
+    mut env: JNIEnv,
+    _: JClass,
+    text: JString,
+) {
+    send(Msg::Scanned(string(&mut env, &text)));
+}
