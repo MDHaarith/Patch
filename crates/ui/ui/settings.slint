@@ -321,13 +321,8 @@ export component SettingsPanel inherits Rectangle {
                     icon: "pin";
                     Row {
                         label: "Desktop widget";
-                        hint: "Patch's pet with today's tasks and quick add, on your desktop.";
+                        hint: "Tiles on your desktop; Patch's pet above apps, with tasks and quick add.";
                         Toggle { y: (parent.height - self.height) / 2; checked: Store.widget-on; toggled(v) => { Actions.set-widget(v); } }
-                    }
-                    Row {
-                        label: "Float the widget above apps";
-                        hint: "Off: the widget sits on your desktop like a home-screen widget. On: it hovers above every window.";
-                        Toggle { y: (parent.height - self.height) / 2; checked: Store.widget-float; toggled(v) => { Actions.set-widget-float(v); } }
                     }
                     Row {
                         label: "Keep Patch on top";

@@ -1,6 +1,5 @@
-//! Fixed overlay windows: a 60×60 pet that stays above apps and a 352×352
-//! desk tile board that sits below them (or floats when requested). The shell
-//! sets their layers; neither follows the shared overlay's expanded state.
+//! A pet that expands into the task panel, above apps, and a separate
+//! 352×352 tile board on the desktop. The shell sets their layers and visibility.
 //!
 //! Both windows can be dragged anywhere. A press is held back from Slint
 //! until it is clear whether it is a click (press and release are delivered
@@ -9,9 +8,9 @@
 //! a release the window manager swallows during the move.
 
 use crate::screen::{Monitor, Screen};
-use patch_linux::geometry::{default_rect, Rect};
+use patch_linux::geometry::{default_rect, resize_anchored, Rect};
 use patch_linux::state::WidgetPlace;
-use patch_ui::OverlayWindow;
+use patch_ui::{OverlayWindow, Store};
 use slint::platform::{PointerEventButton, WindowEvent as SlintEvent};
 use slint::winit_030::winit::dpi::PhysicalPosition;
 use slint::winit_030::winit::event::{ElementState, MouseButton, WindowEvent};
@@ -21,6 +20,9 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 pub const BUBBLE: (f32, f32) = (60.0, 60.0);
+pub const PANEL: (f32, f32) = (340.0, 500.0);
+const HEADER_HEIGHT: f64 = 52.0;
+const HEADER_BUTTONS: f64 = 84.0;
 pub const DESK: (f32, f32) = (352.0, 352.0);
 /// Logical pixels the pointer must travel before a press becomes a drag.
 const DRAG_SLOP: f64 = 4.0;
@@ -78,6 +80,7 @@ impl Widget {
     ) -> Widget {
         window.set_mode(mode as i32);
         let pointer = Rc::new(Pointer::default());
+        let weak = window.as_weak();
         window.window().on_winit_window_event(move |w, event| {
             let scale = f64::from(w.scale_factor());
             match event {
@@ -98,8 +101,14 @@ impl Widget {
                 WindowEvent::CursorLeft { .. } => pointer.at.set(None),
                 WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
                     if let Some(at) = pointer.at.get() {
-                        pointer.held.set(Some(at));
-                        return EventResult::PreventDefault;
+                        let expanded = mode == Mode::Pet
+                            && weak.upgrade().is_some_and(|o| o.global::<Store>().get_overlay_expanded());
+                        let width = f64::from(w.size().width) / scale;
+                        let (x, y) = (at.x / scale, at.y / scale);
+                        if !expanded || (y < HEADER_HEIGHT && x < width - HEADER_BUTTONS) {
+                            pointer.held.set(Some(at));
+                            return EventResult::PreventDefault;
+                        }
                     }
                 }
                 WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. } => {
@@ -125,11 +134,16 @@ impl Widget {
         &self.window
     }
 
+    pub fn expanded(&self) -> bool {
+        self.mode == Mode::Pet && self.window.global::<Store>().get_overlay_expanded()
+    }
+
     /// Sizes and positions the window before it is first shown. On X11 it
-    /// returns to its saved corner, clamped to its monitor. New windows go
-    /// at the top right, with the desk below the pet. Wayland places them itself.
+    /// goes back to `saved` (re-anchored if it was saved in the other mode),
+    /// or to the top-right corner the first time. Wayland places it itself.
     pub fn place(&self, screen: &Screen, saved: Option<WidgetPlace>) -> Option<WidgetPlace> {
-        let (w, h) = self.mode.size();
+        let expanded = self.expanded();
+        let (w, h) = self.size_for(expanded);
         self.window.window().set_size(LogicalSize::new(w, h));
         if screen.wayland {
             return None;
@@ -137,14 +151,28 @@ impl Widget {
         let rect = saved
             .and_then(|s| {
                 // Off-screen (monitor unplugged since): fall back to the default spot.
-                let (lw, lh) = physical((w, h), 1.0);
+                let (lw, lh) = physical(self.size_for(s.expanded), 1.0);
                 let monitor = screen.monitor_of(&Rect::new(s.x, s.y, lw, lh))?;
-                let (pw, ph) = physical((w, h), monitor.scale);
-                Some(Rect::new(s.x, s.y, pw, ph).clamped_to(&monitor.rect))
+                let (sw, sh) = physical(self.size_for(s.expanded), monitor.scale);
+                let old = Rect::new(s.x, s.y, sw, sh);
+                let (nw, nh) = physical((w, h), monitor.scale);
+                Some(if s.expanded == expanded {
+                    Rect::new(old.x, old.y, nw, nh).clamped_to(&monitor.rect)
+                } else {
+                    resize_anchored(old, nw, nh, &monitor.rect)
+                })
             })
-            .or_else(|| screen.primary.map(|m| default_place(self.mode, m)))?;
+            .or_else(|| {
+                let m = screen.primary?;
+                let (pw, ph) = physical((w, h), m.scale);
+                Some(if self.mode == Mode::Desk {
+                    default_place(self.mode, m)
+                } else {
+                    default_rect(pw, ph, &m.rect, m.scale as f32)
+                })
+            })?;
         self.window.window().set_position(slint::PhysicalPosition::new(rect.x, rect.y));
-        Some(WidgetPlace { x: rect.x, y: rect.y, expanded: false })
+        Some(WidgetPlace { x: rect.x, y: rect.y, expanded })
     }
 
     pub fn show(&self) -> Result<(), slint::PlatformError> {
@@ -160,7 +188,7 @@ impl Widget {
         self.window.window().with_winit_window(|ww| ww.outer_position().ok()).flatten().map(|p| WidgetPlace {
             x: p.x,
             y: p.y,
-            expanded: false,
+            expanded: self.expanded(),
         })
     }
 
@@ -172,6 +200,38 @@ impl Widget {
                 self.window.window().set_position(slint::PhysicalPosition::new(place.x, place.y));
             }
         }
+    }
+    fn size_for(&self, expanded: bool) -> (f32, f32) {
+        if self.mode == Mode::Pet && expanded {
+            PANEL
+        } else {
+            self.mode.size()
+        }
+    }
+
+    /// Switches between bubble and panel size. On X11 the corner nearest the
+    /// screen edge stays where it is; returns the new spot to remember.
+    pub fn resize(&self, expanded: bool) -> Option<WidgetPlace> {
+        let (w, h) = self.size_for(expanded);
+        let target = self
+            .window
+            .window()
+            .with_winit_window(|ww| {
+                let pos = ww.outer_position().ok()?;
+                let size = ww.outer_size();
+                let old = Rect::new(pos.x, pos.y, size.width as i32, size.height as i32);
+                let monitor = ww
+                    .current_monitor()
+                    .map(|m| Monitor::from_handle(&m))
+                    .unwrap_or(Monitor { rect: old, scale: ww.scale_factor() });
+                let (nw, nh) = physical((w, h), ww.scale_factor());
+                Some(resize_anchored(old, nw, nh, &monitor.rect))
+            })
+            .flatten();
+        self.window.window().set_size(LogicalSize::new(w, h));
+        let rect = target?;
+        self.window.window().set_position(slint::PhysicalPosition::new(rect.x, rect.y));
+        Some(WidgetPlace { x: rect.x, y: rect.y, expanded })
     }
 }
 
