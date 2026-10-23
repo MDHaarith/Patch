@@ -840,6 +840,7 @@ impl App {
         on!(on_check_update, |app| app.host.check_update());
         on!(on_refresh_usage, |app| {
             let usage = app.usage.borrow_mut().sample().unwrap_or_else(|| "Not available on this system".into());
+            let battery_usage = app.usage.borrow_mut().battery(app.host.as_ref()).unwrap_or_default();
             let battery = match app.host.battery_unrestricted() {
                 None => 0,
                 Some(false) => 1,
@@ -847,10 +848,12 @@ impl App {
             };
             app.each_store(|s| {
                 s.set_usage(usage.clone().into());
+                s.set_battery_usage(battery_usage.clone().into());
                 s.set_battery_state(battery);
             });
         });
         on!(on_battery_unrestrict, |app| app.host.request_battery_unrestricted());
+        on!(on_battery_settings, |app| app.host.open_battery_settings());
         on!(on_disconnect_hub, |app| {
             {
                 let mut p = app.prefs.borrow_mut();

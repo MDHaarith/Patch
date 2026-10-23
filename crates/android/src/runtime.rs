@@ -82,6 +82,8 @@ pub trait Bridge {
     /// Opens the camera QR scanner; the result comes back as [`Msg::Scanned`].
     fn scan_qr(&self);
     fn check_update(&self);
+    fn battery_usage(&self) -> Option<String>;
+    fn open_battery_settings(&self);
     fn battery_unrestricted(&self) -> bool;
     fn request_battery_unrestricted(&self);
 }

@@ -85,6 +85,14 @@ impl Host for AndroidHost {
         Some(self.bridge.battery_unrestricted())
     }
 
+    fn battery_usage(&self) -> Option<String> {
+        self.bridge.battery_usage()
+    }
+
+    fn open_battery_settings(&self) {
+        self.bridge.open_battery_settings();
+    }
+
     fn request_battery_unrestricted(&self) {
         self.bridge.request_battery_unrestricted();
     }

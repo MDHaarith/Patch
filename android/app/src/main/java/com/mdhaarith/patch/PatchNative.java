@@ -5,6 +5,7 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.BatteryManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
@@ -207,6 +208,36 @@ final class PatchNative {
     static boolean batteryUnrestricted() {
         PowerManager power = app.getSystemService(PowerManager.class);
         return power != null && power.isIgnoringBatteryOptimizations(app.getPackageName());
+    }
+
+    static String batteryUsage() {
+        BatteryManager battery = app.getSystemService(BatteryManager.class);
+        if (battery == null) return null;
+        int level = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY);
+        if (level < 0 || level > 100) return null;
+        String text = "Device battery: " + level + "%";
+        int current = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW);
+        if (current != Integer.MIN_VALUE && current != 0) {
+            text += current < 0 ? " · draining " : " · charging ";
+            text += Math.abs((long) current) / 1000 + " mA";
+        } else {
+            text += battery.isCharging() ? " · charging/full" : " · not charging";
+        }
+        return text;
+    }
+
+    static void openBatterySettings() {
+        main.post(() -> {
+            Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:" + app.getPackageName()));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            try {
+                app.startActivity(intent);
+            } catch (RuntimeException e) {
+                Log.w(TAG, "no app battery settings", e);
+                Toast.makeText(app, "App settings unavailable", Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     static void requestBatteryUnrestricted() {

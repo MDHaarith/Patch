@@ -35,6 +35,7 @@ struct Recorder {
     reminders: RefCell<Vec<String>>,
     snapshots: RefCell<Vec<String>>,
     updates: Cell<u32>,
+    battery_settings: Cell<u32>,
 }
 
 impl Bridge for Recorder {
@@ -83,6 +84,12 @@ impl Bridge for Recorder {
         false
     }
     fn request_battery_unrestricted(&self) {}
+    fn battery_usage(&self) -> Option<String> {
+        Some("Device battery: 76% · draining 120 mA".into())
+    }
+    fn open_battery_settings(&self) {
+        self.battery_settings.set(self.battery_settings.get() + 1);
+    }
 }
 
 /// Stands in for an ANativeWindow: a tightly packed RGBA buffer.
@@ -322,6 +329,10 @@ fn renders_and_drives_both_windows() {
     assert!(mw.global::<Store>().get_can_update(), "Android supports updates");
     mw.global::<Actions>().invoke_check_update();
     assert_eq!(h.rec.updates.get(), 1, "update action reaches the host");
+    mw.global::<Actions>().invoke_refresh_usage();
+    assert_eq!(mw.global::<Store>().get_battery_usage(), "Device battery: 76% · draining 120 mA");
+    mw.global::<Actions>().invoke_battery_settings();
+    assert_eq!(h.rec.battery_settings.get(), 1, "battery settings action reaches the bridge");
     assert_eq!(
         main.pixel(main.width / 2, 2)[3],
         255,

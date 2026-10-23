@@ -196,6 +196,24 @@ impl Bridge for JniBridge {
         .unwrap_or(false)
     }
 
+    fn battery_usage(&self) -> Option<String> {
+        self.with_env("batteryUsage", |env| {
+            let obj = env
+                .call_static_method(self.class, "batteryUsage", "()Ljava/lang/String;", &[])?
+                .l()?;
+            if obj.is_null() {
+                return Ok(None);
+            }
+            let text: String = env.get_string(&JString::from(obj))?.into();
+            Ok(Some(text))
+        })
+        .flatten()
+    }
+
+    fn open_battery_settings(&self) {
+        self.call_void("openBatterySettings", "()V", |_| Ok(vec![]));
+    }
+
     fn request_battery_unrestricted(&self) {
         self.call_void("requestBatteryUnrestricted", "()V", |_| Ok(vec![]));
     }
