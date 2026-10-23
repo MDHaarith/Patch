@@ -15,6 +15,7 @@ mod models;
 pub mod prefs;
 mod themes;
 pub mod pet;
+mod usage;
 
 slint::include_modules!();
 
@@ -105,6 +106,24 @@ pub trait Host {
     ///   "today":[{"id","title","when","color":"#RRGGBB","done","overdue"}],
     ///   "upcoming":[...same...]}`. Only called when it changed.
     fn publish_snapshot(&self, _json: &str) {}
+
+    /// Whether [`Host::scan_qr`] works here (Android camera scanner).
+    fn can_scan_qr(&self) -> bool {
+        false
+    }
+
+    /// Scan a hub's pairing QR code; the host hands the text to
+    /// [`App::pair_from_link`] when it gets one.
+    fn scan_qr(&self) {}
+
+    /// `Some(true)` when the OS exempts Patch from battery optimization,
+    /// `None` where that doesn't apply (desktop).
+    fn battery_unrestricted(&self) -> Option<bool> {
+        None
+    }
+
+    /// Ask the OS to stop restricting Patch in the background (Android).
+    fn request_battery_unrestricted(&self) {}
 }
 
 /// Window-management requests from the custom chrome.

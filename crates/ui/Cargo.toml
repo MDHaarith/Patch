@@ -14,6 +14,7 @@ chrono.workspace = true
 # Backends and renderers are chosen by the platform crates (apps/linux, crates/android).
 slint = { workspace = true, features = ["std", "compat-1-2"] }
 png = "0.18"
+qrcode = { version = "0.14.1", default-features = false }
 
 [build-dependencies]
 slint-build.workspace = true

@@ -179,4 +179,20 @@ impl Bridge for JniBridge {
     fn set_look(&self, look: i32) {
         self.call_void("setLook", "(I)V", |_| Ok(vec![Arg::Int(look)]));
     }
+
+    fn scan_qr(&self) {
+        self.call_void("scanQr", "()V", |_| Ok(vec![]));
+    }
+
+    fn battery_unrestricted(&self) -> bool {
+        self.with_env("batteryUnrestricted", |env| {
+            env.call_static_method(self.class, "batteryUnrestricted", "()Z", &[])?
+                .z()
+        })
+        .unwrap_or(false)
+    }
+
+    fn request_battery_unrestricted(&self) {
+        self.call_void("requestBatteryUnrestricted", "()V", |_| Ok(vec![]));
+    }
 }

@@ -75,6 +75,22 @@ impl Host for AndroidHost {
         self.bridge.publish_snapshot(json);
     }
 
+    fn can_scan_qr(&self) -> bool {
+        true
+    }
+
+    fn scan_qr(&self) {
+        self.bridge.scan_qr();
+    }
+
+    fn battery_unrestricted(&self) -> Option<bool> {
+        Some(self.bridge.battery_unrestricted())
+    }
+
+    fn request_battery_unrestricted(&self) {
+        self.bridge.request_battery_unrestricted();
+    }
+
     fn text_focus(&self, _focused: bool) {
         // The keyboard follows the text inputs' own requests (see ime.rs),
         // which also cover re-tapping a field after the keyboard was

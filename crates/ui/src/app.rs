@@ -205,6 +205,33 @@ pub struct App {
     focus_timer: Timer,
     grain: slint::Image,
     icon: slint::Image,
+    usage: RefCell<crate::usage::Usage>,
+}
+
+/// A pairing QR code, one pixel per module; the UI scales it up pixelated.
+fn qr_image(text: &str) -> slint::Image {
+    let Ok(code) = qrcode::QrCode::new(text) else {
+        return slint::Image::default();
+    };
+    const QUIET: usize = 4;
+    let w = code.width();
+    let n = w + 2 * QUIET;
+    let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(n as u32, n as u32);
+    let white = slint::Rgba8Pixel { r: 255, g: 255, b: 255, a: 255 };
+    buf.make_mut_slice().fill(white);
+    for (i, c) in code.to_colors().iter().enumerate() {
+        if *c == qrcode::Color::Dark {
+            buf.make_mut_slice()[(i / w + QUIET) * n + i % w + QUIET] = slint::Rgba8Pixel { r: 0, g: 0, b: 0, a: 255 };
+        }
+    }
+    slint::Image::from_rgba8(buf)
+}
+
+/// Shows a hosted hub's address, token and pairing QR code.
+fn show_hosted(s: &Store, h: &HostedHub) {
+    s.set_host_urls(h.urls.join("\n").into());
+    s.set_host_token(h.token.clone().into());
+    s.set_host_qr(h.urls.first().map(|u| qr_image(&SyncConfig::pair_link(u, &h.token))).unwrap_or_default());
 }
 
 fn grain_image() -> slint::Image {
@@ -296,6 +323,7 @@ impl App {
             focus_timer: Timer::default(),
             grain: grain_image(),
             icon: icon_image(),
+            usage: RefCell::default(),
             host,
         });
         CURRENT.with(|c| *c.borrow_mut() = Rc::downgrade(&app));
@@ -429,6 +457,7 @@ impl App {
         let mobile = self.host.is_mobile();
         s.set_mobile(mobile);
         s.set_can_host(self.host.can_host_hub());
+        s.set_can_scan(self.host.can_scan_qr());
         s.set_custom_chrome(self.host.custom_chrome());
         s.set_version(env!("CARGO_PKG_VERSION").into());
         s.set_grain(self.grain.clone());
@@ -466,8 +495,7 @@ impl App {
         let hosted = self.hosted.borrow();
         s.set_hosting(hosted.is_some());
         if let Some(h) = hosted.as_ref() {
-            s.set_host_urls(h.urls.join("\n").into());
-            s.set_host_token(h.token.clone().into());
+            show_hosted(s, h);
         }
         self.apply_status_to(s);
     }
@@ -801,6 +829,20 @@ impl App {
             app.refresh();
         });
         on!(on_connect_hub, |app, url, token| app.connect_hub(&url, &token));
+        on!(on_scan_pair, |app| app.host.scan_qr());
+        on!(on_refresh_usage, |app| {
+            let usage = app.usage.borrow_mut().sample().unwrap_or_else(|| "Not available on this system".into());
+            let battery = match app.host.battery_unrestricted() {
+                None => 0,
+                Some(false) => 1,
+                Some(true) => 2,
+            };
+            app.each_store(|s| {
+                s.set_usage(usage.clone().into());
+                s.set_battery_state(battery);
+            });
+        });
+        on!(on_battery_unrestrict, |app| app.host.request_battery_unrestricted());
         on!(on_disconnect_hub, |app| {
             {
                 let mut p = app.prefs.borrow_mut();
@@ -1064,6 +1106,14 @@ impl App {
         self.edit(|d| d.move_task(id, &column, pos));
     }
 
+    /// A scanned pairing QR code (see [`SyncConfig::pair_link`]).
+    pub fn pair_from_link(&self, link: &str) {
+        match SyncConfig::from_pair_link(link) {
+            Ok(cfg) => self.connect_hub(&cfg.base.url(), &cfg.token),
+            Err(e) => self.toast(&e),
+        }
+    }
+
     fn connect_hub(&self, url: &str, token: &str) {
         match SyncConfig::new(url, token) {
             Ok(cfg) => {
@@ -1101,8 +1151,7 @@ impl App {
                         self.sync.set_config(SyncConfig::new(&h.local_url, &h.token).ok());
                         self.each_store(|s| {
                             s.set_hosting(true);
-                            s.set_host_urls(h.urls.join("\n").into());
-                            s.set_host_token(h.token.clone().into());
+                            show_hosted(s, &h);
                         });
                     }
                     None => {
