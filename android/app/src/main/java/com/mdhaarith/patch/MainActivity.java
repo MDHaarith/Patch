@@ -9,6 +9,7 @@ import android.content.res.Configuration;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowInsets;
@@ -143,7 +144,7 @@ public final class MainActivity extends Activity {
         PatchNative.activity = new WeakReference<>(this);
         // The user may come back from the overlay permission screen, or have
         // revoked it: then the overlay service must not linger.
-        boolean allowed = PatchNative.floatAllowed(this);
+        boolean allowed = Settings.canDrawOverlays(this);
         if (!allowed && Prefs.is(this, Prefs.OVERLAY)) {
             Prefs.set(this, Prefs.OVERLAY, false);
             OverlayService.stop(this);

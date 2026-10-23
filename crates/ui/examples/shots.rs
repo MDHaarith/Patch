@@ -276,6 +276,15 @@ fn main() {
             phone.global::<Store>().set_settings_open(false);
         }
     }
+    let name = "phone-overlay-popup";
+    if want(name) {
+        let pov = OverlayWindow::new().unwrap();
+        papp.attach_overlay(&pov);
+        let idx = platform.windows.borrow().len() - 1;
+        pov.show().unwrap();
+        pov.global::<Store>().set_overlay_expanded(true);
+        render(&platform, idx, psize, scale, &out.join(format!("{name}.png")));
+    }
     drop(app);
     drop(papp);
     println!("wrote screenshots to {}", out.display());

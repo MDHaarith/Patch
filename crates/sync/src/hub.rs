@@ -171,9 +171,9 @@ impl Hub {
         self.shared.state.lock().map(|s| s.hub.clone()).unwrap_or_default()
     }
 
-    /// URLs other tailnet devices can use to pair with this hub.
+    /// URLs other devices can use to pair with this hub.
     pub fn urls(&self) -> Vec<String> {
-        net::hub_urls(self.port())
+        net::hub_urls(self.port(), self.shared.allow_lan)
     }
 
     pub fn stop(mut self) {
@@ -245,7 +245,7 @@ fn handle(shared: &Shared, mut req: Request) {
                 version: env!("CARGO_PKG_VERSION").into(),
                 seq: st.seq,
                 records: st.records.len(),
-                urls: net::hub_urls(shared.port),
+                urls: net::hub_urls(shared.port, shared.allow_lan),
             };
             json_response(200, serde_json::to_string(&info).unwrap_or_default())
         }

@@ -2,7 +2,7 @@
 
 An always-on todo list, kanban board and calendar — native Rust on **Linux** and
 **Android**, matte black and glassy, laid out like the macOS Calendar, and synced
-between your devices **over Tailscale** only.
+between your devices **over Tailscale** or your home Wi-Fi.
 
 ![Month view, Matte Black](docs/screenshots/desktop-matte-month.jpg)
 
@@ -41,7 +41,7 @@ floats *over other apps* when you want it to.
   - **Android**: a **home-screen widget** with today's and upcoming tasks and the pet. Turn on *Display over other apps* when you want the pet to hover above other apps; tap it to open the same panel. Reminders arrive as system notifications.
 - **Offline first**: every device keeps a full copy and edits merge field by field, so nothing is lost when two devices change the same task.
 
-## Sync over Tailscale
+## Sync
 
 One machine runs the **hub**: the Linux app (Settings → *Host the sync hub on this
 computer*) or the headless `patch-hub` on any always-on box such as a home server
@@ -49,16 +49,19 @@ or Raspberry Pi. Every other device connects to it.
 
 1. Install [Tailscale](https://tailscale.com) on each device and sign in to the same tailnet.
 2. On the hub machine, turn on hosting. Settings shows the addresses (e.g. `http://my-laptop:4747`) and a pairing token like `K7QF-2MZD-9XPA-T4RH`.
-3. On the phone (or another computer): Settings → *Sync over Tailscale* → enter the address and the token → **Connect**.
+3. On the phone: Settings → *Scan pairing QR code* and point it at the QR code the desktop shows. Or, on any device, enter the address and the token → **Connect**.
+
+No Tailscale? The desktop hub also answers devices on the same Wi-Fi and its QR
+code carries the LAN address (e.g. `http://192.168.1.20:4747`) instead.
 
 Edits show up on the other devices within about a second (long-polling), and a
 device that was offline catches up when it reconnects.
 
 Security model:
 
-- The hub only answers loopback and Tailscale peers (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`). Add `--allow-lan` to also accept your LAN.
+- The hub only answers loopback and Tailscale peers (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`), plus private LAN addresses for the desktop app's hub (`patch-hub` needs `--allow-lan`).
 - Every request needs the pairing token.
-- Traffic is plain HTTP *inside* the WireGuard tunnel Tailscale provides, so it is encrypted end to end without a TLS stack on the phone.
+- Traffic is plain HTTP *inside* the WireGuard tunnel Tailscale provides, so it is encrypted end to end without a TLS stack on the phone. Over plain Wi-Fi it is **not** encrypted: only pair on networks you trust.
 
 How it merges: every field of every task carries a hybrid-logical-clock stamp.
 Merging keeps the newest write per field, which is commutative and idempotent,

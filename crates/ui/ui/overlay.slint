@@ -56,7 +56,8 @@ export component OverlayPanel inherits Rectangle {
                     size: 32px;
                     clicked => { Actions.open-app(""); }
                 }
-                if !Store.in-bubble: IconButton {
+                // On Android the pet above the panel (or anywhere outside it) closes it.
+                if !Store.mobile: IconButton {
                     y: (parent.height - self.height) / 2;
                     icon: "minus";
                     size: 32px;
@@ -322,7 +323,36 @@ export component OverlayWindow inherits Window {
     preferred-height: 500px;
     min-width: 60px;
     min-height: 60px;
-    if root.mode != 2 && Store.overlay-expanded: OverlayPanel {
+    // Android: the window fills the screen and pops the panel out under the
+    // pet, like a system bubble. Tapping outside the panel closes it.
+    if root.mode != 2 && Store.overlay-expanded && Store.mobile: Rectangle {
+        TouchArea { clicked => { Actions.overlay-expand(false); } }
+        pet := Bubble {
+            x: parent.width - self.width - 8px;
+            y: 0px;
+            TouchArea { clicked => { Actions.overlay-expand(false); } }
+        }
+        Path {
+            x: pet.x + (pet.width - self.width) / 2;
+            y: pet.y + pet.height + 2px;
+            width: 22px;
+            height: 10px;
+            viewbox-width: 22;
+            viewbox-height: 10;
+            commands: "M 0 10 L 11 0 L 22 10 Z";
+            fill: Theme.float;
+        }
+        // Taps on the panel's own padding must not close it.
+        TouchArea { x: popup.x; y: popup.y; width: popup.width; height: popup.height; }
+        popup := OverlayPanel {
+            width: min(parent.width - 16px, 480px);
+            x: parent.width - self.width - 8px;
+            y: pet.y + pet.height + 11px;
+            height: min(540px, parent.height - self.y - 8px);
+            radius: 24px;
+        }
+    }
+    if root.mode != 2 && Store.overlay-expanded && !Store.mobile: OverlayPanel {
         width: parent.width;
         height: parent.height;
         radius: Store.mobile ? 24px : 20px;

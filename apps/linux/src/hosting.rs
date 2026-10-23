@@ -40,10 +40,12 @@ pub fn remembered_port(dir: &Path) -> u16 {
 }
 
 /// Starts a hub storing its state in `dir`, listening on all interfaces
-/// (the hub itself refuses peers outside the tailnet).
+/// (the hub itself refuses peers outside the tailnet and the LAN).
 pub fn start(dir: &Path, port: u16) -> Result<Hub, String> {
     let mut cfg = HubConfig::new(dir);
     cfg.name = hostname();
+    // Phones without Tailscale pair over the same Wi-Fi; the token still guards it.
+    cfg.allow_lan = true;
     let candidates = std::iter::once(port).chain(FALLBACK_PORTS.filter(|p| *p != port)).chain(std::iter::once(0));
     let mut first_error = None;
     for candidate in candidates {
