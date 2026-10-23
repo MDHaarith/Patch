@@ -17,6 +17,5 @@ patch
 ```
 
 Updates install over the previous version and keep your tasks.
-Android only accepts an update signed with the same key. Until the repository
-has its release signing key (see the README), nightly APKs use a throwaway test
-key, so each nightly needs an uninstall first (sync brings your tasks back).
+Every release since v0.1.0 is signed with the same key. An APK from an older
+"nightly" used a test key: uninstall it once first (sync brings your tasks back).

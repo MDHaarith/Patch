@@ -89,8 +89,8 @@ Build dependencies (Debian/Ubuntu): `build-essential pkg-config libfontconfig1-d
 ### Android
 
 **[Download the latest APK](https://github.com/MDHaarith/Patch/releases/latest)** from the
-Releases page. Numbered versions are published from `v*` tags, and the
-**[nightly](https://github.com/MDHaarith/Patch/releases/tag/nightly)** pre-release is refreshed on every push to `main`.
+Releases page. Every push to `main` publishes `v<version>-build.<n>`, and
+`v*` tags publish clean versions.
 Open the `.apk` on your phone to install it, then long-press the home screen →
 *Widgets* → **Patch** to add the widget.
 
