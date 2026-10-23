@@ -189,8 +189,19 @@ export component Field inherits Rectangle {
     border-color: input.has-focus ? Theme.accent.with-alpha(0.7) : (boxed ? Theme.hairline : transparent);
     animate border-color { duration: 120ms; }
 
+    // Last focus state sent to Actions.text-focus, so each change counts once.
+    property <bool> reported;
+    function report(focused: bool) {
+        if (focused != root.reported) {
+            root.reported = focused;
+            Actions.text-focus(focused);
+        }
+    }
+
     public function focus-input() {
         input.focus();
+        // `changed has-focus` misses focus taken while the field is created.
+        root.report(input.has-focus);
     }
     public function blur-input() {
         input.clear-focus();
@@ -249,7 +260,7 @@ export component Field inherits Rectangle {
                     }
                     reject
                 }
-                changed has-focus => { Actions.text-focus(self.has-focus); }
+                changed has-focus => { root.report(self.has-focus); }
             }
         }
     }
