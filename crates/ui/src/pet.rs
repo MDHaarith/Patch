@@ -310,7 +310,7 @@ pub fn play_frame(mood: Mood, tick: u32, blink: bool, skin: usize, play: Play) -
         }
     }
     if matches!(play, Play::Held(-1) | Play::Flying(-1) | Play::Bump(-1)) {
-        for row in c.0.chunks_exact_mut(W) {
+        for row in c.0.as_chunks_mut::<W>().0 {
             row.reverse();
         }
     }
@@ -364,7 +364,7 @@ mod tests {
                 }
                 for code in 1..=3 {
                     let mut right = play_frame(mood, 0, false, skin, Play::from_code(code));
-                    for row in right.chunks_exact_mut(W) {
+                    for row in right.as_chunks_mut::<W>().0 {
                         row.reverse();
                     }
                     assert_eq!(
