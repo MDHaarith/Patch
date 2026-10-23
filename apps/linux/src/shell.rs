@@ -1,6 +1,6 @@
-//! The desktop shell around the shared UI: the main window, the floating
-//! widget, the tray icon and the embedded sync hub, plus the platform
-//! services `patch_ui::Host` asks for.
+//! The desktop shell around the shared UI: the main window, the always-above
+//! pet, the desktop tile board, the tray icon and the embedded sync hub,
+//! plus the platform services `patch_ui::Host` asks for.
 //!
 //! Patch is meant to stay on. Closing the main window hides it; the process
 //! keeps running while anything still needs it (a tray icon to come back
@@ -12,9 +12,9 @@
 //! The main window has no system title bar: the shared UI draws its own
 //! rounded frame, window buttons and drag area (`Host::custom_chrome`) and
 //! asks the shell to move, resize, minimize, maximize or close the window
-//! (`Host::window_action`). It can be pinned above other apps. The widget
-//! sits on the desktop layer below other windows, or floats above them.
-//! Both layers are kept up on X11 by `layers`: set when a window is shown,
+//! (`Host::window_action`). It can be pinned above other apps. The pet always
+//! stays above apps; the separate desk tile board sits below them unless floated.
+//! These layers are kept up on X11 by `layers`: set when a window is shown,
 //! checked again on focus changes and every few seconds, because window
 //! managers drop states requested before a window is mapped.
 
@@ -22,7 +22,7 @@ use crate::layers::{self, Hints, Layer, Wm};
 use crate::notify::Notifier;
 use crate::screen::{self, Screen};
 use crate::tray::{Toggles, Tray, TrayAction};
-use crate::widget::Widget;
+use crate::widget::{Mode, Widget};
 use patch_linux::cli::Windowing;
 use patch_linux::instance::Request;
 use patch_linux::paths::Paths;
@@ -80,9 +80,10 @@ pub struct Shell {
     main: OnceCell<MainWindow>,
     main_sized: Cell<bool>,
     widget: RefCell<Option<Widget>>,
+    desk: RefCell<Option<Widget>>,
     widget_wanted: Cell<bool>,
     widget_pending: Cell<bool>,
-    /// The widget floats above apps instead of sitting on the desktop.
+    /// The desk tile board floats above apps instead of sitting on the desktop.
     widget_float: Cell<bool>,
     /// The main window stays above other apps.
     pinned: Cell<bool>,
@@ -116,6 +117,7 @@ impl Shell {
             main: OnceCell::new(),
             main_sized: Cell::new(false),
             widget: RefCell::new(None),
+            desk: RefCell::new(None),
             widget_wanted: Cell::new(false),
             widget_pending: Cell::new(false),
             widget_float: Cell::new(false),
@@ -412,82 +414,116 @@ impl Shell {
     fn create_widget(&self, screen: &Screen) {
         let Some(app) = self.app() else { return };
         self.wayland.set(screen.wayland);
-        let window = match OverlayWindow::new() {
-            Ok(w) => w,
-            Err(e) => {
-                eprintln!("patch: can't create the widget: {e}");
+        for (mode, slot) in [(Mode::Pet, &self.widget), (Mode::Desk, &self.desk)] {
+            let window = match OverlayWindow::new() {
+                Ok(w) => w,
+                Err(e) => {
+                    eprintln!("patch: can't create the {mode:?} widget: {e}");
+                    self.destroy_widget();
+                    return;
+                }
+            };
+            // Alt+F4 on either window turns both off, like the Settings toggle.
+            let me = self.me.clone();
+            window.window().on_close_requested(move || {
+                if let Some(s) = me.upgrade() {
+                    s.on_tray(TrayAction::SetWidget(false));
+                }
+                CloseRequestResponse::HideWindow
+            });
+            let me = self.me.clone();
+            let me2 = self.me.clone();
+            let widget = Widget::new(
+                window,
+                mode,
+                move |x, y| {
+                    if let Some(s) = me.upgrade() {
+                        s.widget_moved(mode, x, y);
+                    }
+                },
+                move |_| {
+                    if let Some(s) = me2.upgrade() {
+                        s.layers_soon();
+                    }
+                },
+            );
+            let saved = match mode {
+                Mode::Pet => {
+                    app.attach_overlay(widget.window());
+                    self.state.borrow().widget
+                }
+                Mode::Desk => {
+                    app.attach_desk(widget.window());
+                    self.state.borrow().desk
+                }
+            };
+            let place = widget.place(screen, saved);
+            if let Err(e) = widget.show() {
+                eprintln!("patch: can't show the {mode:?} widget: {e}");
+                widget.hide();
+                self.destroy_widget();
                 return;
             }
-        };
-        app.attach_overlay(&window);
-        // Alt+F4 on the widget turns it off for good, like the Settings toggle.
-        let me = self.me.clone();
-        window.window().on_close_requested(move || {
-            if let Some(s) = me.upgrade() {
-                s.on_tray(TrayAction::SetWidget(false));
+            *slot.borrow_mut() = Some(widget);
+            if let Some(place) = place {
+                match mode {
+                    Mode::Pet => self.state.borrow_mut().widget = Some(place),
+                    Mode::Desk => self.state.borrow_mut().desk = Some(place),
+                }
+                self.save_state_soon();
             }
-            CloseRequestResponse::HideWindow
-        });
-        let me = self.me.clone();
-        let me2 = self.me.clone();
-        let widget = Widget::new(
-            window,
-            move |x, y| {
+            let me = self.me.clone();
+            Timer::single_shot(Duration::from_millis(300), move || {
                 if let Some(s) = me.upgrade() {
-                    s.widget_moved(x, y);
+                    let slot = match mode {
+                        Mode::Pet => &s.widget,
+                        Mode::Desk => &s.desk,
+                    };
+                    if let Some(w) = slot.borrow().as_ref() {
+                        w.settle(place);
+                    }
                 }
-            },
-            move |_| {
-                if let Some(s) = me2.upgrade() {
-                    s.layers_soon();
-                }
-            },
-        );
-        let place = widget.place(screen, self.state.borrow().widget);
-        if let Err(e) = widget.show() {
-            eprintln!("patch: can't show the widget: {e}");
-            app.detach_overlay();
-            return;
+            });
         }
-        *self.widget.borrow_mut() = Some(widget);
         self.layers_after_show();
-        if let Some(place) = place {
-            self.state.borrow_mut().widget = Some(place);
-        }
-        let me = self.me.clone();
-        Timer::single_shot(Duration::from_millis(300), move || {
-            if let Some(s) = me.upgrade() {
-                if let Some(w) = s.widget.borrow().as_ref() {
-                    w.settle(place);
-                }
-            }
-        });
         if screen.wayland {
             self.wayland_layer_hint();
         }
     }
 
     fn destroy_widget(&self) {
-        let Some(widget) = self.widget.borrow_mut().take() else { return };
-        if let Some(place) = widget.place_now() {
-            self.state.borrow_mut().widget = Some(place);
-            self.save_state_soon();
+        for (mode, slot) in [(Mode::Pet, &self.widget), (Mode::Desk, &self.desk)] {
+            if let Some(widget) = slot.borrow_mut().take() {
+                if let Some(place) = widget.place_now() {
+                    match mode {
+                        Mode::Pet => self.state.borrow_mut().widget = Some(place),
+                        Mode::Desk => self.state.borrow_mut().desk = Some(place),
+                    }
+                    self.save_state_soon();
+                }
+                widget.hide();
+            }
         }
-        widget.hide();
         if let Some(app) = self.app() {
             app.detach_overlay();
+            app.detach_desk();
         }
     }
 
-    fn widget_moved(&self, x: i32, y: i32) {
-        let expanded = match self.widget.try_borrow() {
-            Ok(w) => match w.as_ref() {
-                Some(w) => w.expanded(),
-                None => return,
-            },
-            Err(_) => return,
+    fn widget_moved(&self, mode: Mode, x: i32, y: i32) {
+        let slot = match mode {
+            Mode::Pet => &self.widget,
+            Mode::Desk => &self.desk,
         };
-        self.state.borrow_mut().widget = Some(patch_linux::state::WidgetPlace { x, y, expanded });
+        // Placement and settling may cause a move while the slot is borrowed.
+        if !slot.try_borrow().is_ok_and(|w| w.is_some()) {
+            return;
+        }
+        let place = Some(patch_linux::state::WidgetPlace { x, y, expanded: false });
+        match mode {
+            Mode::Pet => self.state.borrow_mut().widget = place,
+            Mode::Desk => self.state.borrow_mut().desk = place,
+        }
         self.save_state_soon();
     }
 
@@ -499,6 +535,10 @@ impl Shell {
     }
 
     fn widget_hints(&self) -> Hints {
+        Hints { layer: Layer::Above, sticky: true, skip_taskbar: true }
+    }
+
+    fn desk_hints(&self) -> Hints {
         let layer = if self.widget_float.get() { Layer::Above } else { Layer::Below };
         Hints { layer, sticky: true, skip_taskbar: true }
     }
@@ -545,6 +585,9 @@ impl Shell {
         if let Some(w) = widget {
             self.apply_layer(w.window(), self.widget_hints(), strict);
         }
+        if let Some(w) = self.desk.borrow().as_ref() {
+            self.apply_layer(w.window().window(), self.desk_hints(), strict);
+        }
     }
 
     /// Checks the layers once the current event is handled.
@@ -577,8 +620,9 @@ impl Shell {
         }
         let body = match self.opts.windowing {
             Windowing::Auto => {
-                "Wayland doesn't let apps keep a window above or below others. From the next start Patch \
-                 runs through XWayland while the widget or “Keep Patch on top” is on, so they stay put."
+                "Wayland doesn't let apps keep a window above or below others. XWayland isn't available \
+                 in this session. Enable XWayland and restart Patch to keep the pet above apps and \
+                 the desk widget on the desktop."
             }
             _ => {
                 "Wayland doesn't let apps keep a window above or below others. Use your desktop's \
@@ -628,9 +672,12 @@ impl Shell {
             return;
         }
         self.remember_main_size();
-        if let Some(w) = self.widget.borrow().as_ref() {
-            if let Some(place) = w.place_now() {
-                self.state.borrow_mut().widget = Some(place);
+        for (mode, slot) in [(Mode::Pet, &self.widget), (Mode::Desk, &self.desk)] {
+            if let Some(place) = slot.borrow().as_ref().and_then(Widget::place_now) {
+                match mode {
+                    Mode::Pet => self.state.borrow_mut().widget = Some(place),
+                    Mode::Desk => self.state.borrow_mut().desk = Some(place),
+                }
             }
         }
         if let Some(app) = self.app() {
@@ -642,12 +689,9 @@ impl Shell {
     /// Cleanup after the event loop returned.
     pub fn shutdown(&self) {
         self.quitting.set(true);
-        if let Some(widget) = self.widget.borrow_mut().take() {
-            widget.hide();
-        }
+        self.destroy_widget();
         if let Some(app) = self.app() {
             app.save_now();
-            app.detach_overlay();
             app.detach_main();
         }
         if let Some(main) = self.main.get() {
@@ -784,19 +828,11 @@ impl Host for Shell {
         let me = self.me.clone();
         later(move || {
             if let Some(s) = me.upgrade() {
-                if let Some(w) = s.widget_window() {
-                    s.apply_layer(w.window(), s.widget_hints(), true);
+                if let Some(w) = s.desk.borrow().as_ref() {
+                    s.apply_layer(w.window().window(), s.desk_hints(), true);
                 }
             }
         });
-    }
-
-    fn overlay_expand(&self, expanded: bool) {
-        let place = self.widget.borrow().as_ref().and_then(|w| w.resize(expanded));
-        if let Some(place) = place {
-            self.state.borrow_mut().widget = Some(place);
-            self.save_state_soon();
-        }
     }
 
     fn open_app(&self, _task_id: Option<&str>) {
@@ -832,5 +868,26 @@ fn resize_direction(edge: u8) -> ResizeDirection {
         5 => ResizeDirection::SouthWest,
         6 => ResizeDirection::West,
         _ => ResizeDirection::NorthWest,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn floating_only_changes_the_desk_layer() {
+        let shell = Shell::new(
+            Paths::from_env(Some("/nonexistent/patch-layer-test".into())),
+            Options { windowing: Windowing::Auto, headless_extras: true },
+        );
+        for float in [false, true] {
+            shell.widget_float.set(float);
+            assert_eq!(shell.widget_hints(), Hints { layer: Layer::Above, sticky: true, skip_taskbar: true });
+            assert_eq!(
+                shell.desk_hints(),
+                Hints { layer: if float { Layer::Above } else { Layer::Below }, sticky: true, skip_taskbar: true }
+            );
+        }
     }
 }

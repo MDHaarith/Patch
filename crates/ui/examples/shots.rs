@@ -227,6 +227,19 @@ fn main() {
         }
     }
 
+    let desk = OverlayWindow::new().unwrap();
+    desk.set_mode(2);
+    app.attach_desk(&desk);
+    let didx = platform.windows.borrow().len() - 1;
+    desk.show().unwrap();
+    for (li, look) in looks.iter().enumerate() {
+        let name = format!("desk-{look}");
+        if want(&name) {
+            a.invoke_set_look(li as i32);
+            render(&platform, didx, (704, 704), 2.0, &out.join(format!("{name}.png")));
+        }
+    }
+
     // Phone
     let pdir = std::env::temp_dir().join(format!("patch-shots-phone-{}", std::process::id()));
     std::fs::create_dir_all(&pdir).unwrap();

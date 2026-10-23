@@ -88,7 +88,7 @@ impl ksni::Tray for Item {
             }
             .into(),
             CheckmarkItem {
-                label: "Float widget above apps".into(),
+                label: "Float desk widget above apps".into(),
                 checked: self.toggles.widget_float,
                 enabled: self.toggles.widget,
                 activate: Box::new(|t: &mut Item| {

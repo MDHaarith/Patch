@@ -1,4 +1,4 @@
-//! Desktop-only state that isn't a user preference: where the widget sits,
+//! Desktop-only state that isn't a user preference: where the pet and desk sit,
 //! the main window's size, which one-time hints were shown.
 
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,8 @@ pub struct WidgetPlace {
     /// let clients position their windows).
     pub x: i32,
     pub y: i32,
-    /// Whether that corner belongs to the panel or to the bubble.
+    /// Legacy panel/bubble flag, kept for existing state files. Fixed windows
+    /// save this as false.
     pub expanded: bool,
 }
 
@@ -26,6 +27,7 @@ pub struct MainSize {
 #[serde(default)]
 pub struct DesktopState {
     pub widget: Option<WidgetPlace>,
+    pub desk: Option<WidgetPlace>,
     pub main: Option<MainSize>,
     /// "Patch keeps running in the background" was shown.
     pub background_hint: bool,
@@ -54,6 +56,18 @@ mod tests {
     fn missing_or_partial_files_load() {
         assert_eq!(DesktopState::load(Path::new("/nonexistent/desktop.json")), DesktopState::default());
         let s: DesktopState = serde_json::from_str(r#"{"background_hint":true}"#).unwrap();
-        assert!(s.background_hint && s.widget.is_none());
+        assert!(s.background_hint && s.widget.is_none() && s.desk.is_none());
+        let s: DesktopState = serde_json::from_str(r#"{"widget":{"x":10,"y":20,"expanded":true}}"#).unwrap();
+        assert!(s.widget.unwrap().expanded && s.desk.is_none());
+    }
+
+    #[test]
+    fn pet_and_desk_positions_round_trip() {
+        let s = DesktopState {
+            widget: Some(WidgetPlace { x: 1200, y: 56, expanded: false }),
+            desk: Some(WidgetPlace { x: 908, y: 140, expanded: false }),
+            ..DesktopState::default()
+        };
+        assert_eq!(serde_json::from_str::<DesktopState>(&serde_json::to_string(&s).unwrap()).unwrap(), s);
     }
 }

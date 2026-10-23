@@ -162,6 +162,7 @@ cargo test                                   # core, sync, ui (incl. a UI intera
 cargo clippy --all-targets
 cargo run -p patch-ui --example shots -- screenshots/   # render every screen in every theme
 cargo run -p patch-ui --example pet_sheet -- pet.png    # the pet's frames; --android <res> regenerates the widget's
+cargo run -p patch-ui --example icons                 # all desktop and Android app icons
 ```
 
 ## License

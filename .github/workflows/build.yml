@@ -29,6 +29,7 @@ jobs:
         run: bash .github/scripts/install-system-deps.sh pkg-config libfontconfig1-dev libxkbcommon-dev libwayland-dev libdbus-1-dev libxkbcommon-x11-0 libegl1
       - run: cargo clippy -p patch-core -p patch-sync -p patch-ui --all-targets -- -D warnings
       - run: cargo test -p patch-core -p patch-sync -p patch-ui
+      - run: bash .github/scripts/test-release-body.sh
       - name: Render screenshots
         run: cargo run -p patch-ui --example shots -- screenshots
       - uses: actions/upload-artifact@v4
@@ -146,10 +147,18 @@ jobs:
           mkdir dist
           cp artifacts/android-apk/release/*.apk "dist/patch-android-${GITHUB_REF_NAME}.apk"
           cp artifacts/patch-linux-x86_64/*.tar.gz "dist/patch-linux-x86_64-${GITHUB_REF_NAME}.tar.gz"
+      - name: Release images and body
+        run: |
+          cp assets/images/icon.png dist/patch-icon.png
+          cp artifacts/screenshots/desktop-matte-{month,week,board}.png \
+            artifacts/screenshots/phone-matte-month.png \
+            artifacts/screenshots/overlay-matte-{panel,bubble}.png \
+            artifacts/screenshots/desk-matte.png dist/
+          bash .github/scripts/release-body.sh "$GITHUB_REF_NAME" > release-body.md
       - uses: softprops/action-gh-release@v2
         with:
           name: Patch ${{ github.ref_name }}
-          body_path: .github/release-notes.md
+          body_path: release-body.md
           generate_release_notes: true
           files: dist/*
 
@@ -174,10 +183,18 @@ jobs:
           cp artifacts/patch-linux-x86_64/*.tar.gz dist/patch-linux-x86_64-nightly.tar.gz
           git tag -f nightly
           git push -f origin refs/tags/nightly
+      - name: Release images and body
+        run: |
+          cp assets/images/icon.png dist/patch-icon.png
+          cp artifacts/screenshots/desktop-matte-{month,week,board}.png \
+            artifacts/screenshots/phone-matte-month.png \
+            artifacts/screenshots/overlay-matte-{panel,bubble}.png \
+            artifacts/screenshots/desk-matte.png dist/
+          bash .github/scripts/release-body.sh nightly > release-body.md
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: nightly
           name: Patch nightly
           prerelease: true
-          body_path: .github/release-notes.md
+          body_path: release-body.md
           files: dist/*
