@@ -323,32 +323,67 @@ export component OverlayWindow inherits Window {
     preferred-height: 500px;
     min-width: 60px;
     min-height: 60px;
-    // Android: the window fills the screen and pops the panel out under the
-    // pet, like a system bubble. Tapping outside the panel closes it.
-    if root.mode != 2 && Store.overlay-expanded && Store.mobile: Rectangle {
-        TouchArea { clicked => { Actions.overlay-expand(false); } }
-        pet := Bubble {
-            x: parent.width - self.width - 8px;
-            y: 0px;
-            TouchArea { clicked => { Actions.overlay-expand(false); } }
+    // Java sends the saved pet origin relative to the usable screen, in logical pixels.
+    in property <length> pet-x: 0px;
+    in property <length> pet-y: 0px;
+    property <bool> panel-surface: root.width > 120px || root.height > 120px;
+    property <float> reveal: Store.mobile && Store.overlay-expanded && root.panel-surface ? 1 : 0;
+    animate reveal { duration: 220ms; easing: ease-out; }
+    property <bool> transitioning: false;
+    Timer {
+        interval: 240ms;
+        running: root.transitioning;
+        triggered => { root.transitioning = false; }
+    }
+    function toggle-mobile() {
+        if !root.transitioning {
+            root.transitioning = true;
+            Actions.overlay-expand(!Store.overlay-expanded);
         }
+    }
+    if root.mode != 2 && Store.mobile: mobile := Rectangle {
+        // Keep the panel mounted until Java shrinks the surface after the close animation.
+        Rectangle {
+            visible: root.panel-surface;
+            background: #000000.with-alpha(0.4 * root.reveal);
+            TouchArea { clicked => { root.toggle-mobile(); } }
+        }
+        pet := Bubble {
+            x: root.panel-surface ? clamp(root.pet-x, 0px, parent.width - self.width) : (parent.width - self.width) / 2;
+            y: root.panel-surface ? clamp(root.pet-y, 0px, parent.height - self.height) : (parent.height - self.height) / 2;
+            pet-touch := TouchArea { clicked => { root.toggle-mobile(); } }
+        }
+        property <length> below: max(0px, self.height - pet.y - pet.height - 19px);
+        property <length> above: max(0px, pet.y - 19px);
+        property <bool> opens-below: below >= min(540px, above);
+        property <length> panel-width: max(0px, min(self.width - 16px, 480px));
+        property <length> panel-height: min(540px, opens-below ? below : above);
+        property <length> panel-x: clamp(pet.x + pet.width / 2 - panel-width / 2, 8px, self.width - panel-width - 8px);
+        property <length> panel-y: opens-below ? pet.y + pet.height + 11px : pet.y - panel-height - 11px;
         Path {
-            x: pet.x + (pet.width - self.width) / 2;
-            y: pet.y + pet.height + 2px;
+            visible: root.panel-surface;
+            opacity: root.reveal;
+            x: clamp(pet.x + (pet.width - self.width) / 2, mobile.panel-x, mobile.panel-x + mobile.panel-width - self.width);
+            y: mobile.opens-below ? pet.y + pet.height + 2px : pet.y - 12px;
             width: 22px;
             height: 10px;
             viewbox-width: 22;
             viewbox-height: 10;
-            commands: "M 0 10 L 11 0 L 22 10 Z";
+            commands: mobile.opens-below ? "M 0 10 L 11 0 L 22 10 Z" : "M 0 0 L 11 10 L 22 0 Z";
             fill: Theme.float;
         }
         // Taps on the panel's own padding must not close it.
-        TouchArea { x: popup.x; y: popup.y; width: popup.width; height: popup.height; }
+        TouchArea {
+            visible: root.panel-surface && root.reveal > 0;
+            x: popup.x; y: popup.y; width: popup.width; height: popup.height;
+        }
         popup := OverlayPanel {
-            width: min(parent.width - 16px, 480px);
-            x: parent.width - self.width - 8px;
-            y: pet.y + pet.height + 11px;
-            height: min(540px, parent.height - self.y - 8px);
+            visible: root.panel-surface && root.reveal > 0;
+            opacity: root.reveal;
+            width: mobile.panel-width * (0.94 + 0.06 * root.reveal);
+            height: mobile.panel-height * (0.94 + 0.06 * root.reveal);
+            x: mobile.panel-x + (pet.x + pet.width / 2 - mobile.panel-x - self.width / 2) * (1 - root.reveal);
+            y: mobile.panel-y + (mobile.opens-below ? -12px : 12px) * (1 - root.reveal);
             radius: 24px;
         }
     }
@@ -357,7 +392,7 @@ export component OverlayWindow inherits Window {
         height: parent.height;
         radius: Store.mobile ? 24px : 20px;
     }
-    if root.mode != 2 && !Store.overlay-expanded: bubble := Bubble {
+    if root.mode != 2 && !Store.overlay-expanded && !Store.mobile: bubble := Bubble {
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         TouchArea {

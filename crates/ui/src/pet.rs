@@ -26,6 +26,40 @@ impl Mood {
     }
 }
 
+/// Signed JNI codes keep the direction with each held/flight/bump pose.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Play {
+    #[default]
+    Idle,
+    Held(i32),
+    Flying(i32),
+    Bump(i32),
+    Landing,
+    Dizzy,
+}
+
+impl Play {
+    pub fn from_code(code: i32) -> Self {
+        match code {
+            -1 | 1 => Self::Held(code.signum()),
+            -2 | 2 => Self::Flying(code.signum()),
+            -3 | 3 => Self::Bump(code.signum()),
+            4 => Self::Landing,
+            5 => Self::Dizzy,
+            _ => Self::Idle,
+        }
+    }
+
+    pub fn recovery(self) -> Option<(u64, Self)> {
+        match self {
+            Self::Bump(dir) => Some((180, Self::Flying(dir))),
+            Self::Landing => Some((360, Self::Idle)),
+            Self::Dizzy => Some((900, Self::Idle)),
+            _ => None,
+        }
+    }
+}
+
 const CLEAR: [u8; 4] = [0, 0, 0, 0];
 const OUTLINE: [u8; 4] = [0x2E, 0x18, 0x12, 255];
 
@@ -66,20 +100,31 @@ const BX1: i32 = 16;
 /// One animation frame. `tick` drives the bob, the arm wave and the foot
 /// shuffle; `blink` closes the eyes for a frame; `skin` indexes [`SKINS`].
 pub fn frame(mood: Mood, tick: u32, blink: bool, skin: usize) -> Vec<[u8; 4]> {
+    play_frame(mood, tick, blink, skin, Play::Idle)
+}
+
+pub fn play_frame(mood: Mood, tick: u32, blink: bool, skin: usize, play: Play) -> Vec<[u8; 4]> {
     let [body, light, shade] = SKINS[skin % SKINS.len()].1;
     let mut c = Canvas([CLEAR; W * H]);
     let up = tick.is_multiple_of(2) && mood != Mood::Sleepy;
-    let top = if up { 3 } else { 4 };
-    let bottom = top + INSETS.len() as i32 - 1;
+    let top = match play {
+        Play::Held(_) => 3,
+        Play::Landing => 2,
+        Play::Bump(_) => 5,
+        _ => if up { 3 } else { 4 }
+    };
+    let insets = if matches!(play, Play::Bump(_)) { &INSETS[2..] } else { &INSETS[..] };
+    let bottom = top + insets.len() as i32 - 1;
     let inside = |x: i32, y: i32| {
         (top..=bottom).contains(&y) && {
-            let i = INSETS[(y - top) as usize];
+            let i = insets[(y - top) as usize];
             x >= BX0 + i && x <= BX1 - i
         }
     };
 
     // Arms sit behind the body: little nubs that wave when happy or worried.
-    let wave = matches!(mood, Mood::Happy | Mood::Worried) && tick % 4 < 2;
+    let wave = matches!(play, Play::Flying(_) | Play::Bump(_))
+        || (play == Play::Idle && matches!(mood, Mood::Happy | Mood::Worried) && tick % 4 < 2);
     for (side, ax) in [(-1, BX0 - 1), (1, BX1 + 1)] {
         let lift = if wave && (side == 1 || mood == Mood::Worried) { 2 } else { 0 };
         let ay = top + 7 - lift;
@@ -118,19 +163,30 @@ pub fn frame(mood: Mood, tick: u32, blink: bool, skin: usize) -> Vec<[u8; 4]> {
 
     // Sprout of thread on top; it sways with the bob.
     let sway = if up { 0 } else { 1 };
-    c.set(10, top - 1, OUTLINE);
-    c.set(10 + sway, top - 2, OUTLINE);
-    c.set(11 + sway, top - 3, body);
-    c.set(12 + sway, top - 3, light);
-    c.set(11 + sway, top - 2, shade);
+    let sprout_top = top.max(3);
+    c.set(10, sprout_top - 1, OUTLINE);
+    c.set(10 + sway, sprout_top - 2, OUTLINE);
+    c.set(11 + sway, sprout_top - 3, body);
+    c.set(12 + sway, sprout_top - 3, light);
+    c.set(11 + sway, sprout_top - 2, shade);
 
     // Feet shuffle.
     let (lf, rf) = if tick % 4 < 2 { (0, 1) } else { (1, 0) };
     for (x, lift) in [(6, lf), (12, rf)] {
         let lifted = mood != Mood::Sleepy && lift == 1;
-        let fy = if lifted { bottom } else { bottom + 1 };
+        let fy = if matches!(play, Play::Held(_)) {
+            bottom + 2
+        } else if lifted {
+            bottom
+        } else {
+            bottom + 1
+        };
         c.set(x, fy, OUTLINE);
         c.set(x + 1, fy, OUTLINE);
+        if matches!(play, Play::Held(_)) {
+            c.set(x, bottom + 1, OUTLINE);
+            c.set(x + 1, bottom + 1, OUTLINE);
+        }
         if !lifted {
             c.set(x, bottom, OUTLINE);
             c.set(x + 1, bottom, OUTLINE);
@@ -139,15 +195,16 @@ pub fn frame(mood: Mood, tick: u32, blink: bool, skin: usize) -> Vec<[u8; 4]> {
 
     // Face: big eyes with a glint, rosy cheeks.
     let ey = top + 4;
-    let eyes = [6, 12];
+    let look = if play == Play::Idle && tick % 32 == 24 { 1 } else { 0 };
+    let eyes = [6 + look, 12 + look];
     let cheeks = |c: &mut Canvas| {
         for x in [5, 14] {
             c.set(x, ey + 3, CHEEK);
             c.set(x + 1, ey + 3, CHEEK);
         }
     };
-    match mood {
-        Mood::Happy => {
+    match (play, mood) {
+        (Play::Idle, Mood::Happy) => {
             for ex in eyes {
                 c.set(ex - 1, ey + 2, EYE);
                 c.set(ex, ey + 1, EYE);
@@ -167,7 +224,7 @@ pub fn frame(mood: Mood, tick: u32, blink: bool, skin: usize) -> Vec<[u8; 4]> {
                 }
             }
         }
-        Mood::Sleepy => {
+        (Play::Idle, Mood::Sleepy) => {
             for ex in eyes {
                 c.set(ex - 1, ey + 2, EYE);
                 c.set(ex, ey + 2, EYE);
@@ -175,6 +232,12 @@ pub fn frame(mood: Mood, tick: u32, blink: bool, skin: usize) -> Vec<[u8; 4]> {
             }
             c.set(9, ey + 4, EYE);
             c.set(10, ey + 4, EYE);
+            if tick % 32 == 26 {
+                for y in ey + 3..=ey + 5 {
+                    c.set(9, y, EYE);
+                    c.set(10, y, EYE);
+                }
+            }
             cheeks(&mut c);
             let zy = if tick % 4 < 2 { 0 } else { 1 };
             for x in 15..=19 {
@@ -185,7 +248,7 @@ pub fn frame(mood: Mood, tick: u32, blink: bool, skin: usize) -> Vec<[u8; 4]> {
                 c.set(19 - d, zy + d, ZZZ);
             }
         }
-        Mood::Busy | Mood::Worried => {
+        (Play::Idle, Mood::Busy | Mood::Worried) => {
             for ex in eyes {
                 if blink {
                     c.set(ex, ey + 2, EYE);
@@ -217,12 +280,49 @@ pub fn frame(mood: Mood, tick: u32, blink: bool, skin: usize) -> Vec<[u8; 4]> {
             }
             cheeks(&mut c);
         }
+        _ => {
+            for ex in eyes {
+                match play {
+                    Play::Dizzy => {
+                        for (dx, dy) in [(-1, 0), (1, 0), (0, 1), (-1, 2), (1, 2)] {
+                            c.set(ex + dx, ey + dy, EYE);
+                        }
+                    }
+                    Play::Flying(_) | Play::Bump(_) => {
+                        for (dx, dy) in [(-1, 1), (0, 0), (1, 1)] {
+                            c.set(ex + dx, ey + dy, EYE);
+                        }
+                    }
+                    _ => {
+                        for dy in 0..3 {
+                            c.set(ex, ey + dy, EYE);
+                            c.set(ex + 1, ey + dy, EYE);
+                        }
+                        c.set(ex, ey, GLINT);
+                    }
+                }
+            }
+            for x in 9..=10 {
+                c.set(x, ey + 3, EYE);
+                c.set(x, ey + 4, if matches!(play, Play::Held(_)) { EYE } else { CHEEK });
+            }
+            cheeks(&mut c);
+        }
+    }
+    if matches!(play, Play::Held(-1) | Play::Flying(-1) | Play::Bump(-1)) {
+        for row in c.0.chunks_exact_mut(W) {
+            row.reverse();
+        }
     }
     c.0.to_vec()
 }
 
 pub fn image(mood: Mood, tick: u32, blink: bool, skin: usize) -> Image {
-    let px = frame(mood, tick, blink, skin);
+    play_image(mood, tick, blink, skin, Play::Idle)
+}
+
+pub fn play_image(mood: Mood, tick: u32, blink: bool, skin: usize, play: Play) -> Image {
+    let px = play_frame(mood, tick, blink, skin, play);
     let mut buf = SharedPixelBuffer::<Rgba8Pixel>::new(W as u32, H as u32);
     for (d, s) in buf.make_mut_slice().iter_mut().zip(px) {
         *d = Rgba8Pixel { r: s[0], g: s[1], b: s[2], a: s[3] };
@@ -245,5 +345,57 @@ mod tests {
         assert_ne!(busy0, frame(Mood::Busy, 0, false, 1), "skins recolour");
         assert_eq!(frame(Mood::Busy, 0, false, SKINS.len()), busy0, "out-of-range skin wraps");
         assert!(busy0.iter().filter(|p| p[3] > 0).count() > 120, "a solid little body");
+    }
+
+    #[test]
+    fn play_frames_are_crisp_distinct_and_directional() {
+        for skin in 0..SKINS.len() {
+            for mood in [Mood::Happy, Mood::Busy, Mood::Worried, Mood::Sleepy] {
+                let idle = frame(mood, 0, false, skin);
+                let poses: Vec<_> = [1, 2, 3, 4, 5]
+                    .into_iter()
+                    .map(|code| play_frame(mood, 0, false, skin, Play::from_code(code)))
+                    .collect();
+                for (i, pose) in poses.iter().enumerate() {
+                    assert_eq!(pose.len(), W * H);
+                    assert!(pose.iter().all(|p| p[3] == 0 || p[3] == 255));
+                    assert_ne!(pose, &idle);
+                    assert!(!poses[..i].contains(pose), "each reaction has its own pose");
+                }
+                for code in 1..=3 {
+                    let mut right = play_frame(mood, 0, false, skin, Play::from_code(code));
+                    for row in right.chunks_exact_mut(W) {
+                        row.reverse();
+                    }
+                    assert_eq!(
+                        right,
+                        play_frame(mood, 0, false, skin, Play::from_code(-code))
+                    );
+                }
+            }
+        }
+        assert_ne!(
+            frame(Mood::Busy, 0, false, 0),
+            frame(Mood::Busy, 24, false, 0),
+            "looks around"
+        );
+        assert_ne!(
+            frame(Mood::Sleepy, 2, false, 0),
+            frame(Mood::Sleepy, 26, false, 0),
+            "yawns"
+        );
+    }
+
+    #[test]
+    fn play_recovery_preserves_flight_and_rejects_unknown_codes() {
+        for code in [i32::MIN, -5, -4, 0, 6, i32::MAX] {
+            assert_eq!(Play::from_code(code), Play::Idle);
+        }
+        assert_eq!(Play::Bump(-1).recovery(), Some((180, Play::Flying(-1))));
+        assert_eq!(Play::Landing.recovery(), Some((360, Play::Idle)));
+        assert_eq!(Play::Dizzy.recovery(), Some((900, Play::Idle)));
+        for play in [Play::Idle, Play::Held(1), Play::Flying(-1)] {
+            assert_eq!(play.recovery(), None);
+        }
     }
 }

@@ -200,6 +200,8 @@ pub struct App {
     snapshot: RefCell<String>,
     pet_tick: Cell<u32>,
     pet_mood: Cell<i32>,
+    pet_play: Cell<crate::pet::Play>,
+    pet_recovery: Timer,
     timers: RefCell<Vec<Timer>>,
     toast_timer: Timer,
     focus_timer: Timer,
@@ -318,6 +320,8 @@ impl App {
             snapshot: RefCell::new(String::new()),
             pet_tick: Cell::new(0),
             pet_mood: Cell::new(1),
+            pet_play: Cell::default(),
+            pet_recovery: Timer::default(),
             timers: RefCell::new(Vec::new()),
             toast_timer: Timer::default(),
             focus_timer: Timer::default(),
@@ -458,6 +462,7 @@ impl App {
         s.set_mobile(mobile);
         s.set_can_host(self.host.can_host_hub());
         s.set_can_scan(self.host.can_scan_qr());
+        s.set_can_update(self.host.can_update());
         s.set_custom_chrome(self.host.custom_chrome());
         s.set_version(env!("CARGO_PKG_VERSION").into());
         s.set_grain(self.grain.clone());
@@ -535,6 +540,8 @@ impl App {
     }
 
     pub fn detach_overlay(&self) {
+        self.pet_recovery.stop();
+        self.pet_play.set(crate::pet::Play::Idle);
         *self.overlay.borrow_mut() = None;
     }
 
@@ -830,6 +837,7 @@ impl App {
         });
         on!(on_connect_hub, |app, url, token| app.connect_hub(&url, &token));
         on!(on_scan_pair, |app| app.host.scan_qr());
+        on!(on_check_update, |app| app.host.check_update());
         on!(on_refresh_usage, |app| {
             let usage = app.usage.borrow_mut().sample().unwrap_or_else(|| "Not available on this system".into());
             let battery = match app.host.battery_unrestricted() {
@@ -897,6 +905,7 @@ impl App {
             app.toast("Copied");
         });
         on!(on_overlay_expand, |app, expanded| {
+            app.set_pet_play(0);
             app.prefs.borrow_mut().overlay_expanded = expanded;
             app.save_prefs();
             app.each_store(|s| s.set_overlay_expanded(expanded));
@@ -1606,10 +1615,42 @@ impl App {
     fn animate_pet(&self) {
         let tick = self.pet_tick.get().wrapping_add(1);
         self.pet_tick.set(tick);
+        self.paint_pet();
+    }
+
+    /// Play affects only the mobile overlay; the activity and desktop keep their mood.
+    pub fn set_pet_play(self: &Rc<Self>, code: i32) {
+        if !self.host.is_mobile() {
+            return;
+        }
+        self.pet_recovery.stop();
+        let play = crate::pet::Play::from_code(code);
+        self.pet_play.set(play);
+        self.paint_pet();
+        if let Some((ms, next)) = play.recovery() {
+            let weak = Rc::downgrade(self);
+            self.pet_recovery.start(TimerMode::SingleShot, StdDuration::from_millis(ms), move || {
+                if let Some(app) = weak.upgrade() {
+                    app.pet_play.set(next);
+                    app.paint_pet();
+                }
+            });
+        }
+    }
+
+    fn paint_pet(&self) {
+        let tick = self.pet_tick.get();
         let blink = tick.is_multiple_of(9);
         let skin = self.prefs.borrow().pet_skin.max(0) as usize;
         let img = crate::pet::image(crate::pet::Mood::from_index(self.pet_mood.get()), tick, blink, skin);
         self.each_store(|s| s.set_pet_image(img.clone()));
+        if self.pet_play.get() != crate::pet::Play::Idle {
+            if let Some(w) = self.overlay.borrow().as_ref().and_then(|w| w.upgrade()) {
+                w.global::<Store>().set_pet_image(crate::pet::play_image(
+                    crate::pet::Mood::from_index(self.pet_mood.get()), tick, false, skin, self.pet_play.get(),
+                ));
+            }
+        }
     }
 
     /// The pet's mood and one-line status.

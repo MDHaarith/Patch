@@ -2,25 +2,15 @@
 
 use crate::runtime::Bridge;
 use patch_ui::{Host, Reminder};
-use std::cell::Cell;
 use std::rc::Rc;
-
-/// Requests the host makes of the runtime, picked up before the next frame.
-#[derive(Default)]
-pub struct HostRequests {
-    /// The overlay switched between bubble and panel; its surface is about to
-    /// be resized, so the runtime holds its frames until the new size lands.
-    pub overlay_expand: Cell<Option<bool>>,
-}
 
 pub struct AndroidHost {
     bridge: Rc<dyn Bridge>,
-    requests: Rc<HostRequests>,
 }
 
 impl AndroidHost {
-    pub fn new(bridge: Rc<dyn Bridge>, requests: Rc<HostRequests>) -> AndroidHost {
-        AndroidHost { bridge, requests }
+    pub fn new(bridge: Rc<dyn Bridge>) -> AndroidHost {
+        AndroidHost { bridge }
     }
 }
 
@@ -46,7 +36,6 @@ impl Host for AndroidHost {
     }
 
     fn overlay_expand(&self, expanded: bool) {
-        self.requests.overlay_expand.set(Some(expanded));
         self.bridge.overlay_expand(expanded);
     }
 
@@ -63,7 +52,8 @@ impl Host for AndroidHost {
             .iter()
             .map(|r| serde_json::json!({ "key": r.key, "at": r.at_ms, "title": r.title, "body": r.body }))
             .collect();
-        self.bridge.schedule_reminders(&serde_json::Value::Array(list).to_string());
+        self.bridge
+            .schedule_reminders(&serde_json::Value::Array(list).to_string());
         true
     }
 
@@ -81,6 +71,14 @@ impl Host for AndroidHost {
 
     fn scan_qr(&self) {
         self.bridge.scan_qr();
+    }
+
+    fn can_update(&self) -> bool {
+        true
+    }
+
+    fn check_update(&self) {
+        self.bridge.check_update();
     }
 
     fn battery_unrestricted(&self) -> Option<bool> {

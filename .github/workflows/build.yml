@@ -123,6 +123,15 @@ jobs:
           else
             echo "No release key configured: this build's release APK is debug-signed (fine for testing, not for publishing)."
           fi
+      - name: Release tag
+        run: |
+          tag=""
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag=$GITHUB_REF_NAME
+          elif [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            tag="v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)-build.$GITHUB_RUN_NUMBER"
+          fi
+          echo "PATCH_RELEASE_TAG=$tag" >> "$GITHUB_ENV"
       - name: Build APKs and lint
         working-directory: android
         run: ./gradlew --no-daemon assembleDebug assembleRelease lintDebug

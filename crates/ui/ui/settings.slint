@@ -423,6 +423,10 @@ export component SettingsPanel inherits Rectangle {
                         font-size: Theme.fs-s;
                         wrap: word-wrap;
                     }
+                    if Store.can-update: Button {
+                        text: "Check for updates";
+                        clicked => { Actions.check-update(); }
+                    }
                     HorizontalLayout {
                         spacing: 8px;
                         Rectangle {

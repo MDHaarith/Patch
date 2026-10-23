@@ -6,7 +6,7 @@
 //! through [`Surface`], so the whole thing runs on a desktop in tests.
 
 use crate::buffer::{BackBuffer, Rect};
-use crate::host::{AndroidHost, HostRequests};
+use crate::host::AndroidHost;
 use crate::ime::{ImeMode, ImeOp, ImeSnapshot};
 use crate::input::{self, TouchAction};
 use crate::platform::{Created, PatchPlatform};
@@ -81,6 +81,7 @@ pub trait Bridge {
     fn publish_snapshot(&self, json: &str);
     /// Opens the camera QR scanner; the result comes back as [`Msg::Scanned`].
     fn scan_qr(&self);
+    fn check_update(&self);
     fn battery_unrestricted(&self) -> bool;
     fn request_battery_unrestricted(&self);
 }
@@ -127,6 +128,13 @@ pub enum Msg {
         bottom: f32,
     },
     Density(f32),
+    /// Play pose and facing, using patch_ui::pet::Play codes.
+    PetPlay(i32),
+    /// Pet origin relative to the usable overlay screen, in logical pixels.
+    OverlayPosition {
+        x: f32,
+        y: f32,
+    },
     OverlayAllowed(bool),
     /// The user hid the overlay from its notification.
     OverlayClosed,
@@ -141,8 +149,6 @@ pub enum Msg {
     Invoke(Box<dyn FnOnce() + Send>),
 }
 
-/// Longest the overlay waits for its new size after bubble <-> panel.
-const RESIZE_HOLD: Duration = Duration::from_millis(400);
 const FRAME: Duration = Duration::from_millis(16);
 /// Upper bound on sleeping, so a missed wake-up can never stall the UI.
 const MAX_SLEEP: Duration = Duration::from_secs(60);
@@ -170,19 +176,10 @@ struct Slot {
     repaint_all: bool,
     present_all: bool,
     frame_waiters: u32,
-    /// While set, frames are held back (the surface has the wrong size).
-    hold: Option<(Instant, bool)>,
 }
 
 impl Slot {
-    fn render(&mut self, now: Instant, bridge: &dyn Bridge) {
-        if let Some((until, _)) = self.hold {
-            if now < until {
-                return;
-            }
-            log::warn!("{:?}: surface resize didn't arrive in time", self.kind);
-            self.hold = None;
-        }
+    fn render(&mut self, bridge: &dyn Bridge) {
         let Some(surface) = self.surface.as_mut() else {
             return;
         };
@@ -243,7 +240,7 @@ pub struct Runtime {
     app: Rc<App>,
     bridge: Rc<dyn Bridge>,
     created: Created,
-    requests: Rc<HostRequests>,
+    overlay_position: (f32, f32),
     scale: f32,
     insets: (f32, f32),
     main: Option<Slot>,
@@ -270,14 +267,13 @@ impl Runtime {
             bridge.clone(),
         )))
         .map_err(|e| format!("can't install the Slint platform: {e}"))?;
-        let requests = Rc::new(HostRequests::default());
-        let host = Rc::new(AndroidHost::new(bridge.clone(), requests.clone()));
+        let host = Rc::new(AndroidHost::new(bridge.clone()));
         let app = App::new(data_dir, host);
         Ok(Runtime {
             app,
             bridge,
             created,
-            requests,
+            overlay_position: (0.0, 0.0),
             scale: if scale > 0.0 { scale } else { 1.0 },
             insets: (0.0, 0.0),
             main: None,
@@ -346,7 +342,7 @@ impl Runtime {
     }
 
     /// How long the loop may sleep: until the next Slint timer, the next
-    /// animation frame, or the end of an overlay resize hold.
+    /// animation frame.
     pub fn next_timeout(&self) -> Option<Duration> {
         let now = Instant::now();
         let mut timeout = slint::platform::duration_until_next_timer_update()
@@ -355,9 +351,6 @@ impl Runtime {
         for slot in self.slots() {
             if slot.surface.is_some() && slot.window.window().has_active_animations() {
                 timeout = timeout.min((self.last_frame + FRAME).saturating_duration_since(now));
-            }
-            if let Some((until, _)) = slot.hold {
-                timeout = timeout.min(until.saturating_duration_since(now));
             }
         }
         Some(timeout)
@@ -421,6 +414,14 @@ impl Runtime {
                     self.apply_insets();
                 }
             }
+            Msg::PetPlay(state) => self.app.set_pet_play(state),
+            Msg::OverlayPosition { x, y } => {
+                self.overlay_position = (x, y);
+                if let Some(c) = self.overlay_window() {
+                    c.set_pet_x(x);
+                    c.set_pet_y(y);
+                }
+            }
             Msg::OverlayAllowed(allowed) => self.app.set_overlay_allowed(allowed),
             Msg::OverlayClosed => {
                 // Goes through the same action as the settings switch so the
@@ -465,20 +466,12 @@ impl Runtime {
     pub fn frame(&mut self) {
         slint::platform::update_timers_and_animations();
         let now = Instant::now();
-        if let Some(expanded) = self.requests.overlay_expand.take() {
-            if let Some(slot) = self.overlay.as_mut() {
-                let current = is_panel(slot.frame.width(), slot.frame.height(), self.scale);
-                if slot.surface.is_some() && current != expanded {
-                    slot.hold = Some((now + RESIZE_HOLD, expanded));
-                }
-            }
-        }
         let bridge = self.bridge.clone();
         for slot in [self.main.as_mut(), self.overlay.as_mut()]
             .into_iter()
             .flatten()
         {
-            slot.render(now, &*bridge);
+            slot.render(&*bridge);
             // After painting: rendering itself can report a changed text.
             let pending = slot.window.ime.borrow_mut().take_pending();
             if let Some((mode, state, seq)) = pending {
@@ -550,18 +543,12 @@ impl Runtime {
             }
             self.attach(kind, width, height);
         }
-        let scale = self.scale;
         let Some(slot) = self.slot_mut(kind) else {
             return;
         };
         slot.surface = Some(surface);
         slot.present_all = true;
         slot.set_size(width, height);
-        if let Some((_, expanded)) = slot.hold {
-            if is_panel(width, height, scale) == expanded {
-                slot.hold = None;
-            }
-        }
     }
 
     fn create(&mut self, kind: Kind) -> Result<Slot, String> {
@@ -589,20 +576,24 @@ impl Runtime {
             repaint_all: true,
             present_all: true,
             frame_waiters: 0,
-            hold: None,
         })
     }
 
     /// Sizes, attaches and shows a freshly created window.
     fn attach(&mut self, kind: Kind, width: u32, height: u32) {
         let app = self.app.clone();
+        let (x, y) = self.overlay_position;
         let Some(slot) = self.slot_mut(kind) else {
             return;
         };
         slot.set_size(width, height);
         match &slot.component {
             Component::Main(c) => app.attach_main(c),
-            Component::Overlay(c) => app.attach_overlay(c),
+            Component::Overlay(c) => {
+                c.set_pet_x(x);
+                c.set_pet_y(y);
+                app.attach_overlay(c);
+            }
         }
         let Some(slot) = self.slot_mut(kind) else {
             return;
@@ -620,7 +611,6 @@ impl Runtime {
             Kind::Overlay => {
                 let expanded = self.app.overlay_expanded();
                 if is_panel(width, height, self.scale) != expanded {
-                    self.requests.overlay_expand.set(Some(expanded));
                     self.bridge.overlay_expand(expanded);
                 }
             }

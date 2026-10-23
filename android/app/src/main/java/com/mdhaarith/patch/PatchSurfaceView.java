@@ -28,7 +28,7 @@ import android.view.inputmethod.InputMethodManager;
 final class PatchSurfaceView extends SurfaceView implements SurfaceHolder.Callback2 {
     /** Overlay windows have to be made focusable before the IME can attach. */
     interface FocusHost {
-        void setImeFocus(boolean focus);
+        boolean setImeFocus(boolean focus);
     }
 
     final int kind;
@@ -335,8 +335,10 @@ final class PatchSurfaceView extends SurfaceView implements SurfaceHolder.Callba
     }
 
     private void showIme() {
-        if (focusHost != null) {
-            focusHost.setImeFocus(true);
+        if (focusHost != null && !focusHost.setImeFocus(true)) {
+            imeWanted = false;
+            showPending = false;
+            return;
         }
         if (!hasFocus()) {
             requestFocus();

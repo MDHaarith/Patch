@@ -15,9 +15,11 @@ import android.os.IBinder;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.view.Choreographer;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.view.VelocityTracker;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewOutlineProvider;
@@ -31,7 +33,7 @@ import android.widget.FrameLayout;
  * The "display over other apps" panel: a foreground service owning a
  * TYPE_APPLICATION_OVERLAY window with a {@link PatchSurfaceView} that Rust
  * renders the Slint OverlayWindow into. Java owns everything about the window
- * itself: size, dragging, edge snapping, focusability for the keyboard, and
+ * itself: size, dragging, placement, focusability for the keyboard, and
  * the shadow the software renderer can't draw. Collapsed it is the draggable
  * pet; expanded it fills the screen (dimmed behind) and Slint pops the panel
  * out under the pet, like a system bubble.
@@ -46,6 +48,7 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
     private static final int SHADOW_DP = 12;
     private static final int ELEVATION_DP = 8;
     private static final int EDGE_GAP_DP = 4;
+    private static final int TRANSITION_MS = 240;
 
     private static OverlayService instance;
 
@@ -58,7 +61,23 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
     private boolean imeShown;
     /** Screen y of the keyboard's top edge while it shows, else 0. */
     private int imeTop;
-    private ValueAnimator snap;
+    private ValueAnimator settle;
+    private int bubbleX;
+    private int bubbleY;
+    private boolean targetExpanded;
+    private boolean transitioning;
+    private final Runnable finishTransition = () -> {
+        // Release the IME while still full-size so its resize keeps the pet's saved origin.
+        if (!targetExpanded && focusable) {
+            setImeFocus(false);
+        }
+        expanded = targetExpanded;
+        if (!expanded) {
+            place(bubbleX, bubbleY);
+            applySize();
+        }
+        transitioning = false;
+    };
     private float density;
 
     static void start(Context context) {
@@ -122,10 +141,9 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
 
     @Override
     public void onDestroy() {
-        if (snap != null) {
-            snap.cancel();
-        }
         if (frame != null) {
+            frame.cancelPlay();
+            frame.removeCallbacks(finishTransition);
             // Immediate, so surfaceDestroyed reaches Rust before the view is
             // declared gone.
             wm.removeViewImmediate(frame);
@@ -152,10 +170,13 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
             PatchNative.nativeDensity(d);
         }
         if (frame != null) {
-            applySize();
+            frame.cancelPlay();
+            clampBubble();
             if (!expanded) {
-                snapToEdge(false);
+                place(bubbleX, bubbleY);
             }
+            applySize();
+            saveBubble();
         }
     }
 
@@ -167,6 +188,7 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
 
     private void addOverlay() {
         expanded = Prefs.is(this, Prefs.OVERLAY_EXPANDED);
+        targetExpanded = expanded;
         view = new PatchSurfaceView(this, PatchNative.OVERLAY);
         view.setFocusHost(this);
         view.routedTouches = true;
@@ -196,7 +218,7 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, flags, PixelFormat.TRANSLUCENT);
         lp.gravity = Gravity.TOP | Gravity.LEFT;
         lp.setTitle("Patch");
-        lp.windowAnimations = android.R.style.Animation_Toast;
+        lp.windowAnimations = 0;
         if (Build.VERSION.SDK_INT >= 30) {
             // We place and clamp the window ourselves, and move it for the
             // keyboard from the insets.
@@ -216,12 +238,15 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
         }
     }
 
-    /** Where the bubble was last left (applySize clamps the panel into the screen). */
+    /** Restore and clamp the pet before the first surface is created. */
     private void placeBubble() {
         Rect screen = screen();
         SharedPreferences prefs = Prefs.get(this);
-        place(prefs.getInt(Prefs.BUBBLE_X, screen.right - dp(BUBBLE_DP + EDGE_GAP_DP)),
-                prefs.getInt(Prefs.BUBBLE_Y, screen.top + (screen.height() - dp(BUBBLE_DP)) / 3));
+        bubbleX = prefs.getInt(Prefs.BUBBLE_X, screen.right - dp(BUBBLE_DP + EDGE_GAP_DP));
+        bubbleY = prefs.getInt(Prefs.BUBBLE_Y, screen.top + (screen.height() - dp(BUBBLE_DP)) / 3);
+        clampBubble();
+        place(bubbleX, bubbleY);
+        saveBubble();
     }
 
     /** Content (surface) size: the bubble, or the whole screen above the keyboard. */
@@ -234,7 +259,8 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
             return dp(BUBBLE_DP);
         }
         Rect screen = screen();
-        return (imeTop > 0 ? Math.min(screen.bottom, imeTop) : screen.bottom) - screen.top;
+        return Math.max(dp(BUBBLE_DP),
+                (imeTop > 0 ? Math.min(screen.bottom, imeTop) : screen.bottom) - screen.top);
     }
 
     /** Positions the window so the content's top-left is at (x, y). */
@@ -242,6 +268,10 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
         int m = dp(SHADOW_DP);
         lp.x = x - m;
         lp.y = y - m;
+        if (!expanded) {
+            bubbleX = x;
+            bubbleY = y;
+        }
     }
 
     private int contentX() {
@@ -264,12 +294,12 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
         vlp.topMargin = m;
         view.setLayoutParams(vlp);
         view.invalidateOutline();
-        if (expanded) {
-            lp.flags |= WindowManager.LayoutParams.FLAG_DIM_BEHIND;
-            lp.dimAmount = 0.4f;
-        } else {
-            lp.flags &= ~WindowManager.LayoutParams.FLAG_DIM_BEHIND;
-        }
+        view.setImportantForAccessibility(expanded ? View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+                : View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        frame.setClickable(!expanded);
+        frame.setContentDescription(expanded ? null : "Patch pet. Open tasks");
+        PatchNative.nativeOverlayPosition((bubbleX - screen().left) / density,
+                (bubbleY - screen().top) / density);
         lp.width = w + 2 * m;
         lp.height = h + 2 * m;
         Rect screen = screen();
@@ -315,54 +345,63 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
     // ---- Bubble <-> panel -----------------------------------------------------
 
     private void setExpanded(boolean value) {
-        if (frame == null || expanded == value) {
+        if (frame == null || targetExpanded == value) {
             return;
         }
-        if (snap != null) {
-            snap.cancel();
+        frame.cancelPlay();
+        clampBubble();
+        targetExpanded = value;
+        transitioning = true;
+        frame.removeCallbacks(finishTransition);
+        if (value) {
+            saveBubble();
+            expanded = true;
+            applySize();
+        } else {
+            view.imeState(PatchNative.IME_HIDE, 0, "", 0, 0, -1, -1, 0, 0);
         }
-        expanded = value;
-        if (!expanded && focusable) {
-            setImeFocus(false);
-        }
-        placeBubble();
-        applySize();
+        // Slint needs the full surface until its panel and backdrop have faded out.
+        frame.postDelayed(finishTransition, TRANSITION_MS);
     }
 
-    private void snapToEdge(boolean animate) {
+    private void clampBubble() {
         Rect screen = screen();
-        int w = contentWidth();
-        boolean right = contentX() + w / 2 > screen.centerX();
-        int target = right ? screen.right - w - dp(EDGE_GAP_DP) : screen.left + dp(EDGE_GAP_DP);
-        if (!animate) {
-            place(target, contentY());
-            update();
+        bubbleX = clamp(bubbleX, screen.left, screen.right - dp(BUBBLE_DP));
+        bubbleY = clamp(bubbleY, screen.top, screen.bottom - dp(BUBBLE_DP));
+    }
+
+    private void settleBubble() {
+        if (settle != null) {
+            settle.cancel();
+        }
+        int x = contentX();
+        int y = contentY();
+        Rect bounds = screen();
+        int targetX = clamp(x, bounds.left, bounds.right - dp(BUBBLE_DP));
+        int targetY = clamp(y, bounds.top, bounds.bottom - dp(BUBBLE_DP));
+        if (x == targetX && y == targetY) {
             saveBubble();
             return;
         }
-        if (snap != null) {
-            snap.cancel();
-        }
-        snap = ValueAnimator.ofInt(contentX(), target);
-        snap.setDuration(220);
-        snap.setInterpolator(new DecelerateInterpolator(1.6f));
-        snap.addUpdateListener(a -> {
-            place((Integer) a.getAnimatedValue(), contentY());
+        settle = ValueAnimator.ofFloat(0f, 1f);
+        settle.setDuration(180);
+        settle.setInterpolator(new DecelerateInterpolator());
+        settle.addUpdateListener(a -> {
+            float t = (Float) a.getAnimatedValue();
+            place(x + Math.round((targetX - x) * t), y + Math.round((targetY - y) * t));
             update();
         });
-        snap.addListener(new android.animation.AnimatorListenerAdapter() {
+        settle.addListener(new android.animation.AnimatorListenerAdapter() {
             @Override
             public void onAnimationEnd(android.animation.Animator animation) {
                 saveBubble();
             }
         });
-        snap.start();
+        settle.start();
     }
 
     private void saveBubble() {
-        if (!expanded) {
-            Prefs.get(this).edit().putInt(Prefs.BUBBLE_X, contentX()).putInt(Prefs.BUBBLE_Y, contentY()).apply();
-        }
+        Prefs.get(this).edit().putInt(Prefs.BUBBLE_X, bubbleX).putInt(Prefs.BUBBLE_Y, bubbleY).apply();
     }
 
     // ---- Keyboard -------------------------------------------------------------
@@ -370,9 +409,12 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
     /** Overlay windows are unfocusable so the app below keeps the keyboard; a
      * text field in the panel needs focus for the IME. */
     @Override
-    public void setImeFocus(boolean focus) {
-        if (frame == null || focusable == focus) {
-            return;
+    public boolean setImeFocus(boolean focus) {
+        if (frame == null || (focus && (!expanded || !targetExpanded))) {
+            return false;
+        }
+        if (focus && focusable) {
+            return true;
         }
         focusable = focus;
         if (focus) {
@@ -387,6 +429,7 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
             }
         }
         update();
+        return true;
     }
 
     /** Shrinks the panel's window above the keyboard (API 30+, where IME
@@ -400,7 +443,7 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
             imeShown = true;
             // Stays the same once the window ends at the keyboard, so no loop.
             int top = lp.y + lp.height - insets.getInsets(WindowInsets.Type.ime()).bottom;
-            if (expanded && top != imeTop) {
+            if (expanded && targetExpanded && top != imeTop) {
                 imeTop = top;
                 applySize();
             }
@@ -423,13 +466,27 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
      * Routes the overlay's touches: the bubble is all drag handle (a tap
      * expands it); expanded, everything goes to Slint.
      */
-    private final class Frame extends FrameLayout {
+    private final class Frame extends FrameLayout implements Choreographer.FrameCallback {
         private static final int FORWARD = 0;
         private static final int PENDING = 1;
         private static final int DRAGGING = 2;
+        private static final int CANCELLED = 3;
 
         private final int slop;
-        private int mode;
+        private final int minFling;
+        private final int maxFling;
+        private VelocityTracker velocity;
+        private boolean flying;
+        private float flightX;
+        private float flightY;
+        private float vx;
+        private float vy;
+        private long lastFrame;
+        private float flightSeconds;
+        private int bounces;
+        private boolean hardBump;
+        private int playState;
+        private int mode = CANCELLED;
         private float downRawX;
         private float downRawY;
         private int startX;
@@ -437,41 +494,187 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
 
         Frame(Context context) {
             super(context);
-            slop = ViewConfiguration.get(context).getScaledTouchSlop();
+            ViewConfiguration config = ViewConfiguration.get(context);
+            slop = config.getScaledTouchSlop();
+            minFling = config.getScaledMinimumFlingVelocity();
+            maxFling = config.getScaledMaximumFlingVelocity();
             setOnApplyWindowInsetsListener((v, insets) -> onInsets(insets));
+        }
+
+        private void play(int state) {
+            if (state != playState || Math.abs(state) == 3) {
+                playState = state;
+                PatchNative.nativePetPlay(state);
+            }
+        }
+
+        private void recycleVelocity() {
+            if (velocity != null) {
+                velocity.recycle();
+                velocity = null;
+            }
+        }
+
+        private void stopMotion() {
+            flying = false;
+            Choreographer.getInstance().removeFrameCallback(this);
+            if (settle != null) {
+                settle.cancel();
+                settle = null;
+            }
+        }
+
+        private void cancelPlay() {
+            stopMotion();
+            recycleVelocity();
+            if (mode == FORWARD) {
+                PatchNative.nativeTouch(PatchNative.OVERLAY, PatchNative.TOUCH_CANCEL, 0, 0);
+            }
+            mode = CANCELLED;
+            play(0);
+            clampBubble();
+            saveBubble();
+        }
+
+        private void track(MotionEvent e) {
+            // Local coordinates move with the window; velocity must stay in screen space.
+            MotionEvent raw = MotionEvent.obtain(e);
+            raw.offsetLocation(e.getRawX() - e.getX(), e.getRawY() - e.getY());
+            velocity.addMovement(raw);
+            raw.recycle();
+        }
+
+        private void drop(MotionEvent e) {
+            velocity.computeCurrentVelocity(1000, Math.min(maxFling, dp(2600)));
+            vx = velocity.getXVelocity(e.getPointerId(0));
+            vy = velocity.getYVelocity(e.getPointerId(0));
+            if (Math.hypot(vx, vy) < minFling) {
+                play(4);
+                settleBubble();
+                return;
+            }
+            clampBubble();
+            place(bubbleX, bubbleY);
+            update();
+            flightX = bubbleX;
+            flightY = bubbleY;
+            flying = true;
+            lastFrame = 0;
+            flightSeconds = 0;
+            bounces = 0;
+            hardBump = false;
+            play(vx < 0 ? -2 : 2);
+            Choreographer.getInstance().postFrameCallback(this);
+        }
+
+        @Override
+        public void doFrame(long time) {
+            if (!flying) {
+                return;
+            }
+            if (lastFrame == 0) {
+                lastFrame = time;
+            }
+            float dt = Math.min((time - lastFrame) / 1_000_000_000f, 0.032f);
+            lastFrame = time;
+            flightSeconds += dt;
+            float decay = (float) Math.exp(-2.2f * dt);
+            flightX += vx * (1 - decay) / 2.2f;
+            flightY += vy * (1 - decay) / 2.2f;
+            vx *= decay;
+            vy *= decay;
+            Rect bounds = screen();
+            int right = Math.max(bounds.left, bounds.right - dp(BUBBLE_DP));
+            int bottom = Math.max(bounds.top, bounds.bottom - dp(BUBBLE_DP));
+            boolean bump = false;
+            float impact = (float) Math.hypot(vx, vy);
+            if (flightX < bounds.left || flightX > right) {
+                flightX = clamp(Math.round(flightX), bounds.left, right);
+                vx = flightX <= bounds.left ? Math.abs(vx) * 0.7f : -Math.abs(vx) * 0.7f;
+                if (right == bounds.left) vx = 0;
+                bump = true;
+            }
+            if (flightY < bounds.top || flightY > bottom) {
+                flightY = clamp(Math.round(flightY), bounds.top, bottom);
+                vy = flightY <= bounds.top ? Math.abs(vy) * 0.7f : -Math.abs(vy) * 0.7f;
+                if (bottom == bounds.top) vy = 0;
+                bump = true;
+            }
+            place(Math.round(flightX), Math.round(flightY));
+            update();
+            if (bump) {
+                bounces++;
+                hardBump |= impact > dp(1200);
+                play(vx < 0 ? -3 : 3);
+            }
+            if (Math.hypot(vx, vy) < dp(35) || flightSeconds >= 4) {
+                flying = false;
+                play(hardBump || bounces >= 3 ? 5 : 4);
+                saveBubble();
+            } else {
+                Choreographer.getInstance().postFrameCallback(this);
+            }
         }
 
         @Override
         public boolean dispatchTouchEvent(MotionEvent e) {
+            if (transitioning) {
+                return true;
+            }
+            if (velocity != null && e.getActionMasked() != MotionEvent.ACTION_DOWN) {
+                track(e);
+            }
             switch (e.getActionMasked()) {
                 case MotionEvent.ACTION_OUTSIDE:
-                    if (focusable) {
-                        view.imeState(PatchNative.IME_HIDE, 0, "", 0, 0, -1, -1, 0, 0);
+                    // Keyboard taps land outside the window too; only bar taps close.
+                    if (expanded && !imeShown && !focusable) {
+                        view.tap(0, 0);
                     }
-                    return false;
+                    return true;
                 case MotionEvent.ACTION_DOWN:
-                    if (snap != null) {
-                        snap.cancel();
-                    }
+                    boolean caught = flying;
+                    stopMotion();
+                    recycleVelocity();
                     downRawX = e.getRawX();
                     downRawY = e.getRawY();
                     startX = contentX();
                     startY = contentY();
-                    mode = expanded ? FORWARD : PENDING;
-                    if (mode == FORWARD) {
+                    mode = expanded ? FORWARD : caught ? DRAGGING : PENDING;
+                    if (mode != FORWARD) {
+                        velocity = VelocityTracker.obtain();
+                        track(e);
+                        play(caught ? 1 : 0);
+                    } else {
+                        view.forwardTouch(e, -view.getLeft(), -view.getTop());
+                    }
+                    return true;
+                case MotionEvent.ACTION_POINTER_DOWN:
+                    if (mode == PENDING || mode == DRAGGING) {
+                        if (mode == DRAGGING) {
+                            play(4);
+                            settleBubble();
+                        }
+                        recycleVelocity();
+                        mode = CANCELLED;
+                    } else if (mode == FORWARD) {
                         view.forwardTouch(e, -view.getLeft(), -view.getTop());
                     }
                     return true;
                 case MotionEvent.ACTION_MOVE:
                     if (mode == PENDING && Math.hypot(e.getRawX() - downRawX, e.getRawY() - downRawY) > slop) {
                         mode = DRAGGING;
+                        play(e.getRawX() < downRawX ? -1 : 1);
                     }
                     if (mode == DRAGGING) {
                         Rect screen = screen();
                         int nx = startX + Math.round(e.getRawX() - downRawX);
                         int ny = startY + Math.round(e.getRawY() - downRawY);
-                        place(clamp(nx, screen.left, screen.right - contentWidth()),
-                                clamp(ny, screen.top, screen.bottom - contentHeight()));
+                        if (nx != contentX()) {
+                            play(nx < contentX() ? -1 : 1);
+                        }
+                        int over = dp(16);
+                        place(clamp(nx, screen.left - over, screen.right - contentWidth() + over),
+                                clamp(ny, screen.top - over, screen.bottom - contentHeight() + over));
                         update();
                     } else if (mode == FORWARD) {
                         view.forwardTouch(e, -view.getLeft(), -view.getTop());
@@ -479,23 +682,27 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
                     return true;
                 case MotionEvent.ACTION_UP:
                     if (mode == PENDING) {
-                        // Anywhere on the bubble (or its shadow) counts.
-                        view.tap(view.getWidth() / 2f, view.getHeight() / 2f);
-                        performClick();
+                        if (e.getEventTime() - e.getDownTime() < ViewConfiguration.getLongPressTimeout()
+                                && Math.hypot(e.getRawX() - downRawX, e.getRawY() - downRawY) <= slop) {
+                            performClick();
+                        }
                     } else if (mode == DRAGGING) {
-                        snapToEdge(true);
-                    } else {
+                        drop(e);
+                    } else if (mode == FORWARD) {
                         view.forwardTouch(e, -view.getLeft(), -view.getTop());
                     }
-                    mode = FORWARD;
+                    recycleVelocity();
+                    mode = CANCELLED;
                     return true;
                 case MotionEvent.ACTION_CANCEL:
                     if (mode == DRAGGING) {
-                        snapToEdge(true);
+                        play(4);
+                        settleBubble();
                     } else if (mode == FORWARD) {
-                        view.forwardTouch(e, 0, 0);
+                        view.forwardTouch(e, -view.getLeft(), -view.getTop());
                     }
-                    mode = FORWARD;
+                    recycleVelocity();
+                    mode = CANCELLED;
                     return true;
                 default:
                     if (mode == FORWARD) {
@@ -507,7 +714,11 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
 
         @Override
         public boolean performClick() {
-            return super.performClick();
+            super.performClick();
+            if (!expanded && !transitioning) {
+                view.tap(view.getWidth() / 2f, view.getHeight() / 2f);
+            }
+            return true;
         }
 
         @Override

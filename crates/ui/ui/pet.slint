@@ -8,6 +8,8 @@ export component Pet inherits Rectangle {
     in property <length> size: 52px;
     in property <bool> show-count: true;
     property <length> hop: 0px;
+    // The image's y is rounded to physical pixels, so animating hop stays crisp.
+    animate hop { duration: 180ms; easing: ease-out; }
     width: size;
     height: size;
 
@@ -20,14 +22,13 @@ export component Pet inherits Rectangle {
         }
     }
     Image {
-        // Whole-pixel scaling keeps every sprite pixel the same size.
-        width: Math.max(1, Math.floor(root.size / 20px)) * 20px;
+        // Snap size and origin to physical pixels, including fractional display densities.
+        width: Math.max(1, Math.floor(root.size / 20phx)) * 20phx;
         height: self.width * 18 / 20;
-        x: (root.size - self.width) / 2;
-        y: root.hop + (root.size - self.height) / 2;
+        x: Math.round((root.absolute-position.x + (root.size - self.width) / 2) / 1phx) * 1phx - root.absolute-position.x;
+        y: Math.round((root.absolute-position.y + root.hop + (root.size - self.height) / 2) / 1phx) * 1phx - root.absolute-position.y;
         source: Store.pet-image;
         image-rendering: pixelated;
-        animate y { duration: 180ms; easing: ease-out; }
     }
     if root.show-count && root.count > 0: Rectangle {
         x: root.size - self.width * 0.75;
@@ -44,7 +45,7 @@ export component Pet inherits Rectangle {
         }
     }
     public function hop-once() {
-        root.hop = -root.size * 0.18;
+        root.hop = -Math.round(root.size * 0.18 / 1phx) * 1phx;
         hopper.running = true;
     }
 }
