@@ -78,6 +78,7 @@ pub struct Shell {
     me: Weak<Shell>,
     app: OnceCell<Weak<App>>,
     main: OnceCell<MainWindow>,
+    session_bus: OnceCell<Option<zbus::blocking::Connection>>,
     main_sized: Cell<bool>,
     widget: RefCell<Option<Widget>>,
     desk: RefCell<Option<Widget>>,
@@ -113,6 +114,7 @@ impl Shell {
             me: me.clone(),
             app: OnceCell::new(),
             main: OnceCell::new(),
+            session_bus: OnceCell::new(),
             main_sized: Cell::new(false),
             widget: RefCell::new(None),
             desk: RefCell::new(None),
@@ -556,6 +558,14 @@ impl Shell {
     }
 
     fn pet_visible(&self, window: &slint::Window) -> bool {
+        if self.kwin_showing_desktop() == Some(true) {
+            return false;
+        }
+        // XWayland's client list misses native Wayland apps, so it can't tell
+        // whether any app is open; only Show Desktop hides the pet there.
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            return true;
+        }
         let own: Vec<_> = self
             .main
             .get()
@@ -566,6 +576,21 @@ impl Shell {
             .chain(self.desk.borrow().as_ref().and_then(|d| layers::x11_id(d.window().window())))
             .collect();
         self.wm.borrow().as_ref().is_none_or(|wm| wm.pet_visible(&own).unwrap_or(true))
+    }
+
+    /// KWin's Show Desktop, which it doesn't mirror to XWayland's root window.
+    fn kwin_showing_desktop(&self) -> Option<bool> {
+        let bus = self.session_bus.get_or_init(|| zbus::blocking::Connection::session().ok()).as_ref()?;
+        let reply = bus
+            .call_method(
+                Some("org.kde.KWin"),
+                "/KWin",
+                Some("org.freedesktop.DBus.Properties"),
+                "Get",
+                &("org.kde.KWin", "showingDesktop"),
+            )
+            .ok()?;
+        bool::try_from(reply.body().deserialize::<zbus::zvariant::OwnedValue>().ok()?).ok()
     }
 
     /// Sets `hints` before or after mapping. Without `strict`, only adds what is

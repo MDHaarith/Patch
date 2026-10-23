@@ -12,7 +12,9 @@
 //!
 //! KWin, Mutter, Xfwm, Openbox and the other EWMH window managers keep an
 //! `_ABOVE` window above normal ones even while another window is active,
-//! and a `_DESKTOP` window on the desktop, including during Show Desktop.
+//! and a `_BELOW` window above the desktop but under normal windows. (The
+//! `_DESKTOP` window type would survive Show Desktop, but on KWin the
+//! board's transparent corners then showed as a solid box.)
 
 use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slint::winit_030::WinitWindowAccessor;
@@ -26,7 +28,7 @@ pub enum Layer {
     Normal,
     /// Above other apps, even while one of them is active.
     Above,
-    /// On the desktop, including while Show Desktop is active.
+    /// On the desktop: below every normal window.
     Desktop,
 }
 
@@ -210,22 +212,6 @@ impl Wm {
     /// explicit change, so a periodic check never undoes the user's own
     /// "keep above" from the window menu). Returns whether anything was sent.
     pub fn apply(&self, win: Window, hints: Hints, strict: bool) -> Result<bool, String> {
-        if hints.layer == Layer::Desktop
-            && !self
-                .property(win, self.atoms._NET_WM_WINDOW_TYPE, AtomEnum::ATOM)?
-                .contains(&self.atoms._NET_WM_WINDOW_TYPE_DESKTOP)
-        {
-            self.conn
-                .change_property32(
-                    PropMode::REPLACE,
-                    win,
-                    self.atoms._NET_WM_WINDOW_TYPE,
-                    AtomEnum::ATOM,
-                    &[self.atoms._NET_WM_WINDOW_TYPE_DESKTOP],
-                )
-                .map_err(|e| e.to_string())?;
-            self.conn.flush().map_err(|e| e.to_string())?;
-        }
         let (add, remove) = self.wanted(hints);
         let current = self.property(win, self.atoms._NET_WM_STATE, AtomEnum::ATOM)?;
         let missing: Vec<u32> = add.iter().copied().filter(|a| !current.contains(a)).collect();
