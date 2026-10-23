@@ -3326,6 +3326,7 @@ dependencies = [
  "serde_json",
  "slint",
  "x11rb",
+ "zbus",
 ]
 
 [[package]]

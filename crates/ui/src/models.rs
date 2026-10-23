@@ -534,7 +534,8 @@ pub fn up_next(ctx: &Ctx, n: usize) -> Vec<TaskItem> {
         .visible()
         .filter(|t| !t.done)
         .filter_map(|t| t.start.map(|s| (s, t)))
-        .filter(|(_, t)| t.span_end().is_some_and(|e| e > ctx.now))
+        // Already started means it's in Today, not up next.
+        .filter(|(s, _)| *s > ctx.now)
         .filter(|(s, _)| *s <= ctx.now + Duration::days(14))
         .collect();
     v.sort_by_key(|(s, _)| *s);
@@ -665,6 +666,17 @@ mod tests {
         let f = |d: &str| cells.iter().find(|c| c.key == d).unwrap().clone();
         assert!(f("2026-10-13").range_start && f("2026-10-15").range_end && f("2026-10-14").in_range);
         assert!(!f("2026-10-16").in_range);
+    }
+
+    #[test]
+    fn up_next_skips_what_already_started() {
+        let c = ctx(vec![
+            task("trip", "2026-10-21", Some("2026-10-29"), true),
+            task("call", "2026-10-22T09:00", None, false),
+            task("lunch", "2026-10-22T12:00", None, false),
+        ]);
+        let ids: Vec<_> = up_next(&c, 6).into_iter().map(|i| i.id.to_string()).collect();
+        assert_eq!(ids, ["lunch"]);
     }
 
     #[test]

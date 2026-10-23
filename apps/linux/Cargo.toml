@@ -36,6 +36,8 @@ slint = { workspace = true, features = [
 ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
 # Desktop notifications over D-Bus; shares zbus with ksni and accesskit.
 notify-rust = { version = "4", default-features = false, features = ["z"] }
+# KWin's Show Desktop state; same zbus as above.
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
 # Same clipboard crate (and features) Slint's winit backend uses.
 arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"] }
 png = "0.18"
