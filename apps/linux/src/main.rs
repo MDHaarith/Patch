@@ -13,7 +13,6 @@ mod widget;
 use patch_linux::cli::{self, Args, Windowing};
 use patch_linux::instance::{self, Primary, Request};
 use patch_linux::paths::{Paths, APP_ID};
-use patch_ui::prefs::Prefs;
 use patch_ui::App;
 use shell::{Options, Shell};
 use std::process::ExitCode;
@@ -92,15 +91,14 @@ fn forward(paths: &Paths, args: &Args) -> ExitCode {
     }
 }
 
-/// X11 when asked, or automatically while the widget or "Keep Patch on top"
-/// is on and XWayland is available: Wayland can't keep a window above or
-/// below others, or place it.
-fn use_x11(windowing: Windowing, prefs: &Prefs) -> bool {
+/// X11 when asked, or automatically whenever XWayland is available:
+/// Wayland can't keep the pet above other windows or place the desk widget.
+fn use_x11(windowing: Windowing) -> bool {
     let has = |var: &str| std::env::var_os(var).is_some_and(|v| !v.is_empty());
     match windowing {
         Windowing::X11 => true,
         Windowing::Wayland => false,
-        Windowing::Auto => (prefs.widget || prefs.pinned) && has("WAYLAND_DISPLAY") && has("DISPLAY"),
+        Windowing::Auto => has("WAYLAND_DISPLAY") && has("DISPLAY"),
     }
 }
 
@@ -117,8 +115,7 @@ fn select_backend(x11: bool) -> Result<(), slint::PlatformError> {
 }
 
 fn run(paths: Paths, args: Args, mut primary: Primary) -> Result<(), String> {
-    let prefs = Prefs::load(&paths.prefs_file());
-    select_backend(use_x11(args.windowing, &prefs))
+    select_backend(use_x11(args.windowing))
         .map_err(|e| format!("can't open a window ({e}). On a machine without a desktop, run patch-hub instead."))?;
     slint::set_xdg_app_id(APP_ID).map_err(|e| e.to_string())?;
 

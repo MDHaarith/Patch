@@ -187,6 +187,7 @@ pub struct App {
     models: Models,
     main: RefCell<Option<slint::Weak<MainWindow>>>,
     overlay: RefCell<Option<slint::Weak<OverlayWindow>>>,
+    desk: RefCell<Option<slint::Weak<OverlayWindow>>>,
     status: RefCell<SyncStatus>,
     hosted: RefCell<Option<HostedHub>>,
     saved_rev: Cell<u64>,
@@ -279,6 +280,7 @@ impl App {
             models: Models::new(),
             main: RefCell::new(None),
             overlay: RefCell::new(None),
+            desk: RefCell::new(None),
             status: RefCell::new(SyncStatus::Disabled),
             hosted: RefCell::new(None),
             saved_rev: Cell::new(0),
@@ -398,6 +400,9 @@ impl App {
         if let Some(w) = self.overlay.borrow().as_ref().and_then(|w| w.upgrade()) {
             f(&w.global::<Store>());
         }
+        if let Some(w) = self.desk.borrow().as_ref().and_then(|w| w.upgrade()) {
+            f(&w.global::<Store>());
+        }
     }
 
     fn each_theme(&self, f: impl Fn(&Theme)) {
@@ -405,6 +410,9 @@ impl App {
             f(&w.global::<Theme>());
         }
         if let Some(w) = self.overlay.borrow().as_ref().and_then(|w| w.upgrade()) {
+            f(&w.global::<Theme>());
+        }
+        if let Some(w) = self.desk.borrow().as_ref().and_then(|w| w.upgrade()) {
             f(&w.global::<Theme>());
         }
     }
@@ -483,12 +491,24 @@ impl App {
         self.refresh();
     }
 
+    /// Wire up the desktop tile board window.
+    pub fn attach_desk(self: &Rc<Self>, w: &OverlayWindow) {
+        *self.desk.borrow_mut() = Some(w.as_weak());
+        self.init_store(&w.global::<Store>(), &w.global::<Theme>());
+        self.wire(&w.global::<Actions>());
+        self.refresh();
+    }
+
     pub fn detach_main(&self) {
         *self.main.borrow_mut() = None;
     }
 
     pub fn detach_overlay(&self) {
         *self.overlay.borrow_mut() = None;
+    }
+
+    pub fn detach_desk(&self) {
+        *self.desk.borrow_mut() = None;
     }
 
     /// Insets in logical pixels (status bar / gesture bar on Android).
@@ -1600,6 +1620,9 @@ impl App {
         self.each_store(|s| {
             s.set_clock(clock.clone().into());
             s.set_today_label(today_label.clone().into());
+            s.set_today_weekday(now.format("%A").to_string().into());
+            s.set_today_day(now.day() as i32);
+            s.set_today_month(now.format("%B").to_string().into());
             s.set_now_minutes(minutes_of(now) as f32);
             s.set_now_day(now_day);
         });

@@ -35,7 +35,7 @@ pub struct Hints {
     pub layer: Layer,
     /// On every workspace.
     pub sticky: bool,
-    /// Out of the taskbar and the pager.
+    /// Out of the taskbar, pager and task switcher.
     pub skip_taskbar: bool,
 }
 
@@ -47,6 +47,7 @@ x11rb::atom_manager! {
         _NET_WM_STATE_STICKY,
         _NET_WM_STATE_SKIP_TASKBAR,
         _NET_WM_STATE_SKIP_PAGER,
+        _KDE_NET_WM_STATE_SKIP_SWITCHER,
         _NET_WM_DESKTOP,
         _NET_SUPPORTED,
     }
@@ -116,7 +117,7 @@ impl Wm {
             add.push(a._NET_WM_STATE_STICKY);
         }
         if h.skip_taskbar {
-            add.extend([a._NET_WM_STATE_SKIP_TASKBAR, a._NET_WM_STATE_SKIP_PAGER]);
+            add.extend([a._NET_WM_STATE_SKIP_TASKBAR, a._NET_WM_STATE_SKIP_PAGER, a._KDE_NET_WM_STATE_SKIP_SWITCHER]);
         }
         add.retain(|a| self.supports(*a));
         (add, remove)

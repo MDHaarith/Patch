@@ -162,25 +162,190 @@ export component OverlayPanel inherits Rectangle {
     }
 }
 
+component DeskTile inherits Glass {
+    x: 0px;
+    y: 0px;
+    width: 170px;
+    height: 170px;
+    radius: 22px;
+    fill: Theme.float;
+    sheen: false;
+    TouchArea { clicked => { Actions.open-app(""); } }
+    @children
+}
+
+component DeskList inherits DeskTile {
+    in property <string> title;
+    in property <[TaskItem]> items;
+    in property <bool> upcoming: false;
+    Text {
+        x: 14px; y: 14px;
+        width: 142px; height: 20px;
+        text: root.title;
+        font-size: Theme.fs-m;
+        font-weight: 700;
+        color: Theme.text;
+    }
+    for it[i] in root.items: Rectangle {
+        visible: i < (root.upcoming ? 3 : 5);
+        x: 14px;
+        y: 40px + i * self.height;
+        width: 142px;
+        height: root.upcoming ? 38px : 23px;
+        Rectangle {
+            x: 0px;
+            y: 6px;
+            width: 4px; height: 4px;
+            border-radius: 2px;
+            background: it.color;
+        }
+        Text {
+            x: 11px; y: 0px;
+            width: 131px; height: 18px;
+            text: it.title;
+            font-size: Theme.fs-s;
+            color: Theme.text;
+            overflow: elide;
+        }
+        if root.upcoming: Text {
+            x: 11px; y: 18px;
+            width: 131px; height: 14px;
+            text: it.when;
+            font-size: 10px;
+            color: Theme.text-2;
+            overflow: elide;
+        }
+        TouchArea {
+            enabled: i < (root.upcoming ? 3 : 5);
+            clicked => { Actions.open-app(it.id); }
+        }
+    }
+    if root.items.length == 0: Text {
+        x: 14px; y: 44px;
+        width: 142px; height: 100px;
+        text: root.upcoming ? "Nothing scheduled" : "Nothing left today ✓";
+        font-size: Theme.fs-s;
+        color: Theme.text-2;
+        wrap: word-wrap;
+        vertical-alignment: center;
+    }
+}
+
+export component DeskBoard inherits Rectangle {
+    width: 352px;
+    height: 352px;
+    DeskTile {
+        VerticalLayout {
+            padding: 16px;
+            spacing: 0px;
+            Text {
+                text: Store.today-weekday;
+                font-size: Theme.fs-m;
+                font-weight: 600;
+                color: Theme.today;
+            }
+            Text {
+                text: Store.today-day;
+                font-size: 72px;
+                font-weight: 700;
+                color: Theme.text;
+            }
+            Text {
+                text: Store.today-month;
+                font-size: Theme.fs-l;
+                font-weight: 500;
+                color: Theme.text-2;
+            }
+        }
+    }
+    DeskTile {
+        x: 182px;
+        Text {
+            x: 14px; y: 14px;
+            width: 142px; height: 20px;
+            text: Store.mini-title;
+            font-size: Theme.fs-m;
+            font-weight: 700;
+            color: Theme.text;
+            overflow: elide;
+        }
+        heads := Rectangle {
+            x: 14px; y: 40px;
+            width: 142px; height: 14px;
+            for d[i] in Store.weekdays-short: Text {
+                x: i * heads.width / 7;
+                width: heads.width / 7;
+                text: d;
+                horizontal-alignment: center;
+                font-size: 8px;
+                font-weight: 600;
+                color: Theme.text-2;
+            }
+        }
+        grid := Rectangle {
+            x: 14px; y: 58px;
+            width: 142px; height: 96px;
+            for cell[i] in Store.mini-cells: Rectangle {
+                x: Math.mod(i, 7) * grid.width / 7;
+                y: Math.floor(i / 7) * 16px;
+                width: grid.width / 7;
+                height: 16px;
+                Rectangle {
+                    width: 16px; height: 16px;
+                    border-radius: 8px;
+                    background: cell.today ? Theme.today : transparent;
+                    Text {
+                        text: cell.day;
+                        font-size: 10px;
+                        font-weight: cell.today ? 700 : 500;
+                        color: cell.today ? #ffffff : cell.in-month ? Theme.text : Theme.text-3;
+                    }
+                }
+            }
+        }
+    }
+    DeskList {
+        y: 182px;
+        title: "Today";
+        items: Store.today-items;
+    }
+    DeskList {
+        x: 182px; y: 182px;
+        title: "Up next";
+        items: Store.up-next;
+        upcoming: true;
+    }
+}
+
 export component OverlayWindow inherits Window {
+    in property <int> mode: 0;
     title: "Patch";
     icon: Store.app-icon;
     default-font-family: "Inter";
     background: transparent;
     no-frame: true;
-    always-on-top: true;
+    always-on-top: root.mode != 2;
     preferred-width: 340px;
     preferred-height: 500px;
     min-width: 60px;
     min-height: 60px;
-    if Store.overlay-expanded: OverlayPanel {
+    if root.mode == 0 && Store.overlay-expanded: OverlayPanel {
         width: parent.width;
         height: parent.height;
         radius: Store.mobile ? 24px : 20px;
     }
-    if !Store.overlay-expanded: bubble := Bubble {
+    if root.mode == 1 || (root.mode == 0 && !Store.overlay-expanded): bubble := Bubble {
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
-        TouchArea { clicked => { Actions.overlay-expand(true); } }
+        TouchArea {
+            clicked => {
+                if (root.mode == 1) { Actions.open-app(""); }
+                else { Actions.overlay-expand(true); }
+            }
+        }
+    }
+    if root.mode == 2: DeskBoard {
+        width: parent.width;
+        height: parent.height;
     }
 }
