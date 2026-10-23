@@ -26,7 +26,7 @@ pub struct Spec {
     bloom_b: &'static str,
 }
 
-pub const THEMES: [Spec; 10] = [
+pub const THEMES: [Spec; 11] = [
     Spec { name: "Matte Black", kind: Kind::Matte, top: "#0B0B0C", bottom: "#060607", surface: "#121214", accent: "#0A84FF", bloom_a: "", bloom_b: "" },
     Spec { name: "Liquid Glass", kind: Kind::Glass, top: "#4B8D88", bottom: "#0D3346", surface: "#2A6A70", accent: "#0A84FF", bloom_a: "#8FD3C9", bloom_b: "#0A84FF" },
     Spec { name: "Light", kind: Kind::Light, top: "#F5F5F7", bottom: "#ECECF0", surface: "#FFFFFF", accent: "#007AFF", bloom_a: "", bloom_b: "" },
@@ -37,6 +37,7 @@ pub const THEMES: [Spec; 10] = [
     Spec { name: "Graphite", kind: Kind::Matte, top: "#232326", bottom: "#161618", surface: "#2A2A2E", accent: "#FF9F0A", bloom_a: "", bloom_b: "" },
     Spec { name: "Paper", kind: Kind::Light, top: "#F6F1E7", bottom: "#ECE4D4", surface: "#FFFDF8", accent: "#D9480F", bloom_a: "", bloom_b: "" },
     Spec { name: "Rose", kind: Kind::Light, top: "#FCEEF2", bottom: "#F3DCE4", surface: "#FFFFFF", accent: "#E0245E", bloom_a: "", bloom_b: "" },
+    Spec { name: "Graphite Glass", kind: Kind::Glass, top: "#2C2C30", bottom: "#000000", surface: "#1C1C1E", accent: "#76767C", bloom_a: "#AEAEB2", bloom_b: "#636366" },
 ];
 
 fn rgba(hex: &str, alpha: f32) -> Color {
@@ -69,6 +70,7 @@ pub fn apply(t: &Theme, index: i32) {
         Kind::Glass => mix(surface, black(1.0), 0.45),
         Kind::Matte => mix(surface, white(1.0), 0.08),
     });
+    t.set_glint(Color::default());
     t.set_backdrop_top(top);
     t.set_backdrop_bottom(bottom);
     t.set_accent(accent);
@@ -116,9 +118,10 @@ pub fn apply(t: &Theme, index: i32) {
             t.set_glass(glass);
             t.set_solid(mix(top, bottom, 0.55));
             if glass {
-                t.set_panel(white(0.11));
-                t.set_panel_strong(white(0.16));
-                t.set_content(white(0.07));
+                t.set_glint(white(0.6));
+                t.set_panel(white(0.08));
+                t.set_panel_strong(white(0.12));
+                t.set_content(white(0.05));
                 t.set_float(surface.with_alpha(0.86));
                 t.set_modal(mix(surface, bottom, 0.4).with_alpha(0.95));
                 t.set_dock(surface.with_alpha(0.9));
@@ -129,8 +132,8 @@ pub fn apply(t: &Theme, index: i32) {
                 t.set_well(white(0.08));
                 t.set_hairline(white(0.22));
                 t.set_edge(white(0.35));
-                t.set_sheen_color(white(0.25));
-                t.set_sheen_reach(0.55);
+                t.set_sheen_color(white(0.16));
+                t.set_sheen_reach(0.4);
                 t.set_text_2(white(0.75));
                 t.set_text_3(white(0.44));
                 t.set_range(white(0.22));

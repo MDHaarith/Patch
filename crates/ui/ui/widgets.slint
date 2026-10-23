@@ -12,7 +12,8 @@ export component Glass inherits Rectangle {
     border-radius: radius;
     background: fill;
     border-width: 1px;
-    border-color: Theme.hairline;
+    // Gradient borders need the GPU renderer, like the sheen below.
+    border-color: Store.mobile ? Theme.hairline : Theme.rim;
     drop-shadow-blur: elevated ? 28px : 0px;
     drop-shadow-offset-y: elevated ? 10px : 0px;
     drop-shadow-color: elevated ? Theme.shadow : transparent;
