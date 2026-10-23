@@ -96,6 +96,7 @@ Releases page. Every push to `main` publishes `v<version>-build.<n>`, and
 `v*` tags publish clean versions.
 Open the `.apk` on your phone to install it, then long-press the home screen →
 *Widgets* → **Patch** to add the widget.
+For future updates, use Settings → About → **Check for updates**, then confirm the Android installer; your data stays intact.
 
 <details>
 <summary>Maintainers: set up the release signing key (once)</summary>

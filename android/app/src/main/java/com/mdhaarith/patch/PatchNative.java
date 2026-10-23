@@ -200,6 +200,10 @@ final class PatchNative {
         });
     }
 
+    static void checkUpdate() {
+        main.post(() -> Updater.check(app));
+    }
+
     static boolean batteryUnrestricted() {
         PowerManager power = app.getSystemService(PowerManager.class);
         return power != null && power.isIgnoringBatteryOptimizations(app.getPackageName());
@@ -305,6 +309,12 @@ final class PatchNative {
     static native void nativeInsets(float top, float bottom);
 
     static native void nativeDensity(float density);
+
+    /** Pet origin relative to the usable screen, in logical pixels. */
+    static native void nativeOverlayPosition(float x, float y);
+
+    /** 0 idle, ±1 held, ±2 flying, ±3 bump, 4 landing, 5 dizzy. Sign is facing. */
+    static native void nativePetPlay(int state);
 
     static native void nativeOverlayAllowed(boolean allowed);
 

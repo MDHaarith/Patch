@@ -278,6 +278,25 @@ pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeDensity(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativePetPlay(
+    _: JNIEnv,
+    _: JClass,
+    state: jint,
+) {
+    send(Msg::PetPlay(state));
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeOverlayPosition(
+    _: JNIEnv,
+    _: JClass,
+    x: jfloat,
+    y: jfloat,
+) {
+    send(Msg::OverlayPosition { x, y });
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeOverlayAllowed(
     _: JNIEnv,
     _: JClass,

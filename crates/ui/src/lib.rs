@@ -116,6 +116,13 @@ pub trait Host {
     /// [`App::pair_from_link`] when it gets one.
     fn scan_qr(&self) {}
 
+    /// Whether the host can download and install app updates.
+    fn can_update(&self) -> bool {
+        false
+    }
+
+    fn check_update(&self) {}
+
     /// `Some(true)` when the OS exempts Patch from battery optimization,
     /// `None` where that doesn't apply (desktop).
     fn battery_unrestricted(&self) -> Option<bool> {

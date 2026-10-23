@@ -198,6 +198,7 @@ export global Store {
     in-out property <image> host-qr;
     // Android: scan a hub's pairing QR code with the camera.
     in-out property <bool> can-scan: false;
+    in-out property <bool> can-update: false;
 
     // Settings → Usage: Patch's own CPU/memory line, and on Android whether
     // battery optimization is 0 n/a, 1 restricting Patch, 2 off for Patch.
@@ -330,6 +331,7 @@ export global Actions {
     callback connect-hub(string, string);
     callback disconnect-hub();
     callback scan-pair();
+    callback check-update();
     callback refresh-usage();
     callback battery-unrestrict();
     callback set-hosting(bool);

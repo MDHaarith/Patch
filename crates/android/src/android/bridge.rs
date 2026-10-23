@@ -184,6 +184,10 @@ impl Bridge for JniBridge {
         self.call_void("scanQr", "()V", |_| Ok(vec![]));
     }
 
+    fn check_update(&self) {
+        self.call_void("checkUpdate", "()V", |_| Ok(vec![]));
+    }
+
     fn battery_unrestricted(&self) -> bool {
         self.with_env("batteryUnrestricted", |env| {
             env.call_static_method(self.class, "batteryUnrestricted", "()Z", &[])?

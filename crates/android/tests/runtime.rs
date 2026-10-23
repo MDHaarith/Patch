@@ -34,6 +34,7 @@ struct Recorder {
     overlay: Cell<bool>,
     reminders: RefCell<Vec<String>>,
     snapshots: RefCell<Vec<String>>,
+    updates: Cell<u32>,
 }
 
 impl Bridge for Recorder {
@@ -75,6 +76,9 @@ impl Bridge for Recorder {
         self.snapshots.borrow_mut().push(json.to_string());
     }
     fn scan_qr(&self) {}
+    fn check_update(&self) {
+        self.updates.set(self.updates.get() + 1);
+    }
     fn battery_unrestricted(&self) -> bool {
         false
     }
@@ -200,9 +204,8 @@ impl Harness {
         }
     }
 
-    /// Runs the loop for ~150ms: well inside the runtime's 400ms resize hold,
-    /// which a full `settle` (~420ms) would outlast.
-    fn settle_within_hold(&mut self) {
+    /// Samples the close animation before Java would shrink the surface.
+    fn animate_partway(&mut self) {
         for _ in 0..5 {
             self.rt.step(&self.rx, Some(Duration::ZERO));
             std::thread::sleep(Duration::from_millis(30));
@@ -316,6 +319,9 @@ fn renders_and_drives_both_windows() {
     );
     let mw = h.rt.main_window().expect("main window created");
     assert!(mw.global::<Store>().get_mobile(), "phone layout");
+    assert!(mw.global::<Store>().get_can_update(), "Android supports updates");
+    mw.global::<Actions>().invoke_check_update();
+    assert_eq!(h.rec.updates.get(), 1, "update action reaches the host");
     assert_eq!(
         main.pixel(main.width / 2, 2)[3],
         255,
@@ -367,8 +373,8 @@ fn renders_and_drives_both_windows() {
         "Java's size already matches the app's state"
     );
     assert!(
-        panel.pixel(0, 0)[3] < 32,
-        "rounded corner is see-through: {:?}",
+        (95..=110).contains(&panel.pixel(0, 0)[3]),
+        "the single backdrop dims behind the pet: {:?}",
         panel.pixel(0, 0)
     );
     assert!(
@@ -443,18 +449,23 @@ fn renders_and_drives_both_windows() {
     assert_eq!(snap.text, "", "the cleared field is echoed back to Java");
     panel.save("android-overlay-panel-added.png");
 
-    // ---- Collapse to the bubble: frames are held until the surface shrinks.
+    // ---- Collapse keeps painting the exit animation on the full-size surface.
     h.rt.overlay_window()
         .unwrap()
         .global::<Actions>()
         .invoke_overlay_expand(false);
     let before = panel.presents();
-    h.settle_within_hold();
+    h.animate_partway();
     assert_eq!(h.rec.expand.borrow().as_slice(), [false]);
+    assert!(
+        panel.presents() > before,
+        "close animation keeps producing frames"
+    );
+    h.settle();
     assert_eq!(
-        panel.presents(),
-        before,
-        "nothing drawn into the panel-sized surface"
+        panel.pixel(panel.width / 2, panel.height / 2)[3],
+        0,
+        "panel and dim finish fading before the window shrinks"
     );
     let bubble = h.surface(Kind::Overlay, (60.0, 60.0));
     h.settle();
@@ -466,9 +477,96 @@ fn renders_and_drives_both_windows() {
     );
     bubble.save("android-overlay-bubble.png");
 
-    // A tap on the bubble expands it again.
-    h.tap(Kind::Overlay, 30.0, 30.0);
+    // Native play changes only the overlay sprite, never opens a panel, and recovers.
+    let pixels = |image: slint::Image| image.to_rgba8().unwrap().as_slice().to_vec();
+    let play_overlay = h.rt.overlay_window().unwrap();
+    let overlay_store = play_overlay.global::<Store>();
+    let main_store = mw.global::<Store>();
+    for code in [1, -1, 2, -2, 3, -3, 4, 5, 0, i32::MIN] {
+        h.send(Msg::PetPlay(code));
+        h.rt.step(&h.rx, Some(Duration::ZERO));
+        let play = patch_ui::pet::Play::from_code(code);
+        let actual = pixels(overlay_store.get_pet_image());
+        let normal = pixels(main_store.get_pet_image());
+        if play == patch_ui::pet::Play::Idle {
+            assert_eq!(actual, normal, "idle and invalid codes restore the mood");
+        } else {
+            assert_ne!(actual, normal, "play pose reaches only the overlay: {code}");
+        }
+        assert_eq!(h.rec.expand.borrow().as_slice(), [false], "playing never opens");
+    }
+    h.send(Msg::PetPlay(3));
+    h.settle();
+    let flying = pixels(overlay_store.get_pet_image());
+    assert_ne!(flying, pixels(main_store.get_pet_image()), "bump returns to flight");
+    h.send(Msg::PetPlay(4));
+    h.settle();
+    assert_eq!(pixels(overlay_store.get_pet_image()), pixels(main_store.get_pet_image()), "landing ends");
+    h.send(Msg::PetPlay(5));
+    for _ in 0..3 { h.settle(); }
+    assert_eq!(pixels(overlay_store.get_pet_image()), pixels(main_store.get_pet_image()), "dizziness ends");
+    h.send(Msg::PetPlay(3));
+    h.send(Msg::PetPlay(-1));
+    h.settle();
+    assert_ne!(pixels(overlay_store.get_pet_image()), flying, "catch cancels bump recovery");
+    h.send(Msg::PetPlay(0));
+    h.rt.step(&h.rx, Some(Duration::ZERO));
+
+    // A cancelled press must not open, and a double tap must open only once.
+    for action in [TouchAction::Down, TouchAction::Cancel] {
+        h.send(Msg::Touch {
+            kind: Kind::Overlay,
+            action,
+            x: 30.0 * SCALE,
+            y: 30.0 * SCALE,
+        });
+    }
+    h.settle();
+    assert_eq!(h.rec.expand.borrow().as_slice(), [false]);
+    for _ in 0..2 {
+        for action in [TouchAction::Down, TouchAction::Up] {
+            h.send(Msg::Touch {
+                kind: Kind::Overlay,
+                action,
+                x: 30.0 * SCALE,
+                y: 30.0 * SCALE,
+            });
+        }
+    }
+    h.settle();
     assert_eq!(h.rec.expand.borrow().as_slice(), [false, true]);
+    assert_eq!(
+        bubble.pixel(0, 0)[3],
+        0,
+        "no full-screen content painted into a bubble surface"
+    );
+
+    // A dropped pet near the bottom opens its panel above, including with the IME up.
+    h.send(Msg::OverlayPosition { x: 160.0, y: 420.0 });
+    let floating = h.surface(Kind::Overlay, (340.0, 500.0));
+    h.settle();
+    let overlay = h.rt.overlay_window().unwrap();
+    assert_eq!((overlay.get_pet_x(), overlay.get_pet_y()), (160.0, 420.0));
+    assert!(
+        floating.pixel((190.0 * SCALE) as u32, (450.0 * SCALE) as u32)[3] > 200,
+        "pet stays at the dropped position"
+    );
+    assert!(
+        floating.pixel((170.0 * SCALE) as u32, (100.0 * SCALE) as u32)[3] > 200,
+        "panel opens above a pet near the bottom"
+    );
+    let keyboard = h.surface(Kind::Overlay, (340.0, 300.0));
+    h.settle();
+    assert!(
+        keyboard.pixel((190.0 * SCALE) as u32, (270.0 * SCALE) as u32)[3] > 200,
+        "pet is clamped above the keyboard"
+    );
+    let restored = h.surface(Kind::Overlay, (340.0, 500.0));
+    h.settle();
+    assert!(
+        restored.pixel((190.0 * SCALE) as u32, (450.0 * SCALE) as u32)[3] > 200,
+        "keyboard dismissal restores the dropped position"
+    );
 
     // Hiding from the notification turns the preference off.
     h.rec.overlay.set(true);
@@ -476,9 +574,17 @@ fn renders_and_drives_both_windows() {
     h.settle();
     assert!(!h.rec.overlay.get());
     assert!(!h.rt.app().prefs().overlay);
+    h.send(Msg::PetPlay(5));
     h.send(Msg::ViewGone(Kind::Overlay));
     h.settle();
     assert!(h.rt.overlay_window().is_none());
+    let _recreated = h.surface(Kind::Overlay, (340.0, 500.0));
+    h.settle();
+    assert_eq!(
+        pixels(h.rt.overlay_window().unwrap().global::<Store>().get_pet_image()),
+        pixels(main_store.get_pet_image()),
+        "destroying the overlay clears play and its recovery timer"
+    );
 
     let _ = std::fs::remove_dir_all(&h.dir);
 }
