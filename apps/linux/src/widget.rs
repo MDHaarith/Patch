@@ -58,6 +58,8 @@ fn physical(size: (f32, f32), scale: f64) -> (i32, i32) {
 pub struct Widget {
     window: OverlayWindow,
     mode: Mode,
+    /// Logical offset inside the panel, so dragging between screen scales keeps the anchor.
+    bubble_offset: Cell<Option<(f32, f32)>>,
 }
 
 #[derive(Default)]
@@ -127,7 +129,7 @@ impl Widget {
             }
             EventResult::Propagate
         });
-        Widget { window, mode }
+        Widget { window, mode, bubble_offset: Cell::new(None) }
     }
 
     pub fn window(&self) -> &OverlayWindow {
@@ -156,11 +158,18 @@ impl Widget {
                 let (sw, sh) = physical(self.size_for(s.expanded), monitor.scale);
                 let old = Rect::new(s.x, s.y, sw, sh);
                 let (nw, nh) = physical((w, h), monitor.scale);
-                Some(if s.expanded == expanded {
+                let rect = if s.expanded == expanded {
                     Rect::new(old.x, old.y, nw, nh).clamped_to(&monitor.rect)
                 } else {
-                    resize_anchored(old, nw, nh, &monitor.rect)
-                })
+                    resize_anchored(old, nw, nh, &monitor.rect, None)
+                };
+                if expanded && !s.expanded {
+                    self.bubble_offset.set(Some((
+                        (old.x - rect.x) as f32 / monitor.scale as f32,
+                        (old.y - rect.y) as f32 / monitor.scale as f32,
+                    )));
+                }
+                Some(rect)
             })
             .or_else(|| {
                 let m = screen.primary?;
@@ -210,7 +219,7 @@ impl Widget {
     }
 
     /// Switches between bubble and panel size. On X11 the corner nearest the
-    /// screen edge stays where it is; returns the new spot to remember.
+    /// screen edge stays where it is; collapse restores the saved bubble offset.
     pub fn resize(&self, expanded: bool) -> Option<WidgetPlace> {
         let (w, h) = self.size_for(expanded);
         let target = self
@@ -225,7 +234,22 @@ impl Widget {
                     .map(|m| Monitor::from_handle(&m))
                     .unwrap_or(Monitor { rect: old, scale: ww.scale_factor() });
                 let (nw, nh) = physical((w, h), ww.scale_factor());
-                Some(resize_anchored(old, nw, nh, &monitor.rect))
+                if (old.w, old.h) == (nw, nh) {
+                    return Some(old.clamped_to(&monitor.rect));
+                }
+                let offset = if expanded {
+                    None
+                } else {
+                    self.bubble_offset.get().map(|offset| physical(offset, ww.scale_factor()))
+                };
+                let rect = resize_anchored(old, nw, nh, &monitor.rect, offset);
+                if expanded {
+                    self.bubble_offset.set(Some((
+                        (old.x - rect.x) as f32 / ww.scale_factor() as f32,
+                        (old.y - rect.y) as f32 / ww.scale_factor() as f32,
+                    )));
+                }
+                Some(rect)
             })
             .flatten();
         self.window.window().set_size(LogicalSize::new(w, h));

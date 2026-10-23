@@ -54,8 +54,11 @@ pub fn monitor_of(r: &Rect, monitors: &[Rect]) -> Option<Rect> {
 /// The widget's rectangle after switching to a `w`×`h` size: the corner that
 /// is nearest to the monitor's edges stays put, so a bubble parked in the
 /// bottom-right corner opens its panel up and to the left instead of off the
-/// screen.
-pub fn resize_anchored(old: Rect, w: i32, h: i32, monitor: &Rect) -> Rect {
+/// screen. An explicit offset restores the bubble inside the clamped panel.
+pub fn resize_anchored(old: Rect, w: i32, h: i32, monitor: &Rect, offset: Option<(i32, i32)>) -> Rect {
+    if let Some((x, y)) = offset {
+        return Rect::new(old.x + x, old.y + y, w, h).clamped_to(monitor);
+    }
     let (cx, cy) = old.center2();
     let (mx, my) = monitor.center2();
     let x = if cx > mx { old.right() - w } else { old.x };
@@ -79,24 +82,40 @@ mod tests {
     #[test]
     fn bubble_in_bottom_right_opens_up_and_left() {
         let bubble = Rect::new(1840, 1000, 60, 60);
-        let panel = resize_anchored(bubble, 340, 500, &MON);
+        let panel = resize_anchored(bubble, 340, 500, &MON, None);
         assert_eq!(panel, Rect::new(1560, 560, 340, 500));
         // And collapses back to the same spot.
-        assert_eq!(resize_anchored(panel, 60, 60, &MON), bubble);
+        assert_eq!(resize_anchored(panel, 60, 60, &MON, None), bubble);
     }
 
     #[test]
     fn bubble_in_top_left_opens_down_and_right() {
         let bubble = Rect::new(20, 30, 60, 60);
-        assert_eq!(resize_anchored(bubble, 340, 500, &MON), Rect::new(20, 30, 340, 500));
+        assert_eq!(resize_anchored(bubble, 340, 500, &MON, None), Rect::new(20, 30, 340, 500));
     }
 
     #[test]
     fn growing_never_leaves_the_monitor() {
         let bubble = Rect::new(-10, 1050, 60, 60);
-        let panel = resize_anchored(bubble, 340, 500, &MON);
+        let panel = resize_anchored(bubble, 340, 500, &MON, None);
         assert_eq!(panel.x, 0);
         assert_eq!(panel.bottom(), 1080);
+    }
+
+    #[test]
+    fn collapse_restores_the_bubble_after_clamping_or_crossing_the_monitor_center() {
+        for monitor in [MON, Rect::new(-1280, 0, 1280, 1024), Rect::new(0, 0, 360, 640)] {
+            for (x, y) in [(0, 0), (500, 450), (950, 530), (1000, 550), (1800, 1000)] {
+                let bubble = Rect::new(monitor.x + x, monitor.y + y, 60, 60).clamped_to(&monitor);
+                let panel = resize_anchored(bubble, 340, 500, &monitor, None);
+                let offset = Some((bubble.x - panel.x, bubble.y - panel.y));
+                assert_eq!(resize_anchored(panel, 60, 60, &monitor, offset), bubble);
+                // Moving the panel carries its bubble anchor along with it.
+                let moved = Rect::new(panel.x + 20, panel.y + 30, panel.w, panel.h);
+                let expected = Rect::new(bubble.x + 20, bubble.y + 30, 60, 60).clamped_to(&monitor);
+                assert_eq!(resize_anchored(moved, 60, 60, &monitor, offset), expected);
+            }
+        }
     }
 
     #[test]
