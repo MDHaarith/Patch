@@ -765,6 +765,10 @@ impl Shell {
 }
 
 impl Host for Shell {
+    fn battery_usage(&self) -> Option<String> {
+        patch_linux::battery::sample()
+    }
+
     fn can_host_hub(&self) -> bool {
         true
     }

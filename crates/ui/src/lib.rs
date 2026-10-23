@@ -123,6 +123,14 @@ pub trait Host {
 
     fn check_update(&self) {}
 
+    /// Device battery readings, not energy attributed to Patch. `None` if unavailable.
+    fn battery_usage(&self) -> Option<String> {
+        None
+    }
+
+    /// Open Patch's system app details, where Android exposes battery usage.
+    fn open_battery_settings(&self) {}
+
     /// `Some(true)` when the OS exempts Patch from battery optimization,
     /// `None` where that doesn't apply (desktop).
     fn battery_unrestricted(&self) -> Option<bool> {

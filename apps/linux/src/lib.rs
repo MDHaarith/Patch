@@ -3,6 +3,7 @@
 //! placement. The `patch` binary (`main.rs`) wires them to the Slint UI.
 
 pub mod autostart;
+pub mod battery;
 pub mod cli;
 pub mod geometry;
 pub mod hosting;
