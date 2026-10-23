@@ -48,8 +48,8 @@ impl ImeOp {
                 after: b,
             },
             4 => ImeOp::SetSelection {
-                start: a.min(b),
-                end: a.max(b),
+                start: a,
+                end: b,
             },
             5 => ImeOp::SetComposingRegion {
                 start: a.min(b),
@@ -69,6 +69,8 @@ pub enum ImeMode {
     Update = 1,
     /// A field (re)gained focus or was tapped: restart input and show.
     Show = 2,
+    /// A long press in an editable field: show its text action bar too.
+    ShowActions = 3,
 }
 
 /// The editor state the Java side presents to the IME.
@@ -110,7 +112,7 @@ impl ImeState {
             InputMethodRequest::Enable(p) => {
                 self.preedit = p.preedit_text.to_string();
                 self.props = Some(p);
-                self.pending = Some(ImeMode::Show);
+                self.pending = Some(self.pending.map_or(ImeMode::Show, |m| m.max(ImeMode::Show)));
             }
             InputMethodRequest::Update(p) => {
                 let was_active = self.props.is_some();
@@ -194,8 +196,8 @@ impl ImeState {
         let (input_type, action) = android_input_type(p);
         Some(ImeSnapshot {
             text: format!("{}{}{}", &text[..cursor], pre, &text[cursor..]),
-            sel_start: cur16.min(anc16),
-            sel_end: cur16.max(anc16),
+            sel_start: anc16,
+            sel_end: cur16,
             comp_start: if pre.is_empty() { -1 } else { c16 },
             comp_end: if pre.is_empty() { -1 } else { c16 + pre16 },
             input_type,
@@ -207,6 +209,12 @@ impl ImeState {
     pub fn restart(&mut self) {
         if self.props.is_some() {
             self.pending = Some(ImeMode::Show);
+        }
+    }
+
+    pub fn show_actions(&mut self) {
+        if self.props.is_some() {
+            self.pending = Some(ImeMode::ShowActions);
         }
     }
 
@@ -257,7 +265,8 @@ impl ImeState {
                     KeyEventType::CommitComposition,
                     &t,
                     "",
-                    None,
+                    // An empty commit must delete the selection too (Cut).
+                    Some(rel(start, cursor)..rel(end, cursor)),
                     None,
                 ));
                 // Slint leaves the cursor after the text; move it if the
@@ -319,18 +328,33 @@ impl ImeState {
                 }
             }
             ImeOp::DeleteSurrounding { before, after } => {
-                // Android deletes around the composition, never inside it;
-                // Slint keeps the composition out of `text`, so the cursor
-                // already sits on its edge.
-                let start = back_utf16(&text, cursor, before);
-                let end = forward_utf16(&text, cursor, after);
-                if start < end {
+                // Android preserves the selection/composition and deletes on
+                // either side. Work right-to-left so byte offsets stay valid.
+                let (lo, hi) = (anchor.min(cursor), anchor.max(cursor));
+                let start = back_utf16(&text, lo, before);
+                let end = forward_utf16(&text, hi, after);
+                let mut at = cursor;
+                for (from, to) in [(hi, end), (start, lo)] {
+                    if from == to {
+                        continue;
+                    }
                     out.push(composition(
                         KeyEventType::UpdateComposition,
                         "",
                         &self.preedit,
-                        Some(rel(start, cursor)..rel(end, cursor)),
+                        Some(rel(from, at)..rel(to, at)),
                         None,
+                    ));
+                    at = from;
+                }
+                if !out.is_empty() {
+                    let removed = lo - start;
+                    out.push(composition(
+                        KeyEventType::UpdateComposition,
+                        "",
+                        &self.preedit,
+                        None,
+                        Some(((cursor - removed) as i32, (anchor - removed) as i32)),
                     ));
                 }
             }
@@ -609,6 +633,32 @@ mod tests {
     }
 
     #[test]
+    fn selection_direction_and_empty_commit() {
+        assert_eq!(
+            ImeOp::from_java(4, String::new(), 5, 1),
+            Some(ImeOp::SetSelection { start: 5, end: 1 })
+        );
+        let mut st = focused("a😀bc", 1);
+        st.props.as_mut().unwrap().anchor_position = Some(6);
+        let (_, snapshot, _) = st.take_pending().unwrap();
+        assert_eq!((snapshot.sel_start, snapshot.sel_end), (4, 1));
+        let events = st.translate(ImeOp::Commit(String::new(), 1), 1);
+        assert_eq!(
+            key(&events[0]).replacement_range,
+            Some(0..5),
+            "empty commit deletes the selected bytes"
+        );
+        let events = st.translate(ImeOp::SetSelection { start: 4, end: 1 }, 2);
+        assert_eq!(
+            (
+                key(&events[0]).anchor_position,
+                key(&events[0]).cursor_position
+            ),
+            (Some(6), Some(1))
+        );
+    }
+
+    #[test]
     fn compose_caret_inside_the_composition() {
         let mut st = focused("hi there", 3);
         st.translate(ImeOp::Compose("wor".into(), 0), 1);
@@ -636,6 +686,9 @@ mod tests {
         st.request(InputMethodRequest::Enable(p.clone()));
         st.request(InputMethodRequest::Update(p));
         assert_eq!(st.take_pending().map(|p| p.0), Some(ImeMode::Show));
+        st.show_actions();
+        st.request(InputMethodRequest::Enable(InputMethodProperties::default()));
+        assert_eq!(st.take_pending().map(|p| p.0), Some(ImeMode::ShowActions));
         st.request(InputMethodRequest::Disable);
         assert_eq!(st.take_pending().map(|p| p.0), Some(ImeMode::Hide));
     }

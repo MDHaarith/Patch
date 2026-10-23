@@ -449,6 +449,160 @@ fn renders_and_drives_both_windows() {
     assert_eq!(snap.text, "", "the cleared field is echoed back to Java");
     panel.save("android-overlay-panel-added.png");
 
+    // The shared Field wraps quick-add text and keeps every line in its box.
+    let long = "Buy milk and bread for the weekend with friends and family ".repeat(3);
+    h.send(Msg::Ime {
+        kind: Kind::Overlay,
+        op: ImeOp::Commit(long.clone(), 1),
+        seq: 7,
+    });
+    h.settle();
+    let overlay_window = h.rt.overlay_window().unwrap();
+    let inner = i_slint_core::window::WindowInner::from_pub(overlay_window.window());
+    let item = inner.focus_item.borrow().upgrade().unwrap();
+    let input = item.downcast::<i_slint_core::items::TextInput>().unwrap();
+    let input = input.as_pin_ref();
+    let geo = item.geometry();
+    assert!(
+        geo.height() > 40.0,
+        "wrapped field grows with the text: {geo:?}"
+    );
+    let origin = item.map_to_window(geo.origin);
+    let adapter = inner.window_adapter();
+    let cursor = adapter.renderer().text_input_cursor_rect_for_byte_offset(
+        input,
+        &item,
+        long.len(),
+        input.cursor_position_affinity(),
+    );
+    assert!(cursor.origin.y > 20.0, "cursor reaches a wrapped line");
+    assert!(
+        cursor.max_y() <= geo.height() + 1.0,
+        "last line stays in the field"
+    );
+
+    let point = (origin.x + 8.0, origin.y + 8.0);
+    for action in [TouchAction::Down, TouchAction::LongPress] {
+        h.send(Msg::Touch {
+            kind: Kind::Overlay,
+            action,
+            x: point.0 * SCALE,
+            y: point.1 * SCALE,
+        });
+        h.settle();
+    }
+    let (_, mode, selected, _) = h.last_ime().unwrap();
+    assert_eq!(mode, ImeMode::ShowActions, "only a text hit requests the action bar");
+    assert_eq!(
+        &selected.text[selected.sel_start as usize..selected.sel_end as usize],
+        "Buy",
+        "long press selects a word"
+    );
+    h.send(Msg::Touch {
+        kind: Kind::Overlay,
+        action: TouchAction::Move,
+        x: (point.0 + 70.0) * SCALE,
+        y: point.1 * SCALE,
+    });
+    h.send(Msg::Touch {
+        kind: Kind::Overlay,
+        action: TouchAction::Up,
+        x: (point.0 + 70.0) * SCALE,
+        y: point.1 * SCALE,
+    });
+    h.settle();
+    assert!(
+        h.last_ime().unwrap().2.sel_end > selected.sel_end,
+        "drag extends the selection"
+    );
+
+    // IME cut/paste use the same selection replacement, including UTF-16.
+    h.send(Msg::Ime {
+        kind: Kind::Overlay,
+        op: ImeOp::SetSelection {
+            start: long.len() as u32,
+            end: 0,
+        },
+        seq: 8,
+    });
+    h.send(Msg::Ime {
+        kind: Kind::Overlay,
+        op: ImeOp::Commit("a😀bc".into(), 1),
+        seq: 9,
+    });
+    h.settle();
+    h.send(Msg::Ime {
+        kind: Kind::Overlay,
+        op: ImeOp::SetSelection { start: 4, end: 1 },
+        seq: 10,
+    });
+    h.settle();
+    let (_, _, selected, _) = h.last_ime().unwrap();
+    assert_eq!(
+        (selected.sel_start, selected.sel_end),
+        (4, 1),
+        "reversed selection survives the echo"
+    );
+    for (code, unicode, down) in [(113, 0, true), (31, 'c' as u32, true), (31, 'c' as u32, false), (113, 0, false)] {
+        h.send(Msg::Key { kind: Kind::Overlay, code, unicode, down, seq: 10 });
+    }
+    h.settle();
+    assert_eq!(h.rec.clipboard.borrow().as_deref(), Some("😀b"), "Copy uses the platform clipboard");
+    h.send(Msg::Ime {
+        kind: Kind::Overlay,
+        op: ImeOp::Commit(String::new(), 1),
+        seq: 11,
+    });
+    h.settle();
+    assert_eq!(
+        h.last_ime().unwrap().2.text,
+        "ac",
+        "empty commit cuts emoji and b"
+    );
+    for (code, unicode, down) in [(113, 0, true), (50, 'v' as u32, true), (50, 'v' as u32, false), (113, 0, false)] {
+        h.send(Msg::Key { kind: Kind::Overlay, code, unicode, down, seq: 12 });
+    }
+    h.settle();
+    assert_eq!(
+        h.last_ime().unwrap().2.text,
+        "a😀bc",
+        "paste replaces at the caret"
+    );
+    h.send(Msg::Ime {
+        kind: Kind::Overlay,
+        op: ImeOp::SetSelection { start: 0, end: 5 },
+        seq: 13,
+    });
+    h.send(Msg::Ime {
+        kind: Kind::Overlay,
+        op: ImeOp::Commit(String::new(), 1),
+        seq: 14,
+    });
+    h.settle();
+
+    for (seq, op) in [
+        (15, ImeOp::Commit("a😀bc!".into(), 1)),
+        (16, ImeOp::SetSelection { start: 4, end: 1 }),
+        (17, ImeOp::DeleteSurrounding { before: 1, after: 1 }),
+    ] {
+        h.send(Msg::Ime { kind: Kind::Overlay, op, seq });
+    }
+    h.settle();
+    let (_, _, selected, _) = h.last_ime().unwrap();
+    assert_eq!(selected.text, "😀b!", "surrounding deletion preserves the selection");
+    assert_eq!((selected.sel_start, selected.sel_end), (3, 0));
+    h.send(Msg::Ime {
+        kind: Kind::Overlay,
+        op: ImeOp::SetSelection { start: 0, end: 4 },
+        seq: 18,
+    });
+    h.send(Msg::Ime {
+        kind: Kind::Overlay,
+        op: ImeOp::Commit(String::new(), 1),
+        seq: 19,
+    });
+    h.settle();
+
     // ---- Collapse keeps painting the exit animation on the full-size surface.
     h.rt.overlay_window()
         .unwrap()
