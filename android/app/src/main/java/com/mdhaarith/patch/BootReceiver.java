@@ -3,7 +3,6 @@ package com.mdhaarith.patch;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.provider.Settings;
 
 /** Re-arms reminders and brings the floating panel back (if asked to) after
  * a reboot or an app update. */
@@ -18,7 +17,7 @@ public final class BootReceiver extends BroadcastReceiver {
         }
         // Alarms don't survive a reboot.
         Reminders.restore(context);
-        if (!Prefs.is(context, Prefs.OVERLAY) || !Settings.canDrawOverlays(context)) {
+        if (!Prefs.is(context, Prefs.OVERLAY) || !PatchNative.floatAllowed(context)) {
             return;
         }
         if (boot && !Prefs.is(context, Prefs.OVERLAY_BOOT)) {

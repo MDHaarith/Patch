@@ -206,6 +206,8 @@ pub struct App {
     grain: slint::Image,
     icon: slint::Image,
     usage: RefCell<crate::usage::Usage>,
+    /// The overlay is shown inside an Android system bubble.
+    in_bubble: Cell<bool>,
 }
 
 /// A pairing QR code, one pixel per module; the UI scales it up pixelated.
@@ -324,6 +326,7 @@ impl App {
             grain: grain_image(),
             icon: icon_image(),
             usage: RefCell::default(),
+            in_bubble: Cell::new(false),
             host,
         });
         CURRENT.with(|c| *c.borrow_mut() = Rc::downgrade(&app));
@@ -458,6 +461,7 @@ impl App {
         s.set_mobile(mobile);
         s.set_can_host(self.host.can_host_hub());
         s.set_can_scan(self.host.can_scan_qr());
+        s.set_in_bubble(self.in_bubble.get());
         s.set_custom_chrome(self.host.custom_chrome());
         s.set_version(env!("CARGO_PKG_VERSION").into());
         s.set_grain(self.grain.clone());
@@ -563,6 +567,18 @@ impl App {
             self.save_prefs();
             self.each_store(|s| s.set_overlay_on(false));
         }
+    }
+
+    /// The Android system bubble expanded: the overlay is always the panel
+    /// there, and the system (not Patch) collapses it.
+    pub fn bubble_opened(&self) {
+        self.in_bubble.set(true);
+        self.prefs.borrow_mut().overlay_expanded = true;
+        self.save_prefs();
+        self.each_store(|s| {
+            s.set_in_bubble(true);
+            s.set_overlay_expanded(true);
+        });
     }
 
     pub fn overlay_expanded(&self) -> bool {

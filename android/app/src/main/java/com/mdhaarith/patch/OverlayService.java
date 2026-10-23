@@ -64,6 +64,10 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
     private float density;
 
     static void start(Context context) {
+        if (Bubble.supported()) {
+            Bubble.show(context);
+            return;
+        }
         try {
             context.startForegroundService(new Intent(context, OverlayService.class));
         } catch (RuntimeException e) {
@@ -73,6 +77,10 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
     }
 
     static void stop(Context context) {
+        if (Bubble.supported()) {
+            Bubble.hide(context);
+            return;
+        }
         context.stopService(new Intent(context, OverlayService.class));
     }
 

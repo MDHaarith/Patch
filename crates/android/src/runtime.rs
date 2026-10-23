@@ -138,6 +138,8 @@ pub enum Msg {
     NewTask,
     /// Text of a scanned QR code.
     Scanned(String),
+    /// The Android 11+ bubble expanded; its surface follows.
+    BubbleOpened,
     Invoke(Box<dyn FnOnce() + Send>),
 }
 
@@ -457,6 +459,7 @@ impl Runtime {
                 self.take_new_task();
             }
             Msg::Scanned(text) => self.app.pair_from_link(&text),
+            Msg::BubbleOpened => self.app.bubble_opened(),
             Msg::Invoke(f) => f(),
         }
     }
