@@ -586,7 +586,8 @@ impl App {
             app.refresh();
         });
         on!(on_open_task, |app, id| app.open_task(&id));
-        on!(on_new_task, |app, key, minutes| app.new_task(&key, minutes));
+        on!(on_new_task, |app, key, minutes| app.new_task(&key, minutes, COL_TODO));
+        on!(on_new_card, |app, col| app.new_task("", -2, &col));
         on!(on_toggle_done, |app, id| {
             let done = app.doc.lock().unwrap().task(&id).is_some_and(|t| !t.done);
             app.edit(|d| d.set_done(&id, done));
@@ -1261,14 +1262,14 @@ impl App {
     }
 
     /// `minutes`: >= 0 timed at that minute, -1 all-day, -2 "+" button.
-    fn new_task(&self, key: &str, minutes: i32) {
+    fn new_task(&self, key: &str, minutes: i32, column: &str) {
         let (selected, view) = {
             let st = self.state.borrow();
             (st.selected, st.view)
         };
         let day = parse_key(key).unwrap_or(selected);
         let lists = self.doc.lock().unwrap().lists();
-        let mut t = Task::blank(patch_core::id::new_id("t"), &self.default_list(&lists), COL_TODO);
+        let mut t = Task::blank(patch_core::id::new_id("t"), &self.default_list(&lists), column);
         match minutes {
             m if m >= 0 => {
                 t.start = Some(day.and_time(hm(m as u32 / 60, m as u32 % 60)));

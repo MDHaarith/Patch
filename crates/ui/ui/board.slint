@@ -189,7 +189,7 @@ export component BoardView inherits Rectangle {
                     icon: "plus";
                     size: 26px;
                     icon-size: 13px;
-                    clicked => { root.adding-col = col.id; }
+                    clicked => { Actions.new-card(col.id); }
                 }
                 IconButton {
                     y: (parent.height - self.height) / 2;
@@ -199,23 +199,6 @@ export component BoardView inherits Rectangle {
                     active: root.menu-col == col.id;
                     clicked => { root.menu-col = root.menu-col == col.id ? "" : col.id; }
                 }
-            }
-
-            // Inline add
-            if root.adding-col == col.id: Field {
-                x: 10px;
-                y: root.head-h + Math.max(col.cards.length, 0) * (root.card-h + root.card-gap);
-                width: parent.width - 20px;
-                height: self.min-height; // not in a layout, so min/max-height alone don't bound it
-                placeholder: "Card title — try “Review PR fri 3pm”";
-                init => { self.focus-input(); }
-                accepted(t) => {
-                    if (t != "") {
-                        Actions.quick-add-card(col.id, t);
-                    }
-                    self.text = "";
-                }
-                escaped => { root.adding-col = ""; }
             }
 
             for card[k] in col.cards: Rectangle {
@@ -284,7 +267,7 @@ export component BoardView inherits Rectangle {
                 }
             }
 
-            if col.cards.length == 0 && root.adding-col != col.id: Text {
+            if col.cards.length == 0: Text {
                 y: root.head-h + 8px;
                 width: parent.width;
                 text: col.done ? "Drop finished cards here" : "No cards";

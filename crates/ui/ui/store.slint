@@ -284,6 +284,8 @@ export global Actions {
     callback resize-block(string, int);
     callback drop-card(string, int, int);
     callback quick-add-card(string, string);
+    // Column "+": open the editor for a new card in that column.
+    callback new-card(string);
 
     // Board columns
     callback add-column(string);
