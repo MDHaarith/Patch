@@ -69,7 +69,7 @@ fn render(pet: &[[u8; 4]], w: usize, h: usize, size: usize, adaptive: bool) -> V
 fn main() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     // Busy is the neutral idle face with open eyes; Happy has closed, smiling eyes.
-    let pixels = frame(Mood::Busy, 0, false);
+    let pixels = frame(Mood::Busy, 0, false, 0);
     let occupied: Vec<_> = (0..W * H).filter(|&i| pixels[i][3] != 0).collect();
     let left = occupied.iter().map(|i| i % W).min().unwrap();
     let top = occupied.iter().map(|i| i / W).min().unwrap();

@@ -28,9 +28,18 @@ impl Mood {
 
 const CLEAR: [u8; 4] = [0, 0, 0, 0];
 const OUTLINE: [u8; 4] = [0x2E, 0x18, 0x12, 255];
-const BODY: [u8; 4] = [0xF0, 0x8A, 0x5D, 255];
-const LIGHT: [u8; 4] = [0xFF, 0xB8, 0x8F, 255];
-const SHADE: [u8; 4] = [0xC8, 0x5F, 0x3A, 255];
+
+/// Body colours as (name, [body, highlight, shade]); index 0 is the default.
+pub const SKINS: [(&str, [[u8; 4]; 3]); 8] = [
+    ("Tangerine", [[0xFF, 0x6A, 0x1F, 255], [0xFF, 0xA0, 0x5C, 255], [0xD9, 0x48, 0x0A, 255]]),
+    ("Cherry", [[0xFF, 0x2D, 0x55, 255], [0xFF, 0x7A, 0x93, 255], [0xC7, 0x10, 0x3A, 255]]),
+    ("Bubblegum", [[0xFF, 0x4F, 0xB8, 255], [0xFF, 0x95, 0xD6, 255], [0xD1, 0x25, 0x8E, 255]]),
+    ("Grape", [[0xAF, 0x52, 0xDE, 255], [0xD0, 0x8C, 0xF5, 255], [0x7E, 0x2B, 0xB0, 255]]),
+    ("Electric", [[0x1E, 0x90, 0xFF, 255], [0x6C, 0xB8, 0xFF, 255], [0x0A, 0x62, 0xD1, 255]]),
+    ("Aqua", [[0x00, 0xD1, 0xC1, 255], [0x5C, 0xF0, 0xE3, 255], [0x00, 0xA0, 0x90, 255]]),
+    ("Lime", [[0x4C, 0xD9, 0x64, 255], [0x8B, 0xF0, 0x9A, 255], [0x23, 0xA8, 0x3F, 255]]),
+    ("Sunshine", [[0xFF, 0xCC, 0x00, 255], [0xFF, 0xE4, 0x5C, 255], [0xE0, 0xA0, 0x00, 255]]),
+];
 const EYE: [u8; 4] = [0x1A, 0x10, 0x0E, 255];
 const GLINT: [u8; 4] = [0xFF, 0xFF, 0xFF, 255];
 const CHEEK: [u8; 4] = [0xFF, 0x6F, 0x7D, 255];
@@ -55,8 +64,9 @@ const BX0: i32 = 3;
 const BX1: i32 = 16;
 
 /// One animation frame. `tick` drives the bob, the arm wave and the foot
-/// shuffle; `blink` closes the eyes for a frame.
-pub fn frame(mood: Mood, tick: u32, blink: bool) -> Vec<[u8; 4]> {
+/// shuffle; `blink` closes the eyes for a frame; `skin` indexes [`SKINS`].
+pub fn frame(mood: Mood, tick: u32, blink: bool, skin: usize) -> Vec<[u8; 4]> {
+    let [body, light, shade] = SKINS[skin % SKINS.len()].1;
     let mut c = Canvas([CLEAR; W * H]);
     let up = tick.is_multiple_of(2) && mood != Mood::Sleepy;
     let top = if up { 3 } else { 4 };
@@ -79,8 +89,8 @@ pub fn frame(mood: Mood, tick: u32, blink: bool) -> Vec<[u8; 4]> {
         }
         c.set(ax, ay - 1, OUTLINE);
         c.set(ax, ay + 2, OUTLINE);
-        c.set(ax, ay, BODY);
-        c.set(ax, ay + 1, SHADE);
+        c.set(ax, ay, body);
+        c.set(ax, ay + 1, shade);
     }
 
     // Body: outline where the silhouette meets the outside, then shading.
@@ -93,26 +103,26 @@ pub fn frame(mood: Mood, tick: u32, blink: bool) -> Vec<[u8; 4]> {
             let fill = if edge {
                 OUTLINE
             } else if !inside(x, y + 2) || !inside(x + 2, y) {
-                SHADE
+                shade
             } else if !inside(x, y - 2) && x < 11 || !inside(x - 2, y) && y < top + 6 {
-                LIGHT
+                light
             } else {
-                BODY
+                body
             };
             c.set(x, y, fill);
         }
     }
     // A shine on the forehead.
     c.set(6, top + 2, GLINT);
-    c.set(7, top + 2, LIGHT);
+    c.set(7, top + 2, light);
 
     // Sprout of thread on top; it sways with the bob.
     let sway = if up { 0 } else { 1 };
     c.set(10, top - 1, OUTLINE);
     c.set(10 + sway, top - 2, OUTLINE);
-    c.set(11 + sway, top - 3, BODY);
-    c.set(12 + sway, top - 3, LIGHT);
-    c.set(11 + sway, top - 2, SHADE);
+    c.set(11 + sway, top - 3, body);
+    c.set(12 + sway, top - 3, light);
+    c.set(11 + sway, top - 2, shade);
 
     // Feet shuffle.
     let (lf, rf) = if tick % 4 < 2 { (0, 1) } else { (1, 0) };
@@ -211,8 +221,8 @@ pub fn frame(mood: Mood, tick: u32, blink: bool) -> Vec<[u8; 4]> {
     c.0.to_vec()
 }
 
-pub fn image(mood: Mood, tick: u32, blink: bool) -> Image {
-    let px = frame(mood, tick, blink);
+pub fn image(mood: Mood, tick: u32, blink: bool, skin: usize) -> Image {
+    let px = frame(mood, tick, blink, skin);
     let mut buf = SharedPixelBuffer::<Rgba8Pixel>::new(W as u32, H as u32);
     for (d, s) in buf.make_mut_slice().iter_mut().zip(px) {
         *d = Rgba8Pixel { r: s[0], g: s[1], b: s[2], a: s[3] };
@@ -226,12 +236,14 @@ mod tests {
 
     #[test]
     fn frames_differ_by_mood_and_tick() {
-        let busy0 = frame(Mood::Busy, 0, false);
-        assert_ne!(busy0, frame(Mood::Busy, 1, false), "it bobs");
-        assert_ne!(busy0, frame(Mood::Busy, 0, true), "it blinks");
-        assert_ne!(busy0, frame(Mood::Happy, 0, false));
-        assert_ne!(busy0, frame(Mood::Worried, 0, false));
-        assert_ne!(busy0, frame(Mood::Sleepy, 0, false));
+        let busy0 = frame(Mood::Busy, 0, false, 0);
+        assert_ne!(busy0, frame(Mood::Busy, 1, false, 0), "it bobs");
+        assert_ne!(busy0, frame(Mood::Busy, 0, true, 0), "it blinks");
+        assert_ne!(busy0, frame(Mood::Happy, 0, false, 0));
+        assert_ne!(busy0, frame(Mood::Worried, 0, false, 0));
+        assert_ne!(busy0, frame(Mood::Sleepy, 0, false, 0));
+        assert_ne!(busy0, frame(Mood::Busy, 0, false, 1), "skins recolour");
+        assert_eq!(frame(Mood::Busy, 0, false, SKINS.len()), busy0, "out-of-range skin wraps");
         assert!(busy0.iter().filter(|p| p[3] > 0).count() > 120, "a solid little body");
     }
 }
