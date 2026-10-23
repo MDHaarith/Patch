@@ -331,9 +331,3 @@ pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeScanned(
 ) {
     send(Msg::Scanned(string(&mut env, &text)));
 }
-
-/// The Android 11+ bubble expanded.
-#[no_mangle]
-pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeBubbleOpened(_env: JNIEnv, _: JClass) {
-    send(Msg::BubbleOpened);
-}

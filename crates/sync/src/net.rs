@@ -60,6 +60,17 @@ pub fn tailscale_ipv4() -> Option<Ipv4Addr> {
     }
 }
 
+/// This machine's address on the local network (same Wi-Fi), from the
+/// route to the internet. No packet is sent.
+pub fn lan_ipv4() -> Option<Ipv4Addr> {
+    let sock = UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.connect("8.8.8.8:53").ok()?;
+    match sock.local_addr().ok()?.ip() {
+        IpAddr::V4(v4) if is_private(IpAddr::V4(v4)) => Some(v4),
+        _ => None,
+    }
+}
+
 /// MagicDNS name of this machine (e.g. `laptop.tail1234.ts.net`) when the
 /// `tailscale` CLI is available.
 pub fn tailscale_dns_name() -> Option<String> {
@@ -72,8 +83,9 @@ pub fn tailscale_dns_name() -> Option<String> {
     (!name.is_empty()).then(|| name.to_string())
 }
 
-/// Addresses other tailnet devices can use to reach a hub on `port`.
-pub fn hub_urls(port: u16) -> Vec<String> {
+/// Addresses other devices can use to reach a hub on `port`: Tailscale
+/// first, then the LAN address when the hub answers LAN peers.
+pub fn hub_urls(port: u16, lan: bool) -> Vec<String> {
     let mut urls = Vec::new();
     if let Some(name) = tailscale_dns_name() {
         if let Some(short) = name.split('.').next() {
@@ -82,6 +94,9 @@ pub fn hub_urls(port: u16) -> Vec<String> {
         urls.push(format!("http://{name}:{port}"));
     }
     if let Some(ip) = tailscale_ipv4() {
+        urls.push(format!("http://{ip}:{port}"));
+    }
+    if let Some(ip) = lan_ipv4().filter(|_| lan) {
         urls.push(format!("http://{ip}:{port}"));
     }
     urls

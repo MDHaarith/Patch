@@ -111,16 +111,7 @@ final class PatchNative {
         nativeRedrawNeeded(kind);
     }
 
-    /** Whether the floating panel may show: bubbles on Android 11+, the overlay permission before. */
-    static boolean floatAllowed(Context context) {
-        return Bubble.supported() ? Bubble.allowed(context) : Settings.canDrawOverlays(context);
-    }
-
     static void openOverlaySettings(Context context) {
-        if (Bubble.supported()) {
-            Bubble.openSettings(context);
-            return;
-        }
         Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + context.getPackageName()));
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try {
@@ -133,7 +124,7 @@ final class PatchNative {
     // ---- Called from Rust's UI thread ------------------------------------
 
     static boolean setOverlay(boolean on) {
-        if (on && !floatAllowed(app)) {
+        if (on && !Settings.canDrawOverlays(app)) {
             main.post(() -> openOverlaySettings(app));
             return false;
         }
@@ -149,7 +140,7 @@ final class PatchNative {
     }
 
     static boolean overlayAllowed() {
-        return floatAllowed(app);
+        return Settings.canDrawOverlays(app);
     }
 
     static void setOverlayBoot(boolean on) {
@@ -327,9 +318,6 @@ final class PatchNative {
 
     /** The widget's "+": open the editor on a new task. */
     static native void nativeNewTask();
-
-    /** The bubble expanded: show the overlay as the panel. */
-    static native void nativeBubbleOpened();
 
     /** Text of a QR code scanned for pairing. */
     static native void nativeScanned(String text);

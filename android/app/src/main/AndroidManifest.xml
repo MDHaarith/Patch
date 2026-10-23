@@ -40,20 +40,6 @@
             </intent-filter>
         </activity>
 
-        <!-- Android 11+ floating panel, shown inside a system bubble. -->
-        <activity
-            android:name=".BubbleActivity"
-            android:allowEmbedded="true"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|density|uiMode|fontScale|layoutDirection|locale"
-            android:documentLaunchMode="always"
-            android:exported="false"
-            android:resizeableActivity="true"
-            android:windowSoftInputMode="adjustResize|stateHidden" />
-
-        <receiver
-            android:name=".Bubble"
-            android:exported="false" />
-
         <service
             android:name=".OverlayService"
             android:exported="false"
