@@ -206,6 +206,7 @@ export component BoardView inherits Rectangle {
                 x: 10px;
                 y: root.head-h + Math.max(col.cards.length, 0) * (root.card-h + root.card-gap);
                 width: parent.width - 20px;
+                height: self.min-height; // not in a layout, so min/max-height alone don't bound it
                 placeholder: "Card title — try “Review PR fri 3pm”";
                 init => { self.focus-input(); }
                 accepted(t) => {
