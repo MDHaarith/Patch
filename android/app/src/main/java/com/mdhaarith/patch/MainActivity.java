@@ -101,10 +101,10 @@ public final class MainActivity extends Activity {
 
     /** Window background and system bar icons follow the app's look. */
     void applyLook(int look) {
-        int background = look == 2 ? 0xFFF2F2F7 : look == 1 ? 0xFF1D555E : 0xFF0B0B0C;
+        int background = (look == 2 || look == 3) ? 0xFFF2F2F7 : look == 1 ? 0xFF101011 : 0xFF0B0B0C;
         Window window = getWindow();
         window.setBackgroundDrawable(new ColorDrawable(background));
-        boolean lightBars = look == 2;
+        boolean lightBars = look == 2 || look == 3;
         if (Build.VERSION.SDK_INT >= 30) {
             WindowInsetsController c = window.getInsetsController();
             if (c != null) {

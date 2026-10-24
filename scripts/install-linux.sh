@@ -110,7 +110,7 @@ do_install() {
     say "Patch is installed."
     echo "  Open it from your apps, or run: $BIN/patch"
     case ":$PATH:" in *":$BIN:"*) ;; *) echo "  (add $BIN to your PATH to run 'patch' from a terminal)" ;; esac
-    echo "  Headless hub on an always-on machine: systemctl --user enable --now patch-hub"
+    echo "  Sync: enable hosting in Patch Settings. For a separate always-on server, see README.md."
     if [[ $was_running == 1 ]]; then
         (setsid "$BIN/patch" --background >/dev/null 2>&1 &)
         echo "  Restarted the running Patch in the background."

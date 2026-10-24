@@ -250,4 +250,19 @@ fn desktop_interactions() {
     assert!(conf.all_day);
     assert_eq!(conf.start.map(|s| s.date()), Some(start));
     assert_eq!(conf.end.map(|s| s.date()), Some(end));
+
+    // Both deletion routes offer the same undo without losing task fields.
+    main.global::<Actions>().invoke_delete_task(conf.id.clone().into());
+    assert!(doc(&app, &dir).task(&conf.id).is_none());
+    assert_eq!(main.global::<Store>().get_toast(), "Task deleted");
+    assert_eq!(main.global::<Store>().get_toast_action(), "Undo");
+    main.global::<Actions>().invoke_undo_delete();
+    assert_eq!(doc(&app, &dir).task(&conf.id), Some(conf.clone()));
+    app.open_task(&conf.id);
+    main.global::<Actions>().invoke_editor_delete();
+    assert_eq!(main.global::<Store>().get_toast_action(), "Undo");
+    main.global::<Actions>().invoke_undo_delete();
+    assert_eq!(doc(&app, &dir).task(&conf.id), Some(conf.clone()));
+    App::complete_current_task(&conf.id);
+    assert!(doc(&app, &dir).task(&conf.id).unwrap().done);
 }

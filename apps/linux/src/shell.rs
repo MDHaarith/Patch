@@ -765,9 +765,6 @@ impl Shell {
 }
 
 impl Host for Shell {
-    fn battery_usage(&self) -> Option<String> {
-        patch_linux::battery::sample()
-    }
 
     fn can_host_hub(&self) -> bool {
         true
@@ -893,6 +890,12 @@ impl Host for Shell {
     fn open_app(&self, _task_id: Option<&str>) {
         // The App opens the task itself after this returns.
         self.show_main();
+    }
+
+    fn notify_reminder(&self, id: &str, title: &str, body: &str) {
+        if let Some(n) = &self.notifier {
+            n.send_reminder(id, title, body);
+        }
     }
 
     fn notify(&self, title: &str, body: &str) {

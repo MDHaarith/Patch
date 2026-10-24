@@ -15,7 +15,6 @@ mod models;
 pub mod prefs;
 mod themes;
 pub mod pet;
-mod usage;
 
 slint::include_modules!();
 
@@ -73,6 +72,10 @@ pub trait Host {
     /// Show a system notification (reminders).
     fn notify(&self, _title: &str, _body: &str) {}
 
+    fn notify_reminder(&self, _id: &str, title: &str, body: &str) {
+        self.notify(title, body);
+    }
+
     /// Hand the upcoming reminders to the OS so they fire even when the app
     /// isn't running. Each call replaces the previous set. Return true when
     /// the host delivers them itself, so the app's own timer stays quiet.
@@ -122,11 +125,6 @@ pub trait Host {
     }
 
     fn check_update(&self) {}
-
-    /// Device battery readings, not energy attributed to Patch. `None` if unavailable.
-    fn battery_usage(&self) -> Option<String> {
-        None
-    }
 
     /// Open Patch's system app details, where Android exposes battery usage.
     fn open_battery_settings(&self) {}

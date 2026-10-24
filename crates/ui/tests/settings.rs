@@ -5,7 +5,7 @@ use slint::platform::software_renderer::{
     MinimalSoftwareWindow, PremultipliedRgbaColor, RepaintBufferType,
 };
 use slint::platform::{Platform, WindowAdapter, WindowEvent};
-use slint::{ComponentHandle, LogicalPosition, PhysicalSize};
+use slint::{ComponentHandle, LogicalPosition, PhysicalSize, Model};
 use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
@@ -48,6 +48,21 @@ fn settings_do_not_paint_covered_mobile_layers() {
     main.show().unwrap();
     window.set_size(PhysicalSize::new(412, 915));
     let store = main.global::<Store>();
+    let actions = main.global::<Actions>();
+    assert_eq!(store.get_themes().row_count(), 4);
+    for look in [1, 3] {
+        actions.invoke_set_look(look);
+        let theme = main.global::<Theme>();
+        assert!(theme.get_glass());
+        assert_eq!(theme.get_light(), look == 3);
+        actions.invoke_set_glass_opacity(0.25);
+        let faint = theme.get_panel().alpha();
+        actions.invoke_set_glass_opacity(2.0);
+        assert_eq!(store.get_glass_opacity(), 0.95);
+        assert!(theme.get_panel().alpha() > faint);
+        assert_eq!(patch_ui::prefs::Prefs::load(&dir.join("prefs.json")).glass_opacity, 0.95);
+    }
+    actions.invoke_set_look(0);
     let mut pixels = vec![PremultipliedRgbaColor::default(); 412 * 915];
     let draw = |pixels: &mut [PremultipliedRgbaColor]| {
         let mut dirty = PhysicalSize::default();
@@ -60,14 +75,14 @@ fn settings_do_not_paint_covered_mobile_layers() {
     now.set(Duration::from_millis(250));
     slint::platform::update_timers_and_animations();
     draw(&mut pixels);
-    assert_eq!(host.0.get(), 0, "usage is not sampled with Settings closed");
+    assert_eq!(host.0.get(), 0, "battery optimization is not checked with Settings closed");
 
     store.set_settings_open(true);
     assert_ne!(draw(&mut pixels), PhysicalSize::default());
     assert_eq!(
         host.0.get(),
         1,
-        "only the mobile settings panel samples usage"
+        "only the mobile settings panel checks battery optimization"
     );
     assert_eq!(draw(&mut pixels), PhysicalSize::default());
 
@@ -84,13 +99,13 @@ fn settings_do_not_paint_covered_mobile_layers() {
     assert_eq!(
         host.0.get(),
         1,
-        "painting and scrolling do not sample usage"
+        "painting and scrolling do not check battery optimization"
     );
 
     now.set(Duration::from_millis(2250));
     slint::platform::update_timers_and_animations();
     draw(&mut pixels);
-    assert_eq!(host.0.get(), 2, "usage refreshes once every two seconds");
+    assert_eq!(host.0.get(), 2, "battery optimization refreshes once every two seconds");
 
     main.global::<Theme>()
         .set_backdrop_top(slint::Color::from_rgb_u8(255, 0, 255));
@@ -123,7 +138,19 @@ fn settings_do_not_paint_covered_mobile_layers() {
     now.set(Duration::from_millis(4250));
     slint::platform::update_timers_and_animations();
     draw(&mut pixels);
-    assert_eq!(host.0.get(), 2, "closing Settings stops its usage timer");
+    assert_eq!(host.0.get(), 2, "closing Settings stops its background timer");
+    main.global::<Actions>().invoke_quick_add("Undo expiry".into());
+    app.save_now();
+    let id = patch_core::Doc::load_or_new(&dir.join("doc.json")).tasks().iter()
+        .find(|t| t.title == "Undo expiry").unwrap().id.clone();
+    main.global::<Actions>().invoke_delete_task(id.clone().into());
+    assert_eq!(store.get_toast_action(), "Undo");
+    now.set(Duration::from_millis(9251));
+    slint::platform::update_timers_and_animations();
+    assert_eq!(store.get_toast_action(), "");
+    main.global::<Actions>().invoke_undo_delete();
+    app.save_now();
+    assert!(patch_core::Doc::load_or_new(&dir.join("doc.json")).task(&id).is_none());
     drop(main);
     drop(app);
     std::fs::remove_dir_all(dir).unwrap();

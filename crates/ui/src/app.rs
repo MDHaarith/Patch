@@ -207,7 +207,8 @@ pub struct App {
     focus_timer: Timer,
     grain: slint::Image,
     icon: slint::Image,
-    usage: RefCell<crate::usage::Usage>,
+    undo_task: RefCell<Option<String>>,
+    offline_since: Cell<Option<std::time::Instant>>,
 }
 
 /// A pairing QR code, one pixel per module; the UI scales it up pixelated.
@@ -233,7 +234,20 @@ fn qr_image(text: &str) -> slint::Image {
 fn show_hosted(s: &Store, h: &HostedHub) {
     s.set_host_urls(h.urls.join("\n").into());
     s.set_host_token(h.token.clone().into());
-    s.set_host_qr(h.urls.first().map(|u| qr_image(&SyncConfig::pair_link(u, &h.token))).unwrap_or_default());
+    s.set_host_qr(hosted_pair_url(&h.urls).map(|u| qr_image(&SyncConfig::pair_link(u, &h.token))).unwrap_or_default());
+}
+
+fn hosted_pair_url(urls: &[String]) -> Option<&str> {
+    urls.iter().find(|u| {
+        patch_sync::http::Base::parse(u).is_ok_and(|b| b.host.parse::<std::net::IpAddr>().is_ok())
+    }).or_else(|| urls.first()).map(String::as_str)
+}
+
+fn client_pairing(url: &str, token: &str) -> Option<SyncConfig> {
+    SyncConfig::new(url, token).ok().filter(|c| {
+        !c.base.host.eq_ignore_ascii_case("localhost")
+            && !c.base.host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
+    })
 }
 
 fn grain_image() -> slint::Image {
@@ -327,7 +341,8 @@ impl App {
             focus_timer: Timer::default(),
             grain: grain_image(),
             icon: icon_image(),
-            usage: RefCell::default(),
+            undo_task: RefCell::default(),
+            offline_since: Cell::new(None),
             host,
         });
         CURRENT.with(|c| *c.borrow_mut() = Rc::downgrade(&app));
@@ -481,7 +496,8 @@ impl App {
 
     fn apply_prefs_to(&self, s: &Store, theme: &Theme) {
         let p = self.prefs.borrow();
-        themes::apply(theme, p.look);
+        themes::apply(theme, p.look, p.glass_opacity);
+        s.set_glass_opacity(p.glass_opacity);
         s.set_theme(p.look);
         s.set_pet_skin(p.pet_skin);
         s.set_pet_image(crate::pet::image(
@@ -634,7 +650,14 @@ impl App {
         on!(on_quick_add, |app, text| app.quick_add(&text, None, false));
         on!(on_quick_add_today, |app, text| app.quick_add(&text, None, true));
         on!(on_quick_add_card, |app, col, text| app.quick_add(&text, Some(col.to_string()), false));
-        on!(on_delete_task, |app, id| app.edit(|d| d.delete_task(&id)));
+        on!(on_delete_task, |app, id| app.delete_task(&id));
+        on!(on_undo_delete, |app| {
+            let id = app.undo_task.borrow_mut().take();
+            if let Some(id) = id {
+                app.edit(|d| d.restore_task(&id));
+                app.toast("Task restored");
+            }
+        });
         on!(on_drop_on_date, |app, id, key| app.drop_on_date(&id, &key));
         on!(on_move_block, |app, id, days, minutes| app.move_block(&id, days, minutes));
         on!(on_resize_block, |app, id, minutes| app.resize_block(&id, minutes));
@@ -782,8 +805,7 @@ impl App {
             let id = app.state.borrow().editor.as_ref().map(|e| (e.task.id.clone(), e.is_new));
             if let Some((id, is_new)) = id {
                 if !is_new {
-                    app.edit(|d| d.delete_task(&id));
-                    app.toast("Task deleted");
+                    app.delete_task(&id);
                 }
             }
             app.close_editor(false);
@@ -815,11 +837,20 @@ impl App {
             app.refresh();
         });
         on!(on_set_look, |app, look| {
+            let look = if (0..4).contains(&look) { look } else { 0 };
             app.prefs.borrow_mut().look = look;
             app.save_prefs();
-            app.each_theme(|t| themes::apply(t, look));
+            app.each_theme(|t| themes::apply(t, look, app.prefs.borrow().glass_opacity));
             app.each_store(|s| s.set_theme(look));
             app.refresh();
+        });
+        on!(on_set_glass_opacity, |app, value| {
+            let value = crate::prefs::glass_opacity(value);
+            app.prefs.borrow_mut().glass_opacity = value;
+            app.save_prefs();
+            let look = app.prefs.borrow().look;
+            app.each_theme(|t| themes::apply(t, look, value));
+            app.each_store(|s| s.set_glass_opacity(value));
         });
         on!(on_set_pet_skin, |app, i| {
             app.prefs.borrow_mut().pet_skin = i;
@@ -842,17 +873,13 @@ impl App {
         on!(on_connect_hub, |app, url, token| app.connect_hub(&url, &token));
         on!(on_scan_pair, |app| app.host.scan_qr());
         on!(on_check_update, |app| app.host.check_update());
-        on!(on_refresh_usage, |app| {
-            let usage = app.usage.borrow_mut().sample().unwrap_or_else(|| "Not available on this system".into());
-            let battery_usage = app.usage.borrow_mut().battery(app.host.as_ref()).unwrap_or_default();
+        on!(on_refresh_background, |app| {
             let battery = match app.host.battery_unrestricted() {
                 None => 0,
                 Some(false) => 1,
                 Some(true) => 2,
             };
             app.each_store(|s| {
-                s.set_usage(usage.clone().into());
-                s.set_battery_usage(battery_usage.clone().into());
                 s.set_battery_state(battery);
             });
         });
@@ -938,12 +965,36 @@ impl App {
         self.refresh();
     }
 
+    fn delete_task(&self, id: &str) {
+        self.edit(|d| d.delete_task(id));
+        self.toast("Task deleted");
+        *self.undo_task.borrow_mut() = Some(id.into());
+        self.each_store(|s| s.set_toast_action("Undo".into()));
+    }
+
+    pub fn complete_task(&self, id: &str) {
+        self.edit(|d| d.set_done(id, true));
+        self.save_if_dirty();
+    }
+
+    /// Called on the UI thread by desktop notification actions.
+    pub fn complete_current_task(id: &str) {
+        CURRENT.with(|c| {
+            if let Some(app) = c.borrow().upgrade() {
+                app.complete_task(id);
+            }
+        });
+    }
+
     fn toast(&self, text: &str) {
+        self.undo_task.borrow_mut().take();
+        self.each_store(|s| s.set_toast_action("".into()));
         self.each_store(|s| s.set_toast(text.into()));
         let weak = CURRENT.with(|c| c.borrow().clone());
-        self.toast_timer.start(TimerMode::SingleShot, StdDuration::from_millis(2400), move || {
+        self.toast_timer.start(TimerMode::SingleShot, StdDuration::from_secs(5), move || {
             if let Some(app) = weak.upgrade() {
-                app.each_store(|s| s.set_toast("".into()));
+                app.undo_task.borrow_mut().take();
+                app.each_store(|s| { s.set_toast("".into()); s.set_toast_action("".into()); });
             }
         });
     }
@@ -1186,8 +1237,17 @@ impl App {
     fn on_sync(&self, ev: SyncEvent) {
         match ev {
             SyncEvent::Status(s) => {
+                if matches!(s, SyncStatus::Offline(_) | SyncStatus::ClockAhead | SyncStatus::Unauthorized) {
+                    if self.offline_since.get().is_none() {
+                        self.offline_since.set(Some(std::time::Instant::now()));
+                    }
+                } else if !matches!(s, SyncStatus::Syncing) {
+                    // Retrying is not recovery; only a successful sync clears trouble.
+                    self.offline_since.set(None);
+                }
                 *self.status.borrow_mut() = s;
                 self.each_store(|st| self.apply_status_to(st));
+                self.refresh();
             }
             SyncEvent::RemoteApplied => {
                 self.refresh();
@@ -1213,6 +1273,14 @@ impl App {
             SyncStatus::Offline(e) => (3, format!("Offline — {e}")),
             SyncStatus::Unauthorized => (4, "The hub rejected the pairing token".to_string()),
         };
+        let p = self.prefs.borrow();
+        let pair = if self.host.can_host_hub() && self.hosted.borrow().is_none() {
+            client_pairing(&p.hub_url, &p.hub_token)
+        } else {
+            None
+        };
+        s.set_client_pairing(pair.is_some());
+        s.set_client_qr(pair.map(|c| qr_image(&SyncConfig::pair_link(&c.base.url(), &c.token))).unwrap_or_default());
         s.set_sync_state(state);
         s.set_sync_label(label.into());
     }
@@ -1234,7 +1302,7 @@ impl App {
                 false
             }
         };
-        if rolled {
+        if rolled || self.offline_since.get().is_some() {
             self.refresh();
         } else {
             self.refresh_clock();
@@ -1307,7 +1375,7 @@ impl App {
         }
         let ctx = self.ctx();
         for (key, t, start) in &fired {
-            self.host.notify(&t.title, &ctx.when(t, *start));
+            self.host.notify_reminder(&t.id, &t.title, &ctx.when(t, *start));
             self.prefs.borrow_mut().notified.push(key.clone());
         }
         let mut p = self.prefs.borrow_mut();
@@ -1663,6 +1731,9 @@ impl App {
 
     /// The pet's mood and one-line status.
     fn pet(&self, ctx: &Ctx, open_today: usize) -> (i32, String) {
+        if crate::pet::sync_worried(self.sync.config().is_some(), self.offline_since.get().map(|t| t.elapsed())) {
+            return (2, "Can't reach your sync hub".into());
+        }
         let overdue = ctx.tasks.iter().filter(|t| !ctx.hidden.contains(&t.list) && t.is_overdue(ctx.now)).count();
         let hour = ctx.now.hour();
         if overdue > 0 {
@@ -1843,4 +1914,23 @@ fn checklist_rows(items: &[CheckItem]) -> Vec<CheckRow> {
         .iter()
         .map(|c| CheckRow { id: c.id.clone().into(), text: c.text.clone().into(), done: c.done })
         .collect()
+}
+
+#[cfg(test)]
+mod pairing_tests {
+    use super::*;
+
+    #[test]
+    fn qr_urls_are_reachable_from_another_device() {
+        let urls = vec!["http://laptop:4747".into(), "http://100.64.0.2:4747".into()];
+        assert_eq!(hosted_pair_url(&urls), Some("http://100.64.0.2:4747"));
+        assert_eq!(hosted_pair_url(&urls[..1]), Some("http://laptop:4747"));
+        assert_eq!(hosted_pair_url(&[]), None);
+        for url in ["127.0.0.1", "127.0.0.2", "localhost", "http://LOCALHOST:4747", "http://[::1]:4747"] {
+            assert!(client_pairing(url, "token").is_none(), "{url}");
+        }
+        assert!(client_pairing("http://100.64.0.2:4747", "token").is_some());
+        assert!(client_pairing("laptop", "token").is_some());
+        assert!(client_pairing("laptop", "").is_none());
+    }
 }

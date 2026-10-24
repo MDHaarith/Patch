@@ -196,14 +196,13 @@ export global Store {
     in-out property <string> host-urls;
     in-out property <string> host-token;
     in-out property <image> host-qr;
+    in-out property <bool> client-pairing;
+    in-out property <image> client-qr;
     // Android: scan a hub's pairing QR code with the camera.
     in-out property <bool> can-scan: false;
     in-out property <bool> can-update: false;
 
-    // Settings → Usage: Patch's CPU/memory, device battery readings, and whether
-    // battery optimization is 0 n/a, 1 restricting Patch, 2 off for Patch.
-    in-out property <string> usage;
-    in-out property <string> battery-usage;
+    // Battery optimization: 0 n/a, 1 restricted, 2 unrestricted.
     in-out property <int> battery-state: 0;
 
     // Preferences
@@ -219,6 +218,7 @@ export global Store {
     // Themes and list colours
     in-out property <[ThemeCard]> themes;
     in-out property <int> theme: 0;
+    in-out property <float> glass-opacity: 0.85;
     in-out property <[color]> palette;
 
     // Custom repeat / alert presets (Settings)
@@ -239,6 +239,7 @@ export global Store {
     in-out property <bool> settings-open: false;
     in-out property <bool> search-open: false;
     in-out property <string> toast;
+    in-out property <string> toast-action;
 
     // Overlay panel
     in-out property <bool> overlay-expanded: true;
@@ -326,6 +327,7 @@ export global Actions {
 
     // Settings
     callback set-look(int);
+    callback set-glass-opacity(float);
     callback set-pet-skin(int);
     callback set-week-monday(bool);
     callback set-time-24h(bool);
@@ -333,7 +335,8 @@ export global Actions {
     callback disconnect-hub();
     callback scan-pair();
     callback check-update();
-    callback refresh-usage();
+    callback refresh-background();
+    callback undo-delete();
     callback battery-unrestrict();
     callback battery-settings();
     callback set-hosting(bool);

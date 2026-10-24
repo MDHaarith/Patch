@@ -87,14 +87,15 @@ pub fn tailscale_dns_name() -> Option<String> {
 /// first, then the LAN address when the hub answers LAN peers.
 pub fn hub_urls(port: u16, lan: bool) -> Vec<String> {
     let mut urls = Vec::new();
+    // IP first: the pairing QR uses the first URL, and MagicDNS names don't resolve everywhere.
+    if let Some(ip) = tailscale_ipv4() {
+        urls.push(format!("http://{ip}:{port}"));
+    }
     if let Some(name) = tailscale_dns_name() {
         if let Some(short) = name.split('.').next() {
             urls.push(format!("http://{short}:{port}"));
         }
         urls.push(format!("http://{name}:{port}"));
-    }
-    if let Some(ip) = tailscale_ipv4() {
-        urls.push(format!("http://{ip}:{port}"));
     }
     if let Some(ip) = lan_ipv4().filter(|_| lan) {
         urls.push(format!("http://{ip}:{port}"));

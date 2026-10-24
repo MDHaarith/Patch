@@ -84,9 +84,7 @@ impl Bridge for Recorder {
         false
     }
     fn request_battery_unrestricted(&self) {}
-    fn battery_usage(&self) -> Option<String> {
-        Some("Device battery: 76% · draining 120 mA".into())
-    }
+
     fn open_battery_settings(&self) {
         self.battery_settings.set(self.battery_settings.get() + 1);
     }
@@ -329,8 +327,8 @@ fn renders_and_drives_both_windows() {
     assert!(mw.global::<Store>().get_can_update(), "Android supports updates");
     mw.global::<Actions>().invoke_check_update();
     assert_eq!(h.rec.updates.get(), 1, "update action reaches the host");
-    mw.global::<Actions>().invoke_refresh_usage();
-    assert_eq!(mw.global::<Store>().get_battery_usage(), "Device battery: 76% · draining 120 mA");
+    mw.global::<Actions>().invoke_refresh_background();
+    assert_eq!(mw.global::<Store>().get_battery_state(), 1);
     mw.global::<Actions>().invoke_battery_settings();
     assert_eq!(h.rec.battery_settings.get(), 1, "battery settings action reaches the bridge");
     assert_eq!(
@@ -763,6 +761,17 @@ fn renders_and_drives_both_windows() {
         pixels(main_store.get_pet_image()),
         "destroying the overlay clears play and its recovery timer"
     );
+
+    // Notification completion uses the same message path without an attached activity.
+    h.send(Msg::ViewGone(Kind::Main));
+    h.rt.app().save_now();
+    let before = Doc::load_or_new(&h.dir.join("doc.json"));
+    let id = before.tasks().iter().find(|t| !t.done && t.repeat == patch_core::Repeat::None).unwrap().id.clone();
+    let (done, saved) = std::sync::mpsc::sync_channel(1);
+    h.send(Msg::CompleteTask(id.clone(), Some(done)));
+    h.settle();
+    assert_eq!(saved.try_recv(), Ok(()));
+    assert!(Doc::load_or_new(&h.dir.join("doc.json")).task(&id).unwrap().done);
 
     let _ = std::fs::remove_dir_all(&h.dir);
 }

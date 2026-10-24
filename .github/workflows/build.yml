@@ -43,8 +43,11 @@ jobs:
       - name: System libraries
         timeout-minutes: 5
         run: bash .github/scripts/install-system-deps.sh pkg-config libfontconfig1-dev libxkbcommon-dev libwayland-dev libdbus-1-dev libxkbcommon-x11-0 libegl1
-      - run: cargo clippy -p patch-core -p patch-sync -p patch-ui -p patch-linux --all-targets -- -D warnings
-      - run: cargo test -p patch-core -p patch-sync -p patch-ui -p patch-linux
+      # Checks run on the PR; the push to main after merge only builds and releases.
+      - if: ${{ github.event_name == 'pull_request' }}
+        run: cargo clippy -p patch-core -p patch-sync -p patch-ui -p patch-linux --all-targets -- -D warnings
+      - if: ${{ github.event_name == 'pull_request' }}
+        run: cargo test -p patch-core -p patch-sync -p patch-ui -p patch-linux
       - name: Render screenshots
         run: cargo run -p patch-ui --example shots -- screenshots
       - uses: actions/upload-artifact@v4
@@ -109,9 +112,11 @@ jobs:
       - run: cargo install cargo-ndk --locked
       # The host-side tests build Slint for Linux, which links fontconfig.
       - name: System libraries
+        if: ${{ github.event_name == 'pull_request' }}
         timeout-minutes: 5
         run: bash .github/scripts/install-system-deps.sh pkg-config libfontconfig1-dev
       - name: Host tests (JNI contract, runtime)
+        if: ${{ github.event_name == 'pull_request' }}
         run: cargo test -p patch-android
       # Releases must always be signed with the same key, or Android refuses
       # to install them as updates. Add the four repository secrets once; tag
@@ -135,7 +140,7 @@ jobs:
           fi
       - name: Build APKs and lint
         working-directory: android
-        run: ./gradlew --no-daemon assembleDebug assembleRelease lintDebug
+        run: ./gradlew --no-daemon assembleRelease ${{ github.event_name == 'pull_request' && 'assembleDebug lintDebug' || '' }}
       - uses: actions/upload-artifact@v4
         with:
           name: android-apk
