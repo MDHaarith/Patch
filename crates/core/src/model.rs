@@ -181,17 +181,27 @@ impl Task {
             all_day: r.bool("allDay"),
             reminder: r.i64("reminder"),
             repeat: Repeat::parse(r.str("repeat").unwrap_or("none")),
-            checklist: r
-                .get("checklist")
-                .and_then(|v| serde_json::from_value(v.clone()).ok())
-                .unwrap_or_default(),
+            checklist: if r.f.keys().any(|key| key.starts_with("checklist.")) {
+                let mut items: Vec<_> = r.f.iter().filter_map(|(key, field)| {
+                    let id = key.strip_prefix("checklist.")?;
+                    Some((field.v.get("order").and_then(Value::as_u64).unwrap_or(0), CheckItem {
+                        id: id.to_string(),
+                        text: field.v.get("text")?.as_str()?.to_string(),
+                        done: field.v.get("done").and_then(Value::as_bool).unwrap_or(false),
+                    }))
+                }).collect();
+                items.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.id.cmp(&b.1.id)));
+                items.into_iter().map(|(_, item)| item).collect()
+            } else {
+                r.get("checklist").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default()
+            },
             order: r.f64("order").unwrap_or(0.0),
             created: r.i64("created").unwrap_or(0),
         })
     }
 
-    pub fn fields(&self) -> Vec<(&'static str, Value)> {
-        vec![
+    pub fn fields(&self) -> Vec<(String, Value)> {
+        let mut fields: Vec<(String, Value)> = vec![
             ("title", json!(self.title)),
             ("notes", json!(self.notes)),
             ("list", json!(self.list)),
@@ -207,7 +217,11 @@ impl Task {
             ("checklist", serde_json::to_value(&self.checklist).unwrap_or(Value::Null)),
             ("order", json!(self.order)),
             ("created", json!(self.created)),
-        ]
+        ].into_iter().map(|(key, value)| (key.to_string(), value)).collect();
+        fields.extend(self.checklist.iter().enumerate().map(|(order, item)| (
+            format!("checklist.{}", item.id), json!({"text": item.text, "done": item.done, "order": order})
+        )));
+        fields
     }
 
     /// Exclusive end of the first occurrence.

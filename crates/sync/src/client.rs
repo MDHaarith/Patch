@@ -68,6 +68,7 @@ pub enum SyncStatus {
     Synced(u64),
     Offline(String),
     Unauthorized,
+    ClockAhead,
 }
 
 impl SyncStatus {
@@ -79,6 +80,7 @@ impl SyncStatus {
             SyncStatus::Synced(_) => "Synced".into(),
             SyncStatus::Offline(e) => format!("Offline — {e}"),
             SyncStatus::Unauthorized => "Wrong pairing token".into(),
+            SyncStatus::ClockAhead => "This device's clock is ahead of the hub; fix the date and time to sync".into(),
         }
     }
 }
@@ -145,7 +147,7 @@ fn sync_once(shared: &Shared, cfg: &SyncConfig) -> Result<Outcome, HttpError> {
         return Ok(Outcome::HubChanged);
     }
     d.ack(&pending);
-    d.last_seq = d.last_seq.max(resp.seq);
+    d.advance_seq(resp.seq);
     Ok(Outcome::Done { applied, more: d.has_pending() })
 }
 
@@ -225,6 +227,10 @@ impl SyncClient {
                                 shared.set_status(SyncStatus::Unauthorized);
                                 wait = Duration::from_secs(30);
                             }
+                            Err(HttpError::Status(409, _)) => {
+                                shared.set_status(SyncStatus::ClockAhead);
+                                wait = Duration::from_secs(60);
+                            }
                             Err(e) => {
                                 shared.set_status(SyncStatus::Offline(e.to_string()));
                                 wait = backoff;
@@ -254,7 +260,7 @@ impl SyncClient {
                             let d = shared.doc.lock().unwrap();
                             (d.last_seq, d.hub_id.clone())
                         };
-                        if hub.is_none() {
+                        if hub.is_none() || *shared.status.lock().unwrap() == SyncStatus::ClockAhead {
                             // Wait for the worker's first sync.
                             thread::sleep(Duration::from_millis(500));
                             continue;

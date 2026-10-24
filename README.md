@@ -33,7 +33,7 @@ floats *over other apps* when you want it to.
   - your own repeat intervals ("every 2 weeks") and alert timings ("3 hours before"), added once in Settings → *Repeat & alerts*
   - the date-range picker from the design reference: tap a start, tap an end, set times, then Reset or ✓
 - **Natural-language quick add**: `Dentist tomorrow 3pm #work !!!`, `Conference 13-15 nov`, `Standup every weekday 9:30`, `Gym tmrw 7am for 1h30m`, `Call back in 2 hours`.
-- **Ten themes**, each with a live preview in Settings.
+- **Eleven themes**, each with a live preview in Settings.
 - **Lists with your colours**: open a list's ⋯ menu to recolour, rename or delete it.
 - **Patch the pet**: a pixel-art buddy that bobs, blinks and reacts to your day. It is happy when you're clear, busy when you have work, worried about overdue tasks, and asleep at night.
 - **Always on**:

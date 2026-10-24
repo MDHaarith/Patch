@@ -2,7 +2,8 @@
 
 use crate::net;
 use crate::proto::{HubInfo, SyncRequest, SyncResponse, WaitResponse};
-use patch_core::doc::write_atomic;
+use patch_core::doc::{preserve_corrupt, write_atomic};
+use patch_core::hlc::{now_ms, MAX_FUTURE_SKEW_MS};
 use patch_core::id::{pairing_token, random_string};
 use patch_core::Record;
 use serde::{Deserialize, Serialize};
@@ -93,6 +94,16 @@ fn load_token(cfg: &HubConfig) -> io::Result<String> {
     Ok(token)
 }
 
+fn save_state(path: &std::path::Path, bytes: &[u8]) -> io::Result<()> {
+    write_atomic(path, bytes)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
+}
+
 fn json_response(status: u16, body: String) -> Response<io::Cursor<Vec<u8>>> {
     Response::from_string(body)
         .with_status_code(status)
@@ -120,10 +131,18 @@ impl Hub {
         std::fs::create_dir_all(&cfg.data_dir)?;
         let token = load_token(&cfg)?;
         let file = cfg.data_dir.join("hub.json");
-        let state = std::fs::read_to_string(&file)
-            .ok()
-            .and_then(|s| serde_json::from_str::<State>(&s).ok())
-            .unwrap_or_else(|| State { hub: format!("hub-{}", random_string(10)), seq: 0, records: BTreeMap::new() });
+        let state = match std::fs::read(&file) {
+            Ok(bytes) => match serde_json::from_slice::<State>(&bytes) {
+                Ok(state) => Some(state),
+                Err(_) => {
+                    preserve_corrupt(&file)?;
+                    None
+                }
+            },
+            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e),
+        }
+        .unwrap_or_else(|| State { hub: format!("hub-{}", random_string(10)), seq: 0, records: BTreeMap::new() });
         let server = Server::http(&cfg.bind).map_err(|e| io::Error::new(io::ErrorKind::AddrInUse, e.to_string()))?;
         let port = server.server_addr().to_ip().map(|a| a.port()).unwrap_or(crate::DEFAULT_PORT);
         let server = Arc::new(server);
@@ -139,9 +158,9 @@ impl Hub {
         });
         {
             // Persist a freshly generated hub id right away so it is stable.
-            let st = shared.state.lock().unwrap();
+            let st = shared.state.lock().unwrap_or_else(|e| e.into_inner());
             if !shared.file.exists() {
-                let _ = write_atomic(&shared.file, serde_json::to_string(&*st).unwrap_or_default().as_bytes());
+                let _ = save_state(&shared.file, serde_json::to_string(&*st).unwrap_or_default().as_bytes());
             }
         }
         let thread = {
@@ -168,7 +187,7 @@ impl Hub {
     }
 
     pub fn hub_id(&self) -> String {
-        self.shared.state.lock().map(|s| s.hub.clone()).unwrap_or_default()
+        self.shared.state.lock().unwrap_or_else(|e| e.into_inner()).hub.clone()
     }
 
     /// URLs other devices can use to pair with this hub.
@@ -206,7 +225,7 @@ fn handle(shared: &Shared, mut req: Request) {
     let path = url.split('?').next().unwrap_or("").to_string();
 
     if path == "/api/ping" {
-        let hub = shared.state.lock().map(|s| s.hub.clone()).unwrap_or_default();
+        let hub = shared.state.lock().unwrap_or_else(|e| e.into_inner()).hub.clone();
         let _ = req.respond(json_response(200, serde_json::json!({ "ok": true, "hub": hub, "name": shared.name }).to_string()));
         return;
     }
@@ -216,7 +235,7 @@ fn handle(shared: &Shared, mut req: Request) {
         .iter()
         .find(|h| h.field.equiv("Authorization"))
         .map(|h| h.value.as_str().trim().trim_start_matches("Bearer").trim().to_string());
-    let token = header_token.or_else(|| query_param(&url, "token").map(str::to_string)).unwrap_or_default();
+    let token = header_token.unwrap_or_default();
     if !constant_time_eq(token.as_bytes(), shared.token.as_bytes()) {
         let _ = req.respond(error(401, "Wrong pairing token"));
         return;
@@ -227,7 +246,10 @@ fn handle(shared: &Shared, mut req: Request) {
             let mut body = Vec::new();
             match req.as_reader().take(MAX_BODY).read_to_end(&mut body) {
                 Ok(_) => match serde_json::from_slice::<SyncRequest>(&body) {
-                    Ok(sync) => json_response(200, serde_json::to_string(&apply(shared, sync)).unwrap_or_default()),
+                    Ok(sync) => match apply(shared, sync) {
+                        Ok(response) => json_response(200, serde_json::to_string(&response).unwrap_or_default()),
+                        Err((code, message)) => error(code, &message),
+                    },
                     Err(e) => error(400, &format!("bad sync request: {e}")),
                 },
                 Err(e) => error(400, &e.to_string()),
@@ -238,7 +260,7 @@ fn handle(shared: &Shared, mut req: Request) {
             json_response(200, serde_json::to_string(&wait(shared, since)).unwrap_or_default())
         }
         (Method::Get, "/api/info") => {
-            let st = shared.state.lock().unwrap();
+            let st = shared.state.lock().unwrap_or_else(|e| e.into_inner());
             let info = HubInfo {
                 hub: st.hub.clone(),
                 name: shared.name.clone(),
@@ -254,9 +276,15 @@ fn handle(shared: &Shared, mut req: Request) {
     let _ = req.respond(response);
 }
 
-fn apply(shared: &Shared, sync: SyncRequest) -> SyncResponse {
-    let mut st = shared.state.lock().unwrap();
+fn apply(shared: &Shared, sync: SyncRequest) -> Result<SyncResponse, (u16, String)> {
+    let mut st = shared.state.lock().unwrap_or_else(|e| e.into_inner());
     let mut changed = false;
+    let max_wall = now_ms().saturating_add(MAX_FUTURE_SKEW_MS);
+    if sync.changes.iter().any(|rec| rec.f.values().any(|field| {
+        field.t.parts().is_some_and(|(wall, _)| wall > max_wall)
+    })) {
+        return Err((409, "This device's clock is ahead of the hub; fix the date and time to sync".into()));
+    }
     for rec in sync.changes {
         let next = st.seq + 1;
         match st.records.get_mut(&rec.id) {
@@ -274,30 +302,81 @@ fn apply(shared: &Shared, sync: SyncRequest) -> SyncResponse {
             }
         }
     }
+    // Retry persistence even when a previous failed save already merged these records.
+    save_state(&shared.file, serde_json::to_vec(&*st).map_err(|e| (500, e.to_string()))?.as_slice())
+        .map_err(|e| (500, format!("Failed to save hub state: {e}")))?;
     if changed {
-        if let Err(e) = write_atomic(&shared.file, serde_json::to_string(&*st).unwrap_or_default().as_bytes()) {
-            eprintln!("patch-hub: failed to save {}: {e}", shared.file.display());
-        }
         shared.changed.notify_all();
     }
     let since = if sync.since > st.seq { 0 } else { sync.since };
-    SyncResponse {
+    Ok(SyncResponse {
         hub: st.hub.clone(),
         seq: st.seq,
         changes: st.records.values().filter(|s| s.seq > since).map(|s| s.rec.clone()).collect(),
-    }
+    })
 }
 
 /// Long poll: returns as soon as the hub has something newer than `since`.
 fn wait(shared: &Shared, since: u64) -> WaitResponse {
     let deadline = Instant::now() + MAX_WAIT;
-    let mut st = shared.state.lock().unwrap();
+    let mut st = shared.state.lock().unwrap_or_else(|e| e.into_inner());
     while st.seq <= since && !shared.stopping.load(Ordering::SeqCst) {
         let now = Instant::now();
         if now >= deadline {
             break;
         }
-        st = shared.changed.wait_timeout(st, deadline - now).unwrap().0;
+        st = shared.changed.wait_timeout(st, deadline - now).unwrap_or_else(|e| e.into_inner()).0;
     }
     WaitResponse { hub: st.hub.clone(), seq: st.seq }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use patch_core::Stamp;
+    use serde_json::json;
+
+    #[test]
+    fn failed_save_is_not_acknowledged_even_on_retry() {
+        let dir = std::env::temp_dir().join(format!("patch-hub-save-{}", random_string(10)));
+        let mut cfg = HubConfig::new(&dir);
+        cfg.bind = "127.0.0.1:0".into();
+        let hub = Hub::start(cfg).unwrap();
+        // A directory at the state file path deterministically prevents atomic replacement.
+        std::fs::remove_file(&hub.shared.file).unwrap();
+        std::fs::create_dir(&hub.shared.file).unwrap();
+        let mut rec = Record::new("task", "task");
+        rec.put("title", json!("saved later"), &Stamp::seed());
+        for _ in 0..2 {
+            let result = apply(&hub.shared, SyncRequest { since: 0, changes: vec![rec.clone()], node: None });
+            assert_eq!(result.unwrap_err().0, 500);
+        }
+        std::fs::remove_dir(&hub.shared.file).unwrap();
+        assert!(apply(&hub.shared, SyncRequest { since: 0, changes: vec![rec], node: None }).is_ok());
+        hub.stop();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn future_fields_are_rejected_before_insert_and_merge() {
+        let dir = std::env::temp_dir().join(format!("patch-hub-skew-{}", random_string(10)));
+        let mut cfg = HubConfig::new(&dir);
+        cfg.bind = "127.0.0.1:0".into();
+        let hub = Hub::start(cfg).unwrap();
+        let mut rec = Record::new("task", "task");
+        let future = Stamp::new(now_ms() + MAX_FUTURE_SKEW_MS + 60_000, 0, "remote");
+        rec.put("title", json!("future"), &future);
+        let send = |rec| apply(&hub.shared, SyncRequest { since: 0, changes: vec![rec], node: None });
+        assert_eq!(send(rec.clone()).unwrap_err().0, 409);
+        rec.put("notes", json!("seed"), &Stamp::seed());
+        assert_eq!(send(rec.clone()).unwrap_err().0, 409);
+        assert!(hub.shared.state.lock().unwrap().records.is_empty());
+        rec.f.remove("title");
+        assert_eq!(send(rec.clone()).unwrap().changes[0].str("notes"), Some("seed"));
+        rec.put("notes", json!("poison"), &future);
+        assert_eq!(send(rec).unwrap_err().0, 409);
+        assert_eq!(hub.shared.state.lock().unwrap().records["task"].rec.str("notes"), Some("seed"));
+        hub.stop();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
