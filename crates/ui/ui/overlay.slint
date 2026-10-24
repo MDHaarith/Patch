@@ -27,7 +27,8 @@ export component OverlayPanel inherits Rectangle {
         width: parent.width;
         height: parent.height;
         radius: root.radius;
-        fill: Theme.float;
+        // No blur in the software renderer: over other apps a see-through panel is unreadable.
+        fill: Store.mobile ? Theme.float.with-alpha(1) : Theme.float;
         elevated: false;
         VerticalLayout {
             padding: 12px;
@@ -370,7 +371,7 @@ export component OverlayWindow inherits Window {
             viewbox-width: 22;
             viewbox-height: 10;
             commands: mobile.opens-below ? "M 0 10 L 11 0 L 22 10 Z" : "M 0 0 L 11 10 L 22 0 Z";
-            fill: Theme.float;
+            fill: Theme.float.with-alpha(1);
         }
         // Taps on the panel's own padding must not close it.
         TouchArea {

@@ -219,6 +219,7 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
         lp.gravity = Gravity.TOP | Gravity.LEFT;
         lp.setTitle("Patch");
         lp.windowAnimations = 0;
+        disableMoveAnimation(lp);
         if (Build.VERSION.SDK_INT >= 30) {
             // We place and clamp the window ourselves, and move it for the
             // keyboard from the insets.
@@ -235,6 +236,21 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
         } catch (RuntimeException e) {
             Log.w(PatchNative.TAG, "can't add the overlay window", e);
             frame = null;
+        }
+    }
+
+    /** The system slides a moved window from its old spot, so expanding drags the panel in
+     * from the pet's corner and collapsing flings the pet across the screen. */
+    private static void disableMoveAnimation(WindowManager.LayoutParams lp) {
+        if (Build.VERSION.SDK_INT >= 33) {
+            lp.setCanPlayMoveAnimation(false);
+            return;
+        }
+        try {
+            java.lang.reflect.Field f = WindowManager.LayoutParams.class.getField("privateFlags");
+            f.setInt(lp, f.getInt(lp) | 0x40); // PRIVATE_FLAG_NO_MOVE_ANIMATION
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            Log.w(PatchNative.TAG, "can't disable the overlay move animation", e);
         }
     }
 
