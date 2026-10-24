@@ -8,6 +8,8 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+pub const MAX_FUTURE_SKEW_MS: u64 = 24 * 60 * 60 * 1000;
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Stamp(pub String);
@@ -86,7 +88,7 @@ impl Clock {
     /// next local write orders after everything we have seen.
     pub fn observe(&mut self, stamp: &Stamp) {
         if let Some(remote) = stamp.parts() {
-            if remote > (self.wall, self.counter) {
+            if remote.0 <= now_ms().saturating_add(MAX_FUTURE_SKEW_MS) && remote > (self.wall, self.counter) {
                 self.wall = remote.0;
                 self.counter = remote.1;
             }
@@ -107,6 +109,18 @@ mod tests {
         let s4 = c.tick_at(1_000_000_000_000);
         assert!(s1 < s2 && s2 < s3 && s3 < s4);
         assert!(Stamp::seed() < s1);
+    }
+
+    #[test]
+    fn observe_ignores_far_future_stamp() {
+        let mut clock = Clock::new("local");
+        clock.tick_at(100);
+        clock.observe(&Stamp::new(
+            now_ms() + MAX_FUTURE_SKEW_MS + 60_000,
+            0,
+            "remote",
+        ));
+        assert_eq!(clock.state(), (100, 0));
     }
 
     #[test]

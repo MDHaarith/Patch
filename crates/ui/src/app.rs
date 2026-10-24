@@ -413,6 +413,10 @@ impl App {
         let _ = self.prefs.borrow().save(&self.data_dir.join("prefs.json"));
     }
 
+    pub fn sync_now(&self) {
+        self.sync.sync_now();
+    }
+
     /// Flush the document and prefs to disk (call on pause / quit).
     pub fn save_now(&self) {
         self.save_if_dirty();
@@ -1205,6 +1209,7 @@ impl App {
                 };
                 (2, format!("Synced with {target} over Tailscale"))
             }
+            SyncStatus::ClockAhead => (3, status.label()),
             SyncStatus::Offline(e) => (3, format!("Offline — {e}")),
             SyncStatus::Unauthorized => (4, "The hub rejected the pairing token".to_string()),
         };

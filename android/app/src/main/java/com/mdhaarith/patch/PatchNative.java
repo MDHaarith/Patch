@@ -5,6 +5,8 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.net.ConnectivityManager;
+import android.net.Network;
 import android.os.BatteryManager;
 import android.os.Handler;
 import android.os.Looper;
@@ -62,6 +64,23 @@ final class PatchNative {
     private static Context app;
     private static Handler main;
     private static ClipboardManager clipboard;
+    private static ConnectivityManager.NetworkCallback networkCallback;
+
+    private static void watchNetwork() {
+        if (networkCallback != null) return;
+        networkCallback = new ConnectivityManager.NetworkCallback() {
+            @Override public void onAvailable(Network network) {
+                nativeSyncNow();
+            }
+        };
+        app.getSystemService(ConnectivityManager.class).registerDefaultNetworkCallback(networkCallback);
+    }
+
+    private static void unwatchNetwork() {
+        if (networkCallback == null) return;
+        app.getSystemService(ConnectivityManager.class).unregisterNetworkCallback(networkCallback);
+        networkCallback = null;
+    }
     private static final PatchSurfaceView[] views = new PatchSurfaceView[2];
     @SuppressWarnings("unchecked")
     private static final ArrayDeque<Runnable>[] frameWaiters = new ArrayDeque[] {new ArrayDeque<>(), new ArrayDeque<>()};
@@ -82,11 +101,13 @@ final class PatchNative {
 
     static void register(int kind, PatchSurfaceView view) {
         views[kind] = view;
+        watchNetwork();
     }
 
     static void unregister(int kind, PatchSurfaceView view) {
         if (views[kind] == view) {
             views[kind] = null;
+            if (views[MAIN] == null && views[OVERLAY] == null) unwatchNetwork();
         }
     }
 
@@ -361,6 +382,8 @@ final class PatchNative {
 
     /** Saves; blocks briefly. */
     static native void nativePause();
+
+    static native void nativeSyncNow();
 
     static native void nativeOpenTask(String taskId);
 

@@ -107,3 +107,30 @@ fn hub_persists_across_restarts() {
     let _c = SyncClient::start(fresh.clone(), Some(SyncConfig::new(&url, &token).unwrap()), |_| {});
     wait_until("fresh device pulls", || fresh.lock().unwrap().task(&id).is_some());
 }
+
+#[test]
+fn clock_rejection_keeps_pending_edits() {
+    let dir = temp_dir("clock");
+    let mut cfg = HubConfig::new(&dir);
+    cfg.bind = "127.0.0.1:0".into();
+    let hub = Hub::start(cfg).unwrap();
+    let mut d = Doc::with_node("ahead");
+    let mut rec = patch_core::Record::new("future", "task");
+    let stamp = patch_core::Stamp::new(
+        patch_core::hlc::now_ms() + patch_core::hlc::MAX_FUTURE_SKEW_MS + 60_000, 0, "ahead",
+    );
+    rec.put("notes", serde_json::json!("Keep this"), &stamp);
+    d.apply_remote(&[rec]);
+    let mut task = d.task("future").unwrap();
+    task.title = "Pending".into();
+    d.save_task(&task);
+    let doc = Arc::new(Mutex::new(d));
+    let url = format!("http://127.0.0.1:{}", hub.port());
+    let client = SyncClient::start(doc.clone(), Some(SyncConfig::new(&url, hub.token()).unwrap()), |_| {});
+    wait_until("visible clock error", || client.status() == SyncStatus::ClockAhead);
+    assert!(doc.lock().unwrap().has_pending());
+    assert_eq!(doc.lock().unwrap().last_seq, 0);
+    drop(client);
+    hub.stop();
+    std::fs::remove_dir_all(dir).unwrap();
+}

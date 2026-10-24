@@ -350,3 +350,8 @@ pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeScanned(
 ) {
     send(Msg::Scanned(string(&mut env, &text)));
 }
+
+#[no_mangle]
+pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeSyncNow(_: JNIEnv, _: JClass) {
+    send(Msg::SyncNow);
+}

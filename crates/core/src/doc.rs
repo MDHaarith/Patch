@@ -8,7 +8,7 @@ use crate::recur;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::io;
+use std::io::{self, Write};
 use std::path::Path;
 
 pub const COL_TODO: &str = "col-todo";
@@ -120,10 +120,17 @@ impl Doc {
     }
 
     pub fn load_or_new(path: &Path) -> Doc {
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|s| Doc::from_json(&s))
-            .unwrap_or_default()
+        match std::fs::read(path) {
+            Ok(bytes) => {
+                if let Some(doc) = std::str::from_utf8(&bytes).ok().and_then(Doc::from_json) {
+                    return doc;
+                }
+                preserve_corrupt(path).expect("failed to preserve corrupt document");
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => panic!("failed to read {}: {e}", path.display()),
+        }
+        Doc::default()
     }
 
     /// Atomic save: write a temp file and rename it over the old one.
@@ -194,7 +201,15 @@ impl Doc {
             };
             if covered {
                 self.dirty.remove(&rec.id);
+                self.rev += 1;
             }
+        }
+    }
+
+    pub fn advance_seq(&mut self, seq: u64) {
+        if seq > self.last_seq {
+            self.last_seq = seq;
+            self.rev += 1;
         }
     }
 
@@ -206,6 +221,7 @@ impl Doc {
             return false;
         }
         self.hub_id = Some(hub_id.to_string());
+        self.rev += 1;
         self.last_seq = 0;
         let all: Vec<(String, Stamp)> = self
             .records
@@ -287,7 +303,7 @@ impl Doc {
             .fold(0.0, f64::max)
             + 1.0;
         let id = task.id.clone();
-        self.write(&id, KIND_TASK, task.fields());
+        self.write(&id, KIND_TASK, task.fields().iter().map(|(k, v)| (k.as_str(), v.clone())).collect());
         id
     }
 
@@ -306,15 +322,32 @@ impl Doc {
                 if task.done && !old.done && task.done_at.is_none() {
                     task.done_at = Some(now_ms() as i64);
                 }
-                let before = old.fields();
-                let changed: Vec<(&str, Value)> = task
-                    .fields()
-                    .into_iter()
-                    .zip(before)
-                    .filter(|((_, new), (_, old))| new != old)
-                    .map(|(f, _)| f)
-                    .collect();
-                self.write(&task.id.clone(), KIND_TASK, changed);
+                let before: std::collections::BTreeMap<_, _> = old.fields().into_iter().collect();
+                let mut after: std::collections::BTreeMap<_, _> = task.fields().into_iter().collect();
+                let record = &self.records[&task.id];
+                if record.f.keys().any(|key| key.starts_with("checklist.")) {
+                    let mut next_order = record.f.iter()
+                        .filter(|(key, _)| key.starts_with("checklist."))
+                        .filter_map(|(_, field)| field.v.get("order").and_then(Value::as_u64))
+                        .max().map_or(0, |order| order + 1);
+                    // Keep gaps on removal so unchanged items retain their values and stamps.
+                    for item in &task.checklist {
+                        let key = format!("checklist.{}", item.id);
+                        let order = record.get(&key).and_then(|value| value.get("order")).cloned()
+                            .unwrap_or_else(|| {
+                                let order = json!(next_order);
+                                next_order += 1;
+                                order
+                            });
+                        after.get_mut(&key).unwrap()["order"] = order;
+                    }
+                }
+                for key in before.keys().filter(|key| key.starts_with("checklist.")) {
+                    after.entry(key.clone()).or_insert(Value::Null);
+                }
+                let changed = after.iter().filter(|(key, value)| self.records[&task.id].get(key) != Some(*value))
+                    .map(|(key, value)| (key.as_str(), value.clone())).collect();
+                self.write(&task.id, KIND_TASK, changed);
             }
         }
     }
@@ -503,13 +536,29 @@ impl Doc {
     }
 }
 
+pub fn preserve_corrupt(path: &Path) -> io::Result<()> {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(format!(".corrupt-{}", now_ms()));
+    let backup = Path::new(&name);
+    std::fs::rename(path, backup)?;
+    eprintln!("patch: preserved corrupt {} as {}", path.display(), backup.display());
+    Ok(())
+}
+
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path)
+    let mut file = std::fs::File::create(&tmp)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    std::fs::rename(&tmp, path)?;
+    #[cfg(unix)]
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::File::open(dir).and_then(|dir| dir.sync_all());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -517,6 +566,24 @@ mod tests {
     use super::*;
     use crate::model::Repeat;
     use crate::time::parse_dt;
+
+    #[test]
+    fn corrupt_document_is_preserved() {
+        let dir = std::env::temp_dir().join(format!("patch-corrupt-{}", random_string(10)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("doc.json");
+        std::fs::write(&path, b"garbage").unwrap();
+        let doc = Doc::load_or_new(&path);
+        assert_eq!(doc.columns().len(), 3);
+        assert!(!doc.has_pending());
+        assert!(!path.exists());
+        let backup = std::fs::read_dir(&dir).unwrap().next().unwrap().unwrap().path();
+        assert!(backup.file_name().unwrap().to_str().unwrap().starts_with("doc.json.corrupt-"));
+        assert_eq!(std::fs::read(&backup).unwrap(), b"garbage");
+        doc.save(&path).unwrap();
+        assert_eq!(std::fs::read(&backup).unwrap(), b"garbage");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     fn new_task(doc: &mut Doc, title: &str) -> String {
         let mut t = Task::blank("", DEFAULT_LIST, COL_TODO);
@@ -531,6 +598,120 @@ mod tests {
         a.apply_remote(&pb);
         a.ack(&pa);
         b.ack(&pb);
+    }
+
+    #[test]
+    fn checklist_items_merge_and_delete() {
+        use crate::model::CheckItem;
+        let mut a = Doc::with_node("a");
+        let mut task = Task::blank("", DEFAULT_LIST, COL_TODO);
+        task.checklist = vec![
+            CheckItem { id: "one".into(), text: "One".into(), done: false },
+            CheckItem { id: "two".into(), text: "Two".into(), done: false },
+        ];
+        let id = a.add_task(task);
+        let mut b = Doc::with_node("b");
+        sync(&mut a, &mut b);
+        let mut task = a.task(&id).unwrap();
+        task.checklist[0].done = true;
+        a.save_task(&task);
+        let mut task = b.task(&id).unwrap();
+        task.checklist[1].text = "Edited".into();
+        b.save_task(&task);
+        sync(&mut a, &mut b);
+        let mut task = a.task(&id).unwrap();
+        assert_eq!(Some(task.clone()), b.task(&id));
+        assert!(task.checklist[0].done);
+        assert_eq!(task.checklist[1].text, "Edited");
+        task.checklist.remove(0);
+        a.save_task(&task);
+        sync(&mut a, &mut b);
+        assert_eq!(Some(task), b.task(&id));
+        assert_eq!(b.record(&id).unwrap().get("checklist.one"), Some(&Value::Null));
+    }
+
+    #[test]
+    fn checklist_removal_preserves_concurrent_ticks_and_append_order() {
+        use crate::model::CheckItem;
+        for removal_is_newer in [false, true] {
+            let mut a = Doc::with_node("a");
+            let mut task = Task::blank("", DEFAULT_LIST, COL_TODO);
+            task.checklist = ["one", "two", "three"].into_iter().map(|id| CheckItem {
+                id: id.into(), text: id.into(), done: false,
+            }).collect();
+            let id = a.add_task(task);
+            let mut b = Doc::with_node("b");
+            sync(&mut a, &mut b);
+            let before = a.record(&id).unwrap().clone();
+            let mut removed = a.task(&id).unwrap();
+            removed.checklist.remove(0);
+            let mut ticked = b.task(&id).unwrap();
+            ticked.checklist[2].done = true;
+            if removal_is_newer {
+                b.save_task(&ticked);
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                a.save_task(&removed);
+            } else {
+                a.save_task(&removed);
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                b.save_task(&ticked);
+            }
+            let removal_stamp = &a.record(&id).unwrap().f["checklist.one"].t;
+            let tick_stamp = &b.record(&id).unwrap().f["checklist.three"].t;
+            assert_eq!(removal_stamp > tick_stamp, removal_is_newer);
+            assert_ne!(removal_stamp.parts().unwrap().0, tick_stamp.parts().unwrap().0);
+            for key in ["checklist.two", "checklist.three"] {
+                assert_eq!(a.record(&id).unwrap().f[key], before.f[key]);
+            }
+            sync(&mut a, &mut b);
+            removed.checklist[1].done = true;
+            assert_eq!(a.task(&id), Some(removed.clone()));
+            assert_eq!(b.task(&id), Some(removed.clone()));
+
+            // IDs deliberately sort before the survivors; stored order must put new items last.
+            for id in ["aa", "a"] {
+                removed.checklist.push(CheckItem { id: id.into(), text: id.into(), done: false });
+            }
+            a.save_task(&removed);
+            sync(&mut a, &mut b);
+            assert_eq!(a.task(&id), Some(removed.clone()));
+            assert_eq!(b.task(&id), Some(removed));
+        }
+    }
+
+    #[test]
+    fn legacy_checklist_loads() {
+        let mut rec = Record::new("legacy", KIND_TASK);
+        rec.put("checklist", json!([{"id": "one", "text": "Old", "done": true}]), &Stamp::seed());
+        let task = Task::from_record(&rec).unwrap();
+        assert_eq!(task.checklist[0].text, "Old");
+        assert!(task.checklist[0].done);
+        let mut d = Doc::with_node("migration");
+        d.apply_remote(&[rec]);
+        let mut task = d.task("legacy").unwrap();
+        task.notes = "Migrate".into();
+        d.save_task(&task);
+        assert_eq!(d.task("legacy"), Some(task));
+        assert!(d.record("legacy").unwrap().get("checklist.one").is_some());
+    }
+
+    #[test]
+    fn sync_progress_changes_revision_only_when_needed() {
+        let mut d = Doc::default();
+        new_task(&mut d, "Pending");
+        let sent = d.pending();
+        let rev = d.rev();
+        d.ack(&sent);
+        assert!(d.rev() > rev);
+        let rev = d.rev();
+        d.ack(&sent);
+        d.advance_seq(0);
+        assert_eq!(d.rev(), rev);
+        d.advance_seq(10);
+        assert!(d.rev() > rev);
+        let loaded = Doc::from_json(&d.to_json()).unwrap();
+        assert!(!loaded.has_pending());
+        assert_eq!(loaded.last_seq, 10);
     }
 
     #[test]

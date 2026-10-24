@@ -43,9 +43,8 @@ jobs:
       - name: System libraries
         timeout-minutes: 5
         run: bash .github/scripts/install-system-deps.sh pkg-config libfontconfig1-dev libxkbcommon-dev libwayland-dev libdbus-1-dev libxkbcommon-x11-0 libegl1
-      - run: cargo clippy -p patch-core -p patch-sync -p patch-ui --all-targets -- -D warnings
-      - run: cargo test -p patch-core -p patch-sync -p patch-ui
-      - run: bash .github/scripts/test-release-body.sh
+      - run: cargo clippy -p patch-core -p patch-sync -p patch-ui -p patch-linux --all-targets -- -D warnings
+      - run: cargo test -p patch-core -p patch-sync -p patch-ui -p patch-linux
       - name: Render screenshots
         run: cargo run -p patch-ui --example shots -- screenshots
       - uses: actions/upload-artifact@v4

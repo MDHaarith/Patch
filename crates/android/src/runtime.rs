@@ -146,6 +146,7 @@ pub enum Msg {
     /// The widget's "+": open the editor on a new task, once the main window
     /// exists if it doesn't yet.
     NewTask,
+    SyncNow,
     /// Text of a scanned QR code.
     Scanned(String),
     Invoke(Box<dyn FnOnce() + Send>),
@@ -472,6 +473,7 @@ impl Runtime {
                 self.new_task = true;
                 self.take_new_task();
             }
+            Msg::SyncNow => self.app.sync_now(),
             Msg::Scanned(text) => self.app.pair_from_link(&text),
             Msg::Invoke(f) => f(),
         }
