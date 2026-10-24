@@ -19,6 +19,11 @@ public final class UpdaterUrlTest {
                 "https://github.com:8443/asset", "https://127.0.0.1/asset", "file:///tmp/asset.apk"}) {
             assert !Updater.allowedDownload(new URL(url)) : url;
         }
-        System.out.println("Updater URL checks passed");
+        assert Updater.newer("v0.1.1", "0.1.0");
+        assert Updater.newer("v0.2.0", "0.1.9");
+        assert Updater.newer("v0.1.10", "0.1.9");
+        assert !Updater.newer("v0.1.1", "0.1.1");
+        assert !Updater.newer("v0.1.0-build.59", "0.1.1");
+        System.out.println("Updater URL and version checks passed");
     }
 }

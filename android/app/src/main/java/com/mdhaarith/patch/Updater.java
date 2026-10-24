@@ -51,7 +51,7 @@ public final class Updater extends BroadcastReceiver {
             try {
                 JSONObject release = latest();
                 String tag = release.getString("tag_name");
-                if (tag.equals(BuildConfig.RELEASE_TAG)) {
+                if (!newer(tag, BuildConfig.VERSION_NAME)) {
                     toast(context, "Patch is up to date");
                     return;
                 }
@@ -94,6 +94,19 @@ public final class Updater extends BroadcastReceiver {
         } finally {
             connection.disconnect();
         }
+    }
+
+    /** True when release tag vX.Y.Z is a higher version than versionName X.Y.Z. */
+    static boolean newer(String tag, String current) {
+        String[] a = tag.replaceFirst("^v", "").split("[.-]");
+        String[] b = current.split("[.-]");
+        for (int i = 0; i < 3; i++) {
+            int x = Integer.parseInt(a[i]), y = Integer.parseInt(b[i]);
+            if (x != y) {
+                return x > y;
+            }
+        }
+        return false;
     }
 
     static boolean allowedDownload(URL url) {
