@@ -242,7 +242,7 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
     /** The system slides a moved window from its old spot, so expanding drags the panel in
      * from the pet's corner and collapsing flings the pet across the screen. */
     private static void disableMoveAnimation(WindowManager.LayoutParams lp) {
-        if (Build.VERSION.SDK_INT >= 33) {
+        if (Build.VERSION.SDK_INT >= 34) {
             lp.setCanPlayMoveAnimation(false);
             return;
         }
