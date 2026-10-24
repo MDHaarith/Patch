@@ -632,7 +632,20 @@ fn renders_and_drives_both_windows() {
         0,
         "panel and dim finish fading before the window shrinks"
     );
-    let bubble = h.surface(Kind::Overlay, (60.0, 60.0));
+    let bubble = MemSurface::new((60.0 * SCALE).round() as u32, (60.0 * SCALE).round() as u32);
+    h.send(Msg::Surface {
+        kind: Kind::Overlay,
+        surface: Box::new(bubble.clone()),
+        width: bubble.width,
+        height: bubble.height,
+    });
+    h.rt.step(&h.rx, Some(Duration::ZERO));
+    assert_eq!(
+        bubble.presents(),
+        0,
+        "the shrunk surface waits for the frame synced with the window move"
+    );
+    h.send(Msg::RedrawNeeded(Kind::Overlay));
     h.settle();
     assert!(bubble.presents() >= 1);
     assert_eq!(bubble.pixel(0, 0)[3], 0, "transparent around the bubble");

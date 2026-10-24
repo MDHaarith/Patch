@@ -152,6 +152,8 @@ pub enum Msg {
 }
 
 const FRAME: Duration = Duration::from_millis(16);
+/// How long a resized surface waits for Java's redraw request before painting anyway.
+const SYNC_WAIT: Duration = Duration::from_millis(100);
 /// Upper bound on sleeping, so a missed wake-up can never stall the UI.
 const MAX_SLEEP: Duration = Duration::from_secs(60);
 
@@ -178,13 +180,20 @@ struct Slot {
     repaint_all: bool,
     present_all: bool,
     frame_waiters: u32,
+    /// A new or resized surface paints nothing until Java asks for the frame
+    /// it syncs with the window's move; an earlier buffer shows at the old spot.
+    sync_until: Option<Instant>,
 }
 
 impl Slot {
-    fn render(&mut self, bridge: &dyn Bridge) {
+    fn render(&mut self, bridge: &dyn Bridge, now: Instant) {
         let Some(surface) = self.surface.as_mut() else {
             return;
         };
+        if self.sync_until.is_some_and(|t| now < t) {
+            return;
+        }
+        self.sync_until = None;
         let dirty = self
             .window
             .draw(&mut self.frame, std::mem::take(&mut self.repaint_all));
@@ -351,6 +360,9 @@ impl Runtime {
             .unwrap_or(MAX_SLEEP)
             .min(MAX_SLEEP);
         for slot in self.slots() {
+            if let Some(t) = slot.sync_until {
+                timeout = timeout.min(t.saturating_duration_since(now));
+            }
             if slot.surface.is_some() && slot.window.window().has_active_animations() {
                 timeout = timeout.min((self.last_frame + FRAME).saturating_duration_since(now));
             }
@@ -378,6 +390,7 @@ impl Runtime {
                 Some(slot) if slot.surface.is_some() => {
                     slot.frame_waiters += 1;
                     slot.present_all = true;
+                    slot.sync_until = None;
                 }
                 _ => self.bridge.frame_done(kind),
             },
@@ -473,7 +486,7 @@ impl Runtime {
             .into_iter()
             .flatten()
         {
-            slot.render(&*bridge);
+            slot.render(&*bridge, now);
             // After painting: rendering itself can report a changed text.
             let pending = slot.window.ime.borrow_mut().take_pending();
             if let Some((mode, state, seq)) = pending {
@@ -550,6 +563,7 @@ impl Runtime {
         };
         slot.surface = Some(surface);
         slot.present_all = true;
+        slot.sync_until = Some(Instant::now() + SYNC_WAIT);
         slot.set_size(width, height);
     }
 
@@ -578,6 +592,7 @@ impl Runtime {
             repaint_all: true,
             present_all: true,
             frame_waiters: 0,
+            sync_until: None,
         })
     }
 
