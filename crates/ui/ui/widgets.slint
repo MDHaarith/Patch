@@ -284,6 +284,8 @@ export component Field inherits Rectangle {
                 font-weight: root.font-weight;
                 single-line: false;
                 wrap: word-wrap;
+                // Matches the centered placeholder; wrapped text fills the height anyway.
+                vertical-alignment: root.multiline ? TextVerticalAlignment.top : TextVerticalAlignment.center;
                 min-width: 0px;
                 input-type: root.input-type;
                 selection-background-color: Theme.accent.with-alpha(0.4);
@@ -291,7 +293,9 @@ export component Field inherits Rectangle {
                 accepted => { root.accepted(self.text); }
                 edited => { root.edited(self.text); }
                 cursor-position-changed(pos) => {
-                    if (pos.y + text-scroll.content-y < 0px) {
+                    if (text-scroll.content-height <= text-scroll.height) {
+                        text-scroll.content-y = 0px;
+                    } else if (pos.y + text-scroll.content-y < 0px) {
                         text-scroll.content-y = -pos.y;
                     } else if (pos.y + text-scroll.content-y > text-scroll.height - root.font-size * 1.5) {
                         text-scroll.content-y = Math.min(0px, text-scroll.height - pos.y - root.font-size * 1.5);
