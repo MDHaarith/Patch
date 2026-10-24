@@ -22,7 +22,7 @@ pub fn decode_rgba(png_bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     data.truncate(info.buffer_size());
     let rgba = match info.color_type {
         png::ColorType::Rgba => data,
-        png::ColorType::Rgb => data.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
+        png::ColorType::Rgb => data.as_chunks::<3>().0.iter().flat_map(|&[r, g, b]| [r, g, b, 255]).collect(),
         _ => return None,
     };
     Some((info.width, info.height, rgba))
@@ -34,7 +34,7 @@ pub fn tray_pixmaps() -> Vec<ksni::Icon> {
         .iter()
         .filter_map(|png| decode_rgba(png))
         .map(|(w, h, mut data)| {
-            for px in data.chunks_exact_mut(4) {
+            for px in data.as_chunks_mut::<4>().0 {
                 px.rotate_right(1);
             }
             ksni::Icon { width: w as i32, height: h as i32, data }
