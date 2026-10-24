@@ -82,7 +82,6 @@ pub trait Bridge {
     /// Opens the camera QR scanner; the result comes back as [`Msg::Scanned`].
     fn scan_qr(&self);
     fn check_update(&self);
-    fn battery_usage(&self) -> Option<String>;
     fn open_battery_settings(&self);
     fn battery_unrestricted(&self) -> bool;
     fn request_battery_unrestricted(&self);
@@ -143,6 +142,7 @@ pub enum Msg {
     /// The activity paused: save, then reply.
     Pause(Option<SyncSender<()>>),
     OpenTask(String),
+    CompleteTask(String, Option<SyncSender<()>>),
     /// The widget's "+": open the editor on a new task, once the main window
     /// exists if it doesn't yet.
     NewTask,
@@ -469,6 +469,12 @@ impl Runtime {
                 }
             }
             Msg::OpenTask(id) => self.app.open_task(&id),
+            Msg::CompleteTask(id, done) => {
+                self.app.complete_task(&id);
+                if let Some(done) = done {
+                    let _ = done.send(());
+                }
+            }
             Msg::NewTask => {
                 self.new_task = true;
                 self.take_new_task();

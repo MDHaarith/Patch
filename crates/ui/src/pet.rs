@@ -26,6 +26,10 @@ impl Mood {
     }
 }
 
+pub fn sync_worried(configured: bool, offline: Option<std::time::Duration>) -> bool {
+    configured && offline.is_some_and(|d| d > std::time::Duration::from_secs(3600))
+}
+
 /// Signed JNI codes keep the direction with each held/flight/bump pose.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Play {
@@ -333,6 +337,15 @@ pub fn play_image(mood: Mood, tick: u32, blink: bool, skin: usize, play: Play) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sync_trouble_needs_a_continuous_hour() {
+        use std::time::Duration;
+        assert!(!sync_worried(false, Some(Duration::from_secs(7200))));
+        assert!(!sync_worried(true, None));
+        assert!(!sync_worried(true, Some(Duration::from_secs(3600))));
+        assert!(sync_worried(true, Some(Duration::from_secs(3601))));
+    }
 
     #[test]
     fn frames_differ_by_mood_and_tick() {

@@ -6,7 +6,7 @@ between your devices **over Tailscale** or your home Wi-Fi.
 
 ![Month view, Matte Black](docs/screenshots/desktop-matte-month.jpg)
 
-| Week | Board (Liquid Glass) | Editor with range picker (Light) |
+| Week | Board (Glass) | Editor with range picker (Light) |
 |---|---|---|
 | ![](docs/screenshots/desktop-matte-week.jpg) | ![](docs/screenshots/desktop-glass-board.jpg) | ![](docs/screenshots/desktop-light-editor.jpg) |
 
@@ -16,7 +16,7 @@ floats *over other apps* when you want it to.
 ![Phone](docs/screenshots/phone.jpg)
 ![Overlay](docs/screenshots/overlay.jpg)
 
-**Eleven themes**: Matte Black, Liquid Glass, Light, Midnight, Aurora, Sunset, Forest, Graphite, Paper, Rose and Graphite Glass.
+**Four themes**: Matte Black, Black Glass, Light and Light Glass. Glass opacity is adjustable in Settings.
 
 ![Themes](docs/screenshots/themes.jpg)
 
@@ -33,7 +33,7 @@ floats *over other apps* when you want it to.
   - your own repeat intervals ("every 2 weeks") and alert timings ("3 hours before"), added once in Settings → *Repeat & alerts*
   - the date-range picker from the design reference: tap a start, tap an end, set times, then Reset or ✓
 - **Natural-language quick add**: `Dentist tomorrow 3pm #work !!!`, `Conference 13-15 nov`, `Standup every weekday 9:30`, `Gym tmrw 7am for 1h30m`, `Call back in 2 hours`.
-- **Eleven themes**, each with a live preview in Settings.
+- **Four themes**, each with a live preview in Settings.
 - **Lists with your colours**: open a list's ⋯ menu to recolour, rename or delete it.
 - **Patch the pet**: a pixel-art buddy that bobs, blinks and reacts to your day. It is happy when you're clear, busy when you have work, worried about overdue tasks, and asleep at night.
 - **Always on**:
@@ -43,9 +43,8 @@ floats *over other apps* when you want it to.
 
 ## Sync
 
-One machine runs the **hub**: the Linux app (Settings → *Host the sync hub on this
-computer*) or the headless `patch-hub` on any always-on box such as a home server
-or Raspberry Pi. Every other device connects to it.
+One computer runs the **hub** in the Linux app: Settings → *Host the sync hub on this
+computer*. Keep Patch running in the tray. Every other device connects to it.
 
 1. Install [Tailscale](https://tailscale.com) on each device and sign in to the same tailnet.
 2. On the hub machine, turn on hosting. Settings shows the addresses (e.g. `http://my-laptop:4747`) and a pairing token like `K7QF-2MZD-9XPA-T4RH`.
@@ -68,6 +67,17 @@ Merging keeps the newest write per field, which is commutative and idempotent,
 so devices converge regardless of the order they sync in
 ([`crates/core`](crates/core/src)).
 
+### Always-on server (optional)
+
+For a separate home server or Raspberry Pi, use headless `patch-hub` instead.
+Do not run it on the same computer where the app hosts the hub.
+The Linux installer includes the binary and systemd user unit:
+
+```sh
+systemctl --user enable --now patch-hub
+journalctl --user -u patch-hub      # shows the pairing token and URLs
+```
+
 ## Install
 
 ### Linux
@@ -75,16 +85,6 @@ so devices converge regardless of the order they sync in
 ```sh
 scripts/install-linux.sh            # builds `patch` + `patch-hub`, installs to ~/.local
 patch                               # or launch "Patch" from your app menu
-```
-
-The headless hub as a systemd user service:
-
-```sh
-cargo build --release -p patch-sync --bin patch-hub
-install -Dm755 target/release/patch-hub ~/.local/bin/patch-hub
-install -Dm644 packaging/linux/patch-hub.service ~/.config/systemd/user/patch-hub.service
-systemctl --user enable --now patch-hub
-journalctl --user -u patch-hub      # shows the pairing token and URLs
 ```
 
 Build dependencies (Debian/Ubuntu): `build-essential pkg-config libfontconfig1-dev libxkbcommon-dev libwayland-dev libdbus-1-dev`.

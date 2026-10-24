@@ -450,6 +450,12 @@ impl Doc {
         }
     }
 
+    pub fn restore_task(&mut self, id: &str) {
+        if self.records.get(id).is_some_and(|r| r.kind == KIND_TASK && r.is_deleted()) {
+            self.write(id, KIND_TASK, vec![("deleted", json!(false))]);
+        }
+    }
+
     // ---------------------------------------------------------------- lists
 
     pub fn add_list(&mut self, name: &str, color: &str) -> String {
@@ -795,6 +801,20 @@ mod tests {
         assert!(!t.done);
         assert_eq!(t.start, parse_dt("2026-10-14T10:00"));
         assert_eq!(t.end, parse_dt("2026-10-14T10:15"));
+    }
+
+    #[test]
+    fn restored_task_syncs() {
+        let mut a = Doc::with_node("a");
+        let mut b = Doc::with_node("b");
+        let id = new_task(&mut a, "restore me");
+        sync(&mut a, &mut b);
+        a.delete_task(&id);
+        sync(&mut a, &mut b);
+        assert!(a.task(&id).is_none() && b.task(&id).is_none());
+        a.restore_task(&id);
+        sync(&mut a, &mut b);
+        assert!(a.task(&id).is_some() && b.task(&id).is_some());
     }
 
     #[test]

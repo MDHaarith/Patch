@@ -430,14 +430,19 @@ export component Priority inherits Text {
 
 export component Toast inherits Rectangle {
     in property <string> text;
+    in property <string> action;
+    callback activated();
     visible: text != "";
     height: 36px;
-    width: t.preferred-width + 32px;
+    width: t.preferred-width + 32px + (action != "" ? 80px : 0px);
     border-radius: 18px;
     background: Theme.toast;
     drop-shadow-blur: 16px;
     drop-shadow-color: #00000066;
+    if action != "": Button { x: parent.width - 76px; width: 72px; text: root.action; clicked => { root.activated(); } }
     t := Text {
+        x: 16px;
+        width: self.preferred-width;
         text: root.text;
         color: Theme.toast-text;
         font-size: Theme.fs-m;

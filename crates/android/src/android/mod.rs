@@ -335,6 +335,18 @@ pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeOpenTask(
     }
 }
 
+#[no_mangle]
+pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeCompleteTask(
+    mut env: JNIEnv,
+    _: JClass,
+    id: JString,
+) {
+    let id = string(&mut env, &id);
+    if !id.is_empty() {
+        send_and_wait(|done| Msg::CompleteTask(id, Some(done)), Duration::from_secs(8), "completeTask");
+    }
+}
+
 /// The widget's "+": open the editor on a new task.
 #[no_mangle]
 pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeNewTask(_env: JNIEnv, _: JClass) {

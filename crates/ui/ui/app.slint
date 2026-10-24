@@ -512,7 +512,7 @@ component DesktopShell inherits Rectangle {
         clip: true;
         EditorPanel {}
     }
-    // A hidden desktop panel still creates its controls and usage timer on phones.
+    // A hidden desktop panel still creates its controls and background timer on phones.
     if !Store.mobile && Store.settings-open: Rectangle {
         background: #00000066;
         TouchArea { clicked => { Store.settings-open = false; } }
@@ -757,6 +757,8 @@ export component MainWindow inherits Window {
             x: (parent.width - self.width) / 2;
             y: parent.height - self.height - (Store.mobile ? 90px + Store.safe-bottom : 28px);
             text: Store.toast;
+            action: Store.toast-action;
+            activated => { Actions.undo-delete(); }
         }
     }
     init => { keys.focus(); }

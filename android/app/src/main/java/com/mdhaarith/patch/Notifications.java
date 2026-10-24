@@ -39,7 +39,12 @@ final class Notifications {
 
     /** Thread-safe: called from Rust's UI thread. */
     static void reminder(Context context, String title, String body) {
-        Notification n = new Notification.Builder(context, CHANNEL_REMINDERS)
+        reminder(context, null, title, body);
+    }
+
+    static void reminder(Context context, String key, String title, String body) {
+        int id = nextReminderId(context);
+        Notification.Builder builder = new Notification.Builder(context, CHANNEL_REMINDERS)
                 .setSmallIcon(R.drawable.ic_stat_patch)
                 .setColor(ACCENT)
                 .setContentTitle(title)
@@ -47,10 +52,26 @@ final class Notifications {
                 .setStyle(new Notification.BigTextStyle().bigText(body))
                 .setCategory(Notification.CATEGORY_REMINDER)
                 .setContentIntent(openApp(context))
-                .setAutoCancel(true)
-                .build();
+                .setAutoCancel(true);
+        if (key != null) {
+            Intent done = new Intent(context, ReminderReceiver.class).setAction(Reminders.ACTION_DONE)
+                    .setData(new android.net.Uri.Builder().scheme("patch-reminder").authority("done").appendPath(key).build())
+                    .putExtra(Reminders.EXTRA_KEY, key).putExtra(Reminders.EXTRA_TITLE, title)
+                    .putExtra(Reminders.EXTRA_NOTIFICATION_ID, id);
+            PendingIntent donePi = PendingIntent.getBroadcast(context, (key + ":done").hashCode(), done,
+                    PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+            Intent snooze = new Intent(context, ReminderReceiver.class).setAction(Reminders.ACTION_SNOOZE)
+                    .setData(new android.net.Uri.Builder().scheme("patch-reminder").authority("snooze").appendPath(key).build())
+                    .putExtra(Reminders.EXTRA_KEY, key).putExtra(Reminders.EXTRA_TITLE, title)
+                    .putExtra(Reminders.EXTRA_BODY, body).putExtra(Reminders.EXTRA_NOTIFICATION_ID, id);
+            PendingIntent snoozePi = PendingIntent.getBroadcast(context, (key + ":snooze").hashCode(), snooze,
+                    PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+            builder.addAction(new Notification.Action.Builder(null, "Done", donePi).build());
+            builder.addAction(new Notification.Action.Builder(null, "Snooze 10 min", snoozePi).build());
+        }
+        Notification n = builder.build();
         // Without POST_NOTIFICATIONS this is silently dropped.
-        context.getSystemService(NotificationManager.class).notify(nextReminderId(context), n);
+        context.getSystemService(NotificationManager.class).notify(id, n);
     }
 
     /** Persisted so reminders still in the tray aren't replaced after the

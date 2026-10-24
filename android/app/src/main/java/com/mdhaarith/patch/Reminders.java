@@ -25,6 +25,11 @@ final class Reminders {
     private static final String PREFS = "reminders";
     private static final String KEY_JSON = "json";
     private static final String KEY_CODES = "codes";
+    private static final String KEY_SNOOZES = "snoozes";
+    static final String EXTRA_KEY = "key";
+    static final String ACTION_DONE = "com.mdhaarith.patch.DONE";
+    static final String ACTION_SNOOZE = "com.mdhaarith.patch.SNOOZE";
+    static final String EXTRA_NOTIFICATION_ID = "notification_id";
     static final String EXTRA_TITLE = "title";
     static final String EXTRA_BODY = "body";
 
@@ -43,16 +48,42 @@ final class Reminders {
         arm(context, json);
     }
 
+    static synchronized void snooze(Context context, Intent intent) {
+        String key = intent.getStringExtra(EXTRA_KEY);
+        if (key == null) return;
+        try {
+            SharedPreferences sp = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            JSONArray old = new JSONArray(sp.getString(KEY_SNOOZES, "[]"));
+            JSONArray list = new JSONArray();
+            long now = System.currentTimeMillis();
+            for (int i = 0; i < old.length(); i++) {
+                JSONObject r = old.getJSONObject(i);
+                if (!key.equals(r.getString("key")) && r.getLong("at") > now) list.put(r);
+            }
+            list.put(new JSONObject().put("key", key)
+                    .put("title", intent.getStringExtra(EXTRA_TITLE))
+                    .put("body", intent.getStringExtra(EXTRA_BODY))
+                    .put("at", now + 10 * 60 * 1000));
+            sp.edit().putString(KEY_SNOOZES, list.toString()).apply();
+            restore(context);
+        } catch (JSONException e) {
+            Log.w(TAG, "can't snooze reminder", e);
+        }
+    }
+
     private static void arm(Context context, String json) {
         AlarmManager am = context.getSystemService(AlarmManager.class);
         SharedPreferences sp = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         for (String code : sp.getStringSet(KEY_CODES, new HashSet<>())) {
-            am.cancel(pending(context, Integer.parseInt(code), null, null));
+            am.cancel(pending(context, Integer.parseInt(code), null, null, null));
         }
         Set<String> codes = new HashSet<>();
         long now = System.currentTimeMillis();
         try {
             JSONArray list = new JSONArray(json);
+            // Rust replaces upcoming alarms as tasks change; keep user snoozes separately.
+            JSONArray snoozes = new JSONArray(sp.getString(KEY_SNOOZES, "[]"));
+            for (int i = 0; i < snoozes.length(); i++) list.put(snoozes.getJSONObject(i));
             for (int i = 0; i < list.length(); i++) {
                 JSONObject r = list.getJSONObject(i);
                 long at = r.getLong("at");
@@ -60,7 +91,7 @@ final class Reminders {
                     continue;
                 }
                 int code = r.getString("key").hashCode();
-                PendingIntent pi = pending(context, code, r.getString("title"), r.getString("body"));
+                PendingIntent pi = pending(context, code, r.getString("key"), r.getString("title"), r.getString("body"));
                 // Exact alarms need the user's (or the calendar-app) grant;
                 // otherwise Android may delay delivery by a few minutes.
                 if (Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms()) {
@@ -76,10 +107,10 @@ final class Reminders {
         sp.edit().putStringSet(KEY_CODES, codes).apply();
     }
 
-    private static PendingIntent pending(Context context, int code, String title, String body) {
+    private static PendingIntent pending(Context context, int code, String key, String title, String body) {
         Intent intent = new Intent(context, ReminderReceiver.class);
         if (title != null) {
-            intent.putExtra(EXTRA_TITLE, title).putExtra(EXTRA_BODY, body);
+            intent.putExtra(EXTRA_KEY, key).putExtra(EXTRA_TITLE, title).putExtra(EXTRA_BODY, body);
         }
         return PendingIntent.getBroadcast(context, code, intent,
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);

@@ -1,3 +1,4 @@
+import { Slider } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icon, IconBox } from "icons.slint";
 import { Store, Actions, ThemeCard } from "store.slint";
@@ -158,7 +159,7 @@ export component SettingsPanel inherits Rectangle {
                     title: "Appearance";
                     icon: "layers";
                     themes := Rectangle {
-                        property <int> cols: Store.mobile ? 2 : 5;
+                        property <int> cols: Store.mobile ? 2 : 4;
                         property <length> gap: 10px;
                         property <length> cw: (self.width - (self.cols - 1) * self.gap) / self.cols;
                         property <length> ch: 112px;
@@ -171,6 +172,17 @@ export component SettingsPanel inherits Rectangle {
                             theme: t;
                             selected: Store.theme == i;
                             picked => { Actions.set-look(i); }
+                        }
+                    }
+                    if Theme.glass: Row {
+                        label: "Glass opacity";
+                        hint: round(Store.glass-opacity * 100) + "%";
+                        Slider {
+                            width: 140px;
+                            minimum: 0.25;
+                            maximum: 0.95;
+                            value: Store.glass-opacity;
+                            changed(v) => { Actions.set-glass-opacity(v); }
                         }
                     }
                     Row {
@@ -290,7 +302,7 @@ export component SettingsPanel inherits Rectangle {
 
                     if Store.can-host: Row {
                         label: "Host the sync hub on this computer";
-                        hint: "Devices on your tailnet or the same Wi-Fi connect here. Keep Patch running (it lives in the tray).";
+                        hint: "Turn on to show a pairing QR code for your phone. Devices on your tailnet or the same Wi-Fi connect here; keep Patch running (it lives in the tray).";
                         Toggle { y: (parent.height - self.height) / 2; checked: Store.hosting; toggled(v) => { Actions.set-hosting(v); } }
                     }
                     if Store.can-host && Store.hosting: Rectangle {
@@ -330,6 +342,17 @@ export component SettingsPanel inherits Rectangle {
                         }
                     }
 
+                    if Store.can-host && !Store.hosting && Store.client-pairing: VerticalLayout {
+                        spacing: 8px;
+                        SectionLabel { text: "PAIR ANOTHER DEVICE"; }
+                        Image {
+                            width: 148px; height: 148px;
+                            source: Store.client-qr;
+                            image-rendering: pixelated;
+                            accessible-role: image;
+                            accessible-label: "Pair another device with your sync hub";
+                        }
+                    }
                     SectionLabel { text: Store.can-host ? "OR CONNECT TO ANOTHER HUB" : "HUB"; }
                     if Store.can-scan: Button {
                         text: "Scan pairing QR code";
@@ -358,22 +381,11 @@ export component SettingsPanel inherits Rectangle {
                     }
                 }
 
-                Card {
-                    title: "Usage";
+                if Store.mobile: Card {
+                    title: "Background";
                     icon: "clock";
-                    // Refreshes only while Settings is open.
-                    Timer {
-                        interval: 2s;
-                        running: true;
-                        triggered => { Actions.refresh-usage(); }
-                    }
-                    init => { Actions.refresh-usage(); }
-                    Text { text: Store.usage; color: Theme.text-2; font-size: Theme.fs-s; wrap: word-wrap; }
-                    if Store.battery-usage != "": VerticalLayout {
-                        spacing: 2px;
-                        Text { text: Store.battery-usage; color: Theme.text-2; font-size: Theme.fs-s; wrap: word-wrap; }
-                        Text { text: "Device readings; Patch's share of battery use is unavailable."; color: Theme.text-2; font-size: Theme.fs-s; wrap: word-wrap; }
-                    }
+                    Timer { interval: 2s; running: true; triggered => { Actions.refresh-background(); } }
+                    init => { Actions.refresh-background(); }
                     if Store.mobile: Button {
                         text: "App battery settings";
                         kind: 3;

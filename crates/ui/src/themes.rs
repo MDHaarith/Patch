@@ -10,6 +10,7 @@ enum Kind {
     Matte,
     Glass,
     Light,
+    LightGlass,
 }
 
 pub struct Spec {
@@ -26,18 +27,11 @@ pub struct Spec {
     bloom_b: &'static str,
 }
 
-pub const THEMES: [Spec; 11] = [
+pub const THEMES: [Spec; 4] = [
     Spec { name: "Matte Black", kind: Kind::Matte, top: "#0B0B0C", bottom: "#060607", surface: "#121214", accent: "#0A84FF", bloom_a: "", bloom_b: "" },
-    Spec { name: "Liquid Glass", kind: Kind::Glass, top: "#4B8D88", bottom: "#0D3346", surface: "#2A6A70", accent: "#0A84FF", bloom_a: "#8FD3C9", bloom_b: "#0A84FF" },
+    Spec { name: "Black Glass", kind: Kind::Glass, top: "#1C1C1E", bottom: "#000000", surface: "#1C1C1E", accent: "#0A84FF", bloom_a: "#8E8E93", bloom_b: "#426080" },
     Spec { name: "Light", kind: Kind::Light, top: "#F5F5F7", bottom: "#ECECF0", surface: "#FFFFFF", accent: "#007AFF", bloom_a: "", bloom_b: "" },
-    Spec { name: "Midnight", kind: Kind::Glass, top: "#1B2A5A", bottom: "#070B1C", surface: "#1F2D5C", accent: "#6EA8FF", bloom_a: "#5E5CE6", bloom_b: "#64D2FF" },
-    Spec { name: "Aurora", kind: Kind::Glass, top: "#3A1F63", bottom: "#0C3B46", surface: "#352457", accent: "#BF5AF2", bloom_a: "#30D158", bloom_b: "#BF5AF2" },
-    Spec { name: "Sunset", kind: Kind::Glass, top: "#B8573A", bottom: "#2A1530", surface: "#6A2F3C", accent: "#FF9F0A", bloom_a: "#FFD60A", bloom_b: "#FF375F" },
-    Spec { name: "Forest", kind: Kind::Matte, top: "#0F1A14", bottom: "#070C09", surface: "#14221A", accent: "#30D158", bloom_a: "", bloom_b: "" },
-    Spec { name: "Graphite", kind: Kind::Matte, top: "#232326", bottom: "#161618", surface: "#2A2A2E", accent: "#FF9F0A", bloom_a: "", bloom_b: "" },
-    Spec { name: "Paper", kind: Kind::Light, top: "#F6F1E7", bottom: "#ECE4D4", surface: "#FFFDF8", accent: "#D9480F", bloom_a: "", bloom_b: "" },
-    Spec { name: "Rose", kind: Kind::Light, top: "#FCEEF2", bottom: "#F3DCE4", surface: "#FFFFFF", accent: "#E0245E", bloom_a: "", bloom_b: "" },
-    Spec { name: "Graphite Glass", kind: Kind::Glass, top: "#2C2C30", bottom: "#000000", surface: "#1C1C1E", accent: "#76767C", bloom_a: "#AEAEB2", bloom_b: "#636366" },
+    Spec { name: "Light Glass", kind: Kind::LightGlass, top: "#EDF2FA", bottom: "#E5E5EF", surface: "#FFFFFF", accent: "#007AFF", bloom_a: "#A8CCFF", bloom_b: "#E5BDEB" },
 ];
 
 fn rgba(hex: &str, alpha: f32) -> Color {
@@ -62,11 +56,11 @@ pub fn spec(index: i32) -> &'static Spec {
     THEMES.get(index.max(0) as usize).unwrap_or(&THEMES[0])
 }
 
-pub fn apply(t: &Theme, index: i32) {
+pub fn apply(t: &Theme, index: i32, opacity: f32) {
     let s = spec(index);
     let (top, bottom, surface, accent) = (color(s.top), color(s.bottom), color(s.surface), color(s.accent));
     t.set_pet(match s.kind {
-        Kind::Light => color("#1D1D20"),
+        Kind::Light | Kind::LightGlass => color("#1D1D20"),
         Kind::Glass => mix(surface, black(1.0), 0.45),
         Kind::Matte => mix(surface, white(1.0), 0.08),
     });
@@ -74,10 +68,10 @@ pub fn apply(t: &Theme, index: i32) {
     t.set_backdrop_top(top);
     t.set_backdrop_bottom(bottom);
     t.set_accent(accent);
-    t.set_bloom_a(if s.bloom_a.is_empty() { Color::default() } else { rgba(s.bloom_a, 0.33) });
-    t.set_bloom_b(if s.bloom_b.is_empty() { Color::default() } else { rgba(s.bloom_b, 0.2) });
+    t.set_bloom_a(if s.bloom_a.is_empty() { Color::default() } else { rgba(s.bloom_a, if matches!(s.kind, Kind::Glass) { 0.1 } else { 0.33 }) });
+    t.set_bloom_b(if s.bloom_b.is_empty() { Color::default() } else { rgba(s.bloom_b, if matches!(s.kind, Kind::Glass) { 0.07 } else { 0.2 }) });
     match s.kind {
-        Kind::Light => {
+        Kind::Light | Kind::LightGlass => {
             t.set_light(true);
             t.set_glass(false);
             t.set_solid(top);
@@ -173,6 +167,25 @@ pub fn apply(t: &Theme, index: i32) {
             t.set_toast_text(color("#111113"));
         }
     }
+    if matches!(s.kind, Kind::Glass | Kind::LightGlass) {
+        let opacity = crate::prefs::glass_opacity(opacity);
+        let light = matches!(s.kind, Kind::LightGlass);
+        t.set_glass(true);
+        t.set_glint(white(if light { 0.9 } else { 0.6 }));
+        t.set_sheen_color(white(if light { 0.3 } else { 0.12 }));
+        t.set_sheen_reach(0.4);
+        let pane = |alpha| surface.with_alpha(alpha * opacity);
+        t.set_panel(pane(0.65));
+        t.set_panel_strong(pane(0.85));
+        t.set_content(pane(0.4));
+        t.set_float(pane(1.0));
+        t.set_modal(pane(1.0));
+        t.set_dock(pane(1.0));
+        t.set_card(pane(0.85));
+        t.set_picker(pane(1.0));
+        t.set_bubble_top(pane(1.0));
+        t.set_bubble_bottom(pane(0.9));
+    }
 }
 
 /// Preview swatches for the theme picker.
@@ -180,15 +193,15 @@ pub fn cards() -> Vec<ThemeCard> {
     THEMES
         .iter()
         .map(|s| {
-            let light = matches!(s.kind, Kind::Light);
-            let glass = matches!(s.kind, Kind::Glass);
+            let light = matches!(s.kind, Kind::Light | Kind::LightGlass);
+            let glass = matches!(s.kind, Kind::Glass | Kind::LightGlass);
             let surface = color(s.surface);
             ThemeCard {
                 name: s.name.into(),
                 top: color(s.top),
                 bottom: color(s.bottom),
                 mid: mix(color(s.top), color(s.bottom), 0.5),
-                card: if glass { white(0.16) } else if light { surface } else { mix(surface, white(1.0), 0.06) },
+                card: if glass { surface.with_alpha(0.65) } else if light { surface } else { mix(surface, white(1.0), 0.06) },
                 ink: if light { color("#1D1D1F") } else { color("#F5F5F7") },
                 band: if light { mix(color(s.bottom), black(1.0), 0.08) } else if glass { white(0.24) } else { mix(surface, white(1.0), 0.18) },
                 accent: color(s.accent),

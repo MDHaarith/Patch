@@ -7,7 +7,6 @@ import android.content.Intent;
 import android.net.Uri;
 import android.net.ConnectivityManager;
 import android.net.Network;
-import android.os.BatteryManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
@@ -57,7 +56,7 @@ final class PatchNative {
     static final int IME_SHOW = 2;
     static final int IME_SHOW_ACTIONS = 3;
 
-    /** Look of the app: 0 matte black, 1 liquid glass, 2 light. */
+    /** Look of the app: 0 matte black, 1 black glass, 2 light, 3 light glass. */
     static volatile int look = 0;
     static WeakReference<MainActivity> activity = new WeakReference<>(null);
 
@@ -233,22 +232,6 @@ final class PatchNative {
         return power != null && power.isIgnoringBatteryOptimizations(app.getPackageName());
     }
 
-    static String batteryUsage() {
-        BatteryManager battery = app.getSystemService(BatteryManager.class);
-        if (battery == null) return null;
-        int level = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY);
-        if (level < 0 || level > 100) return null;
-        String text = "Device battery: " + level + "%";
-        int current = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW);
-        if (current != Integer.MIN_VALUE && current != 0) {
-            text += current < 0 ? " · draining " : " · charging ";
-            text += Math.abs((long) current) / 1000 + " mA";
-        } else {
-            text += battery.isCharging() ? " · charging/full" : " · not charging";
-        }
-        return text;
-    }
-
     static void openBatterySettings() {
         main.post(() -> {
             Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
@@ -386,6 +369,7 @@ final class PatchNative {
     static native void nativeSyncNow();
 
     static native void nativeOpenTask(String taskId);
+    static native void nativeCompleteTask(String taskId);
 
     /** The widget's "+": open the editor on a new task. */
     static native void nativeNewTask();

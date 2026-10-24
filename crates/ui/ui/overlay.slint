@@ -27,8 +27,8 @@ export component OverlayPanel inherits Rectangle {
         width: parent.width;
         height: parent.height;
         radius: root.radius;
-        // No blur in the software renderer: over other apps a see-through panel is unreadable.
-        fill: Store.mobile ? Theme.float.with-alpha(1) : Theme.float;
+        // Glass themes share the user's opacity; other mobile panels stay opaque.
+        fill: Store.mobile && !Theme.glass ? Theme.float.with-alpha(1) : Theme.float;
         elevated: false;
         VerticalLayout {
             padding: 12px;
