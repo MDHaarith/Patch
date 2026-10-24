@@ -2,32 +2,32 @@ package com.mdhaarith.patch;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.graphics.PixelFormat;
-import android.graphics.Rect;
+import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.os.Build;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.Selection;
 import android.text.SpannableStringBuilder;
 import android.text.TextUtils;
-import android.view.ActionMode;
 import android.view.Gravity;
 import android.view.KeyEvent;
-import android.view.Menu;
-import android.view.MenuItem;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
-import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup.LayoutParams;
 import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
-import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.PopupWindow;
+import android.widget.TextView;
 
 /**
  * A surface Rust renders into, for the activity ({@link PatchNative#MAIN}) or
@@ -59,8 +59,7 @@ final class PatchSurfaceView extends SurfaceView implements SurfaceHolder.Callba
 
     private int primaryPointer = -1;
     private float touchX, touchY;
-    private ActionMode textActions;
-    private PopupWindow overlayTextActions;
+    private PopupWindow textActions;
     private final Runnable longPress = this::handleLongPress;
 
     private void handleLongPress() {
@@ -310,9 +309,6 @@ final class PatchSurfaceView extends SurfaceView implements SurfaceHolder.Callba
     private void reportSelection() {
         imm.updateSelection(this, Selection.getSelectionStart(editable), Selection.getSelectionEnd(editable),
                 BaseInputConnection.getComposingSpanStart(editable), BaseInputConnection.getComposingSpanEnd(editable));
-        if (textActions != null) {
-            textActions.invalidate();
-        }
     }
 
     /** The focused text field's state from Rust. */
@@ -355,100 +351,77 @@ final class PatchSurfaceView extends SurfaceView implements SurfaceHolder.Callba
         }
     }
 
+    /** Our own copy/paste bar, the same in the activity and the overlay (which has
+     * no DecorView for a floating ActionMode): a dark pill above the finger with
+     * only the actions that apply. */
+    @SuppressLint("RtlHardcoded") // Popup positions use physical screen coordinates.
     private void showTextActions() {
-        // Service overlay windows have no DecorView to host an ActionMode.
-        if (kind == PatchNative.OVERLAY) {
-            showOverlayTextActions();
-            return;
-        }
-        if (textActions != null) {
-            textActions.invalidate();
-            textActions.invalidateContentRect();
-            return;
-        }
-        textActions = startActionMode(new ActionMode.Callback2() {
-            @Override
-            public boolean onCreateActionMode(ActionMode mode, Menu menu) {
-                menu.add(0, android.R.id.copy, 0, android.R.string.copy).setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
-                menu.add(0, android.R.id.cut, 1, android.R.string.cut).setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
-                menu.add(0, android.R.id.paste, 2, android.R.string.paste).setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
-                menu.add(0, android.R.id.selectAll, 3, android.R.string.selectAll).setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
-                return true;
+        finishTextActions();
+        float dp = getResources().getDisplayMetrics().density;
+        int start = Selection.getSelectionStart(editable);
+        int end = Selection.getSelectionEnd(editable);
+        boolean selected = start != end;
+        boolean all = Math.min(start, end) == 0 && Math.max(start, end) == editable.length();
+        LinearLayout bar = new LinearLayout(getContext());
+        bar.setClipToOutline(true);
+        int[] ids = {android.R.id.cut, android.R.id.copy, android.R.id.paste, android.R.id.selectAll};
+        int[] labels = {android.R.string.cut, android.R.string.copy, android.R.string.paste, android.R.string.selectAll};
+        for (int i = 0; i < ids.length; i++) {
+            int id = ids[i];
+            if ((id == android.R.id.cut || id == android.R.id.copy) && !selected
+                    || id == android.R.id.selectAll && (all || editable.length() == 0)) {
+                continue;
             }
-
-            @Override
-            public boolean onPrepareActionMode(ActionMode mode, Menu menu) {
-                boolean selected = Selection.getSelectionStart(editable) != Selection.getSelectionEnd(editable);
-                menu.findItem(android.R.id.copy).setEnabled(selected);
-                menu.findItem(android.R.id.cut).setEnabled(selected);
-                menu.findItem(android.R.id.selectAll).setEnabled(editable.length() > 0);
-                return true;
-            }
-
-            @Override
-            public boolean onActionItemClicked(ActionMode mode, MenuItem item) {
-                boolean handled = new PatchInputConnection(PatchSurfaceView.this).performContextMenuAction(item.getItemId());
-                if (item.getItemId() != android.R.id.selectAll) {
-                    mode.finish();
+            TextView item = new TextView(getContext());
+            item.setText(labels[i]);
+            item.setSingleLine(true);
+            item.setTextSize(14);
+            item.setTypeface(Typeface.DEFAULT_BOLD);
+            item.setTextColor(0xfff5f5f7);
+            item.setGravity(Gravity.CENTER);
+            item.setMinHeight(Math.round(40 * dp));
+            item.setPadding(Math.round(14 * dp), 0, Math.round(14 * dp), 0);
+            item.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33ffffff), null, new ColorDrawable(0xffffffff)));
+            item.setOnClickListener(v -> {
+                new PatchInputConnection(this).performContextMenuAction(id);
+                finishTextActions();
+                if (id == android.R.id.selectAll) {
+                    showTextActions();
                 }
-                return handled;
-            }
-
-            @Override
-            public void onDestroyActionMode(ActionMode mode) {
-                textActions = null;
-            }
-
-            @Override
-            public void onGetContentRect(ActionMode mode, View view, Rect out) {
-                out.set(Math.round(touchX), Math.round(touchY), Math.round(touchX) + 1, Math.round(touchY) + 1);
-            }
-        }, ActionMode.TYPE_FLOATING);
+            });
+            bar.addView(item);
+        }
+        if (bar.getChildCount() == 0) {
+            return;
+        }
+        GradientDrawable pill = new GradientDrawable();
+        pill.setColor(0xf2242426);
+        pill.setCornerRadius(20 * dp);
+        pill.setStroke(Math.max(1, Math.round(dp / 2)), 0x22ffffff);
+        textActions = new PopupWindow(bar, LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
+        textActions.setBackgroundDrawable(pill);
+        textActions.setInputMethodMode(PopupWindow.INPUT_METHOD_NOT_NEEDED);
+        textActions.setElevation(8 * dp);
+        bar.measure(MeasureSpec.UNSPECIFIED, MeasureSpec.UNSPECIFIED);
+        int w = bar.getMeasuredWidth();
+        int h = bar.getMeasuredHeight();
+        int gap = Math.round(12 * dp);
+        int[] location = new int[2];
+        getLocationOnScreen(location);
+        int x = Math.max(gap, Math.min(Math.round(touchX) - w / 2, getWidth() - w - gap));
+        // Above the finger; below it when there is no room at the top.
+        int y = Math.round(touchY) - h - 3 * gap;
+        if (y < gap) {
+            y = Math.round(touchY) + 2 * gap;
+        }
+        textActions.showAtLocation(this, Gravity.TOP | Gravity.LEFT, location[0] + x, location[1] + y);
     }
 
     private void finishTextActions() {
         if (textActions != null) {
-            textActions.finish();
+            textActions.dismiss();
+            textActions = null;
         }
-        if (overlayTextActions != null) {
-            overlayTextActions.dismiss();
-            overlayTextActions = null;
-        }
-    }
-
-    @SuppressLint("RtlHardcoded") // Popup positions use physical screen coordinates.
-    private void showOverlayTextActions() {
-        finishTextActions();
-        LinearLayout bar = new LinearLayout(getContext());
-        bar.setBackgroundColor(0xff303030);
-        int[] ids = {android.R.id.copy, android.R.id.cut, android.R.id.paste, android.R.id.selectAll};
-        int[] labels = {android.R.string.copy, android.R.string.cut, android.R.string.paste, android.R.string.selectAll};
-        boolean selected = Selection.getSelectionStart(editable) != Selection.getSelectionEnd(editable);
-        for (int i = 0; i < ids.length; i++) {
-            int id = ids[i];
-            Button button = new Button(getContext(), null, android.R.attr.borderlessButtonStyle);
-            button.setText(labels[i]);
-            button.setMinWidth(0);
-            button.setTextSize(12);
-            button.setEnabled(id != android.R.id.copy && id != android.R.id.cut || selected);
-            button.setOnClickListener(v -> {
-                new PatchInputConnection(this).performContextMenuAction(id);
-                finishTextActions();
-                if (id == android.R.id.selectAll) {
-                    showOverlayTextActions();
-                }
-            });
-            bar.addView(button);
-        }
-        overlayTextActions = new PopupWindow(bar, LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
-        overlayTextActions.setInputMethodMode(PopupWindow.INPUT_METHOD_NOT_NEEDED);
-        overlayTextActions.setElevation(8 * getResources().getDisplayMetrics().density);
-        bar.measure(MeasureSpec.UNSPECIFIED, MeasureSpec.UNSPECIFIED);
-        int[] location = new int[2];
-        getLocationOnScreen(location);
-        overlayTextActions.showAtLocation(this, Gravity.TOP | Gravity.LEFT,
-                location[0] + Math.max(0, Math.min(Math.round(touchX), getWidth() - bar.getMeasuredWidth())),
-                location[1] + Math.max(0, Math.round(touchY) - bar.getMeasuredHeight()));
     }
 
     private void setMirror(String text, int selStart, int selEnd, int compStart, int compEnd) {
