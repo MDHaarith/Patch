@@ -82,6 +82,8 @@ pub trait Bridge {
     /// Opens the camera QR scanner; the result comes back as [`Msg::Scanned`].
     fn scan_qr(&self);
     fn check_update(&self);
+    fn battery_usage(&self) -> Option<String>;
+    fn open_battery_settings(&self);
     fn battery_unrestricted(&self) -> bool;
     fn request_battery_unrestricted(&self);
 }
@@ -645,6 +647,18 @@ impl Runtime {
         let Some(slot) = self.slot_mut(kind) else {
             return;
         };
+        let position = input::logical(x, y, scale);
+        match action {
+            TouchAction::LongPress => {
+                slot.window.select_word_at(position);
+                return;
+            }
+            TouchAction::Move if slot.window.drag_selection(position) => return,
+            TouchAction::Down | TouchAction::Up | TouchAction::Cancel => {
+                slot.window.end_selection_drag()
+            }
+            _ => {}
+        }
         if action == TouchAction::Down && slot.window.ime.borrow().has_preedit() {
             // A tap may move the cursor: settle the word being composed where
             // it is, and have Java restart the IME so it forgets it too.
@@ -654,7 +668,7 @@ impl Runtime {
         }
         dispatch(
             &slot.window,
-            input::touch_events(action, input::logical(x, y, scale)),
+            input::touch_events(action, position),
         );
     }
 

@@ -10,6 +10,7 @@ pub enum TouchAction {
     Move,
     Up,
     Cancel,
+    LongPress,
 }
 
 impl TouchAction {
@@ -19,6 +20,7 @@ impl TouchAction {
             1 => TouchAction::Move,
             2 => TouchAction::Up,
             3 => TouchAction::Cancel,
+            4 => TouchAction::LongPress,
             _ => return None,
         })
     }
@@ -39,6 +41,7 @@ pub fn touch_events(action: TouchAction, position: LogicalPosition) -> Vec<Windo
             WindowEvent::PointerExited,
         ],
         TouchAction::Cancel => vec![WindowEvent::PointerExited],
+        TouchAction::LongPress => Vec::new(),
     }
 }
 

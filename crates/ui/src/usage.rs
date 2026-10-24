@@ -1,6 +1,6 @@
-//! Patch's own CPU and memory use, read from `/proc/self` (Linux and Android).
+//! Patch's CPU and memory from `/proc/self`, plus cached device battery readings.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 // shortcut: assumes USER_HZ = 100 (true on Linux and Android); read sysconf(_SC_CLK_TCK) if a port differs.
 const TICKS_PER_SEC: f64 = 100.0;
@@ -20,9 +20,21 @@ fn rss_kb(status: &str) -> Option<u64> {
 #[derive(Default)]
 pub struct Usage {
     last: Option<(Instant, u64)>,
+    battery: Option<(Instant, Option<String>)>,
 }
 
 impl Usage {
+    /// Share the sample across windows, even if their settings timers overlap.
+    pub fn battery(&mut self, host: &dyn crate::Host) -> Option<String> {
+        let now = Instant::now();
+        if self.battery.as_ref().is_none_or(|(then, _)| {
+            now.duration_since(*then) >= Duration::from_secs(2)
+        }) {
+            self.battery = Some((now, host.battery_usage()));
+        }
+        self.battery.as_ref().and_then(|(_, value)| value.clone())
+    }
+
     /// `CPU 0.4% · 52 MB · 3m 12s CPU since launch`, or `None` without `/proc`.
     pub fn sample(&mut self) -> Option<String> {
         let ticks = cpu_ticks(&std::fs::read_to_string("/proc/self/stat").ok()?)?;
@@ -43,6 +55,27 @@ impl Usage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shares_battery_sample_across_refreshes() {
+        #[derive(Default)]
+        struct Host(std::cell::Cell<u32>);
+        impl crate::Host for Host {
+            fn battery_usage(&self) -> Option<String> {
+                self.0.set(self.0.get() + 1);
+                (self.0.get() == 1).then(|| "Device battery: 76%".into())
+            }
+        }
+        let host = Host::default();
+        let mut usage = Usage::default();
+        assert_eq!(usage.battery(&host).as_deref(), Some("Device battery: 76%"));
+        assert_eq!(usage.battery(&host).as_deref(), Some("Device battery: 76%"));
+        assert_eq!(host.0.get(), 1);
+        usage.battery.as_mut().unwrap().0 -= Duration::from_secs(2);
+        assert_eq!(usage.battery(&host), None);
+        assert_eq!(usage.battery(&host), None);
+        assert_eq!(host.0.get(), 2);
+    }
 
     #[test]
     fn parses_proc_files() {

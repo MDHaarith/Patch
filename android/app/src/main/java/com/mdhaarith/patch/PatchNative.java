@@ -5,6 +5,7 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.BatteryManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
@@ -39,6 +40,7 @@ final class PatchNative {
     static final int TOUCH_MOVE = 1;
     static final int TOUCH_UP = 2;
     static final int TOUCH_CANCEL = 3;
+    static final int TOUCH_LONG_PRESS = 4;
 
     static final int IME_COMMIT = 0;
     static final int IME_COMPOSE = 1;
@@ -51,6 +53,7 @@ final class PatchNative {
     static final int IME_HIDE = 0;
     static final int IME_UPDATE = 1;
     static final int IME_SHOW = 2;
+    static final int IME_SHOW_ACTIONS = 3;
 
     /** Look of the app: 0 matte black, 1 liquid glass, 2 light. */
     static volatile int look = 0;
@@ -209,6 +212,36 @@ final class PatchNative {
         return power != null && power.isIgnoringBatteryOptimizations(app.getPackageName());
     }
 
+    static String batteryUsage() {
+        BatteryManager battery = app.getSystemService(BatteryManager.class);
+        if (battery == null) return null;
+        int level = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY);
+        if (level < 0 || level > 100) return null;
+        String text = "Device battery: " + level + "%";
+        int current = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW);
+        if (current != Integer.MIN_VALUE && current != 0) {
+            text += current < 0 ? " · draining " : " · charging ";
+            text += Math.abs((long) current) / 1000 + " mA";
+        } else {
+            text += battery.isCharging() ? " · charging/full" : " · not charging";
+        }
+        return text;
+    }
+
+    static void openBatterySettings() {
+        main.post(() -> {
+            Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:" + app.getPackageName()));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            try {
+                app.startActivity(intent);
+            } catch (RuntimeException e) {
+                Log.w(TAG, "no app battery settings", e);
+                Toast.makeText(app, "App settings unavailable", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
     static void requestBatteryUnrestricted() {
         main.post(() -> {
             Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
@@ -230,7 +263,12 @@ final class PatchNative {
     }
 
     static void copyText(String text) {
-        main.post(() -> clipboard.setPrimaryClip(ClipData.newPlainText("Patch", text)));
+        Runnable copy = () -> clipboard.setPrimaryClip(ClipData.newPlainText("Patch", text));
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            copy.run();
+        } else {
+            main.post(copy);
+        }
     }
 
     static String clipboardText() {

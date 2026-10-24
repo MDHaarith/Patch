@@ -380,10 +380,12 @@ export component OverlayWindow inherits Window {
         popup := OverlayPanel {
             visible: root.panel-surface && root.reveal > 0;
             opacity: root.reveal;
-            width: mobile.panel-width * (0.94 + 0.06 * root.reveal);
-            height: mobile.panel-height * (0.94 + 0.06 * root.reveal);
-            x: mobile.panel-x + (pet.x + pet.width / 2 - mobile.panel-x - self.width / 2) * (1 - root.reveal);
-            y: mobile.panel-y + (mobile.opens-below ? -12px : 12px) * (1 - root.reveal);
+            // Both directions use the current pet rect, including screen/IME clamping.
+            width: pet.width + (mobile.panel-width - pet.width) * root.reveal;
+            height: pet.height + (mobile.panel-height - pet.height) * root.reveal;
+            x: pet.x + (mobile.panel-x - pet.x) * root.reveal;
+            y: pet.y + (mobile.panel-y - pet.y) * root.reveal;
+            clip: true;
             radius: 24px;
         }
     }

@@ -68,7 +68,8 @@ component ListRow inherits VerticalLayout {
     property <bool> renaming;
     spacing: 2px;
     Rectangle {
-        height: Store.mobile ? 40px : 30px;
+        min-height: Store.mobile ? 40px : 30px;
+        vertical-stretch: 0;
         border-radius: 8px;
         background: root.menu-open ? Theme.hover : ta.has-hover ? Theme.hover : transparent;
         ta := TouchArea {
@@ -316,7 +317,7 @@ component SearchBox inherits Rectangle {
     horizontal-stretch: 1;
     min-width: 130px;
     max-width: 220px;
-    height: 30px;
+    height: Math.max(30px, sf.preferred-height);
     sf := Field {
         width: parent.width;
         icon: "search";
@@ -338,7 +339,8 @@ component SearchBox inherits Rectangle {
 
 component Toolbar inherits HorizontalLayout {
     in property <bool> show-controls;
-    height: 50px;
+    min-height: 50px;
+    vertical-stretch: 0;
     padding-left: 12px;
     padding-right: 12px;
     spacing: 6px;
@@ -477,7 +479,7 @@ component DesktopShell inherits Rectangle {
         clip: true;
         VerticalLayout {
             Rectangle {
-                height: 50px;
+                height: Math.max(50px, tb.preferred-height);
                 if Store.custom-chrome: TouchArea {
                     pointer-event(e) => {
                         if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
@@ -510,7 +512,8 @@ component DesktopShell inherits Rectangle {
         clip: true;
         EditorPanel {}
     }
-    if Store.settings-open: Rectangle {
+    // A hidden desktop panel still creates its controls and usage timer on phones.
+    if !Store.mobile && Store.settings-open: Rectangle {
         background: #00000066;
         TouchArea { clicked => { Store.settings-open = false; } }
         Glass {
@@ -532,6 +535,7 @@ component DesktopShell inherits Rectangle {
 component MobileShell inherits Rectangle {
     property <bool> searching;
     VerticalLayout {
+        visible: !Store.settings-open;
         Rectangle { height: Store.safe-top; }
         HorizontalLayout {
             height: 56px;
@@ -589,17 +593,18 @@ component MobileShell inherits Rectangle {
 
     // Bottom quick-add dock
     dock := Glass {
+        visible: !Store.settings-open;
         x: 12px;
         y: parent.height - self.height - 12px - Store.safe-bottom;
         width: parent.width - 24px;
-        height: 60px;
+        height: Math.max(60px, dock-input.preferred-height + 16px);
         radius: 30px;
         fill: Theme.dock;
         HorizontalLayout {
             padding: 8px;
             padding-left: 18px;
             spacing: 8px;
-            Field {
+            dock-input := Field {
                 y: (parent.height - self.height) / 2;
                 horizontal-stretch: 1;
                 boxed: false;
@@ -625,6 +630,7 @@ component MobileShell inherits Rectangle {
     property <float> editor-t: Store.editor-open ? 1 : 0;
     animate editor-t { duration: 220ms; easing: ease-out; }
     if root.editor-t > 0: Rectangle {
+        visible: !Store.settings-open;
         y: parent.height * (1 - root.editor-t) * 0.25;
         opacity: root.editor-t;
         background: Theme.solid;
@@ -712,6 +718,8 @@ export component MainWindow inherits Window {
         }
 
         frame := Rectangle {
+            // The phone's opaque Settings sheet covers this entire backdrop.
+            visible: !Store.mobile || !Store.settings-open;
             border-radius: root.corner;
             clip: true;
             border-width: root.framed ? 1px : 0px;
