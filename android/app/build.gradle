@@ -37,7 +37,6 @@ android {
         testInstrumentationRunner "com.mdhaarith.patch.TextEditingCheck"
         versionCode cargoVersion[1].toInteger() * 10000 + cargoVersion[2].toInteger() * 100 + cargoVersion[3].toInteger()
         versionName "${cargoVersion[1]}.${cargoVersion[2]}.${cargoVersion[3]}"
-        buildConfigField "String", "RELEASE_TAG", groovy.json.JsonOutput.toJson(System.getenv("PATCH_RELEASE_TAG") ?: "")
         ndk {
             abiFilters "arm64-v8a", "x86_64"
         }

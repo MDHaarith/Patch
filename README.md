@@ -92,8 +92,8 @@ Build dependencies (Debian/Ubuntu): `build-essential pkg-config libfontconfig1-d
 ### Android
 
 **[Download the latest APK](https://github.com/MDHaarith/Patch/releases/latest)** from the
-Releases page. Every push to `main` publishes `v<version>-build.<n>`, and
-`v*` tags publish clean versions.
+Releases page. Every push to `main` publishes `v<version>` from `Cargo.toml`, so
+bump it (0.1.1 → 0.1.2) in every PR to `main`; CI rejects a version that is already released.
 Open the `.apk` on your phone to install it, then long-press the home screen →
 *Widgets* → **Patch** to add the widget.
 For future updates, use Settings → About → **Check for updates**, then confirm the Android installer; your data stays intact.

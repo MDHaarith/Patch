@@ -4,7 +4,7 @@ members = ["crates/core", "crates/sync", "crates/ui", "crates/android", "apps/li
 default-members = ["crates/core", "crates/sync", "crates/ui", "apps/linux"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/MDHaarith/Patch"
