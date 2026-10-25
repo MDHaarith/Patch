@@ -11,7 +11,7 @@ use crate::ime::{ImeMode, ImeOp, ImeSnapshot};
 use crate::input::{self, TouchAction};
 use crate::platform::{Created, PatchPlatform};
 use crate::window::SurfaceWindow;
-use patch_ui::{Actions, App, MainWindow, OverlayWindow, Theme};
+use patch_ui::{Actions, App, MainWindow, OverlayWindow, Store, Theme};
 use slint::platform::{WindowAdapter, WindowEvent};
 use slint::{ComponentHandle, PhysicalSize};
 use std::path::PathBuf;
@@ -75,6 +75,8 @@ pub trait Bridge {
     /// The app's look changed (0 matte, 1 glass, 2 light): system bar icons
     /// and the window background follow it.
     fn set_look(&self, look: i32);
+    fn set_liquid_glass(&self, _enabled: bool, _radius: i32) {}
+    fn overlay_panel(&self, _rect: [i32; 5]) {}
     /// The home-screen widget's state changed (JSON, see
     /// [`patch_ui::Host::publish_snapshot`]); Java stores it and redraws the
     /// widgets.
@@ -128,6 +130,7 @@ pub enum Msg {
         top: f32,
         bottom: f32,
     },
+    ImeAnimating(bool),
     Density(f32),
     /// Play pose and facing, using patch_ui::pet::Play codes.
     PetPlay(i32),
@@ -137,6 +140,7 @@ pub enum Msg {
         y: f32,
     },
     OverlayAllowed(bool),
+    OverlayBlur(bool),
     /// The user hid the overlay from its notification.
     OverlayClosed,
     /// The activity paused: save, then reply.
@@ -181,6 +185,7 @@ struct Slot {
     repaint_all: bool,
     present_all: bool,
     frame_waiters: u32,
+    panel_rect: Option<[i32; 5]>,
     /// A new or resized surface paints nothing until Java asks for the frame
     /// it syncs with the window's move; an earlier buffer shows at the old spot.
     sync_until: Option<Instant>,
@@ -195,9 +200,24 @@ impl Slot {
             return;
         }
         self.sync_until = None;
-        let dirty = self
-            .window
-            .draw(&mut self.frame, std::mem::take(&mut self.repaint_all));
+        let full = std::mem::take(&mut self.repaint_all);
+        let dirty = match &self.component {
+            Component::Main(main) => self.window.draw_main(&mut self.frame, full, main),
+            Component::Overlay(c) => {
+                let dirty = self.window.draw(&mut self.frame, full);
+                if dirty.is_some() {
+                    let r = c.global::<Store>().get_overlay_panel();
+                    let scale = c.window().scale_factor();
+                    let rect = [r.x, r.y, r.width, r.height, r.radius]
+                        .map(|v| (v * scale).round() as i32);
+                    if self.panel_rect != Some(rect) {
+                        self.panel_rect = Some(rect);
+                        bridge.overlay_panel(rect);
+                    }
+                }
+                dirty
+            },
+        };
         let rect = if self.present_all {
             Some(Rect::full(self.frame.width(), self.frame.height()))
         } else {
@@ -259,6 +279,8 @@ pub struct Runtime {
     overlay: Option<Slot>,
     last_frame: Instant,
     look: Option<i32>,
+    liquid: Option<(bool, i32)>,
+    overlay_blur: bool,
     /// A [`Msg::NewTask`] arrived before the main window.
     new_task: bool,
 }
@@ -292,6 +314,8 @@ impl Runtime {
             overlay: None,
             last_frame: Instant::now(),
             look: None,
+            liquid: None,
+            overlay_blur: false,
             new_task: false,
         })
     }
@@ -414,6 +438,11 @@ impl Runtime {
                 let consumed = self.app.back();
                 self.bridge.back_result(consumed);
             }
+            Msg::ImeAnimating(active) => {
+                if let Some(Slot { component: Component::Main(main), .. }) = &self.main {
+                    main.global::<Store>().set_ime_animating(active);
+                }
+            }
             Msg::Insets { top, bottom } => {
                 self.insets = (top, bottom);
                 self.apply_insets();
@@ -436,6 +465,12 @@ impl Runtime {
                 if let Some(c) = self.overlay_window() {
                     c.set_pet_x(x);
                     c.set_pet_y(y);
+                }
+            }
+            Msg::OverlayBlur(enabled) => {
+                self.overlay_blur = enabled;
+                if let Some(Slot { component: Component::Overlay(c), .. }) = &self.overlay {
+                    c.global::<Store>().set_overlay_blur(enabled);
                 }
             }
             Msg::OverlayAllowed(allowed) => self.app.set_overlay_allowed(allowed),
@@ -487,6 +522,7 @@ impl Runtime {
 
     /// Advances animations and paints every window that has a surface.
     pub fn frame(&mut self) {
+        self.app.set_pet_visible(self.slots().any(|slot| slot.surface.is_some()));
         slint::platform::update_timers_and_animations();
         let now = Instant::now();
         let bridge = self.bridge.clone();
@@ -506,14 +542,17 @@ impl Runtime {
     }
 
     fn sync_look(&mut self) {
-        let Some(Slot {
-            component: Component::Main(main),
-            ..
-        }) = &self.main
-        else {
-            return;
+        let (theme, store) = match self.main.as_ref().or(self.overlay.as_ref()).map(|s| &s.component) {
+            Some(Component::Main(c)) => (c.global::<Theme>(), c.global::<Store>()),
+            Some(Component::Overlay(c)) => (c.global::<Theme>(), c.global::<Store>()),
+            None => return,
         };
-        let theme = main.global::<Theme>();
+        let liquid = (theme.get_glass() && store.get_liquid_glass(),
+            (store.get_glass_blur() * self.scale).round() as i32);
+        if self.liquid != Some(liquid) {
+            self.liquid = Some(liquid);
+            self.bridge.set_liquid_glass(liquid.0, liquid.1);
+        }
         let look = if theme.get_light() {
             2
         } else if theme.get_glass() {
@@ -591,6 +630,10 @@ impl Runtime {
             .dispatch_event(WindowEvent::ScaleFactorChanged {
                 scale_factor: self.scale,
             });
+        match &component {
+            Component::Main(c) => c.global::<Store>().set_liquid_supported(true),
+            Component::Overlay(c) => c.global::<Store>().set_overlay_blur(self.overlay_blur),
+        }
         Ok(Slot {
             kind,
             component,
@@ -600,6 +643,7 @@ impl Runtime {
             repaint_all: true,
             present_all: true,
             frame_waiters: 0,
+            panel_rect: None,
             sync_until: None,
         })
     }

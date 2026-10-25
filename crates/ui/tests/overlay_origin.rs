@@ -57,7 +57,7 @@ fn both_directions_use_the_current_pet_after_screen_and_keyboard_clamping() {
             render(0, height);
             let pixels = render(if expanded { 40 } else { 110 }, height);
             let backdrop = pixels[339].alpha;
-            assert!(backdrop > 0, "sample during the animation");
+            assert_eq!(backdrop, 0, "outside stays transparent during the animation");
             assert_eq!(
                 pixels[far_y * 340 + 170].alpha,
                 backdrop,

@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
 import { Icon } from "icons.slint";
-import { Store, Actions, TaskItem } from "store.slint";
+import { GlassRect, Store, Actions, TaskItem } from "store.slint";
 import { Glass, Field, IconButton, Segmented, Scroll, Check, Priority } from "widgets.slint";
 import { TaskRow } from "rows.slint";
 import { Pet } from "pet.slint";
@@ -27,8 +27,8 @@ export component OverlayPanel inherits Rectangle {
         width: parent.width;
         height: parent.height;
         radius: root.radius;
-        // Glass themes share the user's opacity; other mobile panels stay opaque.
-        fill: Store.mobile && !Theme.glass ? Theme.float.with-alpha(1) : Theme.float;
+        // Android reports the compositor's live blur availability.
+        fill: Store.mobile ? Theme.float.with-alpha(Store.overlay-blur && Store.liquid-glass && Theme.glass ? Store.glass-opacity : (Theme.glass ? max(0.94, Theme.float.alpha) : 1)) : Theme.float;
         elevated: false;
         VerticalLayout {
             padding: 12px;
@@ -346,7 +346,6 @@ export component OverlayWindow inherits Window {
         // Keep the panel mounted until Java shrinks the surface after the close animation.
         Rectangle {
             visible: root.panel-surface;
-            background: #000000.with-alpha(0.4 * root.reveal);
             TouchArea { clicked => { root.toggle-mobile(); } }
         }
         pet := Bubble {
@@ -379,6 +378,9 @@ export component OverlayWindow inherits Window {
             x: popup.x; y: popup.y; width: popup.width; height: popup.height;
         }
         popup := OverlayPanel {
+            property <GlassRect> geometry: { x: self.absolute-position.x, y: self.absolute-position.y, width: Store.overlay-expanded && root.reveal == 1 ? self.width : 0px, height: self.height, radius: self.radius };
+            changed geometry => { Store.overlay-panel = self.geometry; }
+            init => { Store.overlay-panel = self.geometry; }
             visible: root.panel-surface && root.reveal > 0;
             opacity: root.reveal;
             // Both directions use the current pet rect, including screen/IME clamping.

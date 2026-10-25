@@ -11,6 +11,11 @@ pub struct Prefs {
     #[serde(default)]
     pub theme_version: u8,
     pub glass_opacity: f32,
+    pub liquid_glass: bool,
+    pub glass_blur: f32,
+    pub glass_refraction: f32,
+    pub glass_chromatic: bool,
+    pub glass_depth: bool,
     /// Index into `pet::SKINS`.
     pub pet_skin: i32,
     pub week_monday: bool,
@@ -45,6 +50,11 @@ impl Default for Prefs {
             look: 0,
             theme_version: 1,
             glass_opacity: 0.85,
+            liquid_glass: true,
+            glass_blur: 6.0,
+            glass_refraction: 0.5,
+            glass_chromatic: true,
+            glass_depth: true,
             pet_skin: 0,
             week_monday: true,
             time_24h: true,
@@ -79,6 +89,8 @@ impl Prefs {
         }
         prefs.theme_version = 1;
         prefs.glass_opacity = glass_opacity(prefs.glass_opacity);
+        prefs.glass_blur = glass_blur(prefs.glass_blur);
+        prefs.glass_refraction = glass_refraction(prefs.glass_refraction);
         prefs
     }
 
@@ -113,6 +125,39 @@ mod tests {
         assert_eq!(glass_opacity(-1.0), 0.25);
         assert_eq!(glass_opacity(2.0), 0.95);
         assert_eq!(glass_opacity(f32::NAN), 0.85);
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+pub fn glass_blur(value: f32) -> f32 {
+    if value.is_finite() { value.clamp(0.0, 20.0) } else { 6.0 }
+}
+
+pub fn glass_refraction(value: f32) -> f32 {
+    if value.is_finite() { value.clamp(0.0, 1.0) } else { 0.5 }
+}
+
+#[cfg(test)]
+mod liquid_tests {
+    use super::*;
+    #[test]
+    fn clamps_liquid_settings() {
+        assert_eq!(glass_blur(-1.0), 0.0);
+        assert_eq!(glass_blur(30.0), 20.0);
+        assert_eq!(glass_blur(f32::NAN), 6.0);
+        assert_eq!(glass_refraction(-1.0), 0.0);
+        assert_eq!(glass_refraction(2.0), 1.0);
+        assert_eq!(glass_refraction(f32::INFINITY), 0.5);
+        let path = std::env::temp_dir().join(format!("patch-liquid-prefs-{}.json", std::process::id()));
+        let prefs = Prefs {
+            liquid_glass: false, glass_blur: 99.0, glass_refraction: -2.0,
+            glass_chromatic: false, glass_depth: false, ..Prefs::default()
+        };
+        prefs.save(&path).unwrap();
+        let loaded = Prefs::load(&path);
+        assert!(!loaded.liquid_glass && !loaded.glass_chromatic && !loaded.glass_depth);
+        assert_eq!(loaded.glass_blur, 20.0);
+        assert_eq!(loaded.glass_refraction, 0.0);
         std::fs::remove_file(path).unwrap();
     }
 }

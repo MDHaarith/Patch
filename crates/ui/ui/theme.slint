@@ -8,12 +8,10 @@ export global Theme {
     in-out property <bool> glass: false;
     out property <bool> matte: !light && !glass;
 
-    // Backdrop and the soft light blooms behind glass themes.
+    // Backdrop colours.
     in-out property <color> backdrop-top: #0b0b0c;
     in-out property <color> backdrop-bottom: #060607;
-    out property <brush> backdrop: @linear-gradient(165deg, backdrop-top 0%, backdrop-bottom 100%);
-    in-out property <color> bloom-a: transparent;
-    in-out property <color> bloom-b: transparent;
+    out property <brush> backdrop: backdrop-top == backdrop-bottom ? backdrop-top : @linear-gradient(165deg, backdrop-top 0%, backdrop-bottom 100%);
     // Opaque base colour for full-screen sheets on phones.
     in-out property <color> solid: #0b0b0c;
 

@@ -185,6 +185,38 @@ export component SettingsPanel inherits Rectangle {
                             changed(v) => { Actions.set-glass-opacity(v); }
                         }
                     }
+                    if Theme.glass && Store.liquid-supported: VerticalLayout {
+                        spacing: 8px;
+                        Row {
+                            label: "Enable liquid glass";
+                            Toggle { checked: Store.liquid-glass; toggled(v) => { Actions.set-liquid(0, v ? 1 : 0); } }
+                        }
+                        Text {
+                            text: "Rendering liquid glass is performance heavy and may reduce smoothness and battery life";
+                            wrap: word-wrap;
+                            color: Theme.text-2;
+                            font-size: Theme.fs-s;
+                        }
+                        if Store.liquid-glass: VerticalLayout {
+                            Row {
+                                label: "Blur radius";
+                                hint: round(Store.glass-blur) + "px";
+                                Slider { width: 140px; minimum: 0; maximum: 20; value: Store.glass-blur; changed(v) => { Actions.set-liquid(1, v); } }
+                            }
+                            Row {
+                                label: "Refraction";
+                                Slider { width: 140px; minimum: 0; maximum: 1; value: Store.glass-refraction; changed(v) => { Actions.set-liquid(2, v); } }
+                            }
+                            Row {
+                                label: "Chromatic aberration";
+                                Toggle { checked: Store.glass-chromatic; toggled(v) => { Actions.set-liquid(3, v ? 1 : 0); } }
+                            }
+                            Row {
+                                label: "Depth effect";
+                                Toggle { checked: Store.glass-depth; toggled(v) => { Actions.set-liquid(4, v ? 1 : 0); } }
+                            }
+                        }
+                    }
                     Row {
                         label: "Patch's colour";
                         HorizontalLayout {
@@ -384,7 +416,7 @@ export component SettingsPanel inherits Rectangle {
                 if Store.mobile: Card {
                     title: "Background";
                     icon: "clock";
-                    Timer { interval: 2s; running: true; triggered => { Actions.refresh-background(); } }
+                    Timer { interval: 2s; running: Store.settings-open && root.visible; triggered => { Actions.refresh-background(); } }
                     init => { Actions.refresh-background(); }
                     if Store.mobile: Button {
                         text: "App battery settings";

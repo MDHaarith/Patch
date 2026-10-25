@@ -13,6 +13,7 @@
 //! ```
 
 pub mod buffer;
+pub mod glass;
 pub mod host;
 pub mod ime;
 pub mod input;

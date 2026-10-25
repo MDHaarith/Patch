@@ -22,16 +22,13 @@ pub struct Spec {
     /// Surface colour for panels (matte) or the glass tint.
     surface: &'static str,
     accent: &'static str,
-    /// Soft light blooms behind glass, "" for none.
-    bloom_a: &'static str,
-    bloom_b: &'static str,
 }
 
 pub const THEMES: [Spec; 4] = [
-    Spec { name: "Matte Black", kind: Kind::Matte, top: "#0B0B0C", bottom: "#060607", surface: "#121214", accent: "#0A84FF", bloom_a: "", bloom_b: "" },
-    Spec { name: "Black Glass", kind: Kind::Glass, top: "#1C1C1E", bottom: "#000000", surface: "#1C1C1E", accent: "#0A84FF", bloom_a: "#8E8E93", bloom_b: "#426080" },
-    Spec { name: "Light", kind: Kind::Light, top: "#F5F5F7", bottom: "#ECECF0", surface: "#FFFFFF", accent: "#007AFF", bloom_a: "", bloom_b: "" },
-    Spec { name: "Light Glass", kind: Kind::LightGlass, top: "#EDF2FA", bottom: "#E5E5EF", surface: "#FFFFFF", accent: "#007AFF", bloom_a: "#A8CCFF", bloom_b: "#E5BDEB" },
+    Spec { name: "Matte Black", kind: Kind::Matte, top: "#0B0B0C", bottom: "#060607", surface: "#121214", accent: "#0A84FF" },
+    Spec { name: "Black Glass", kind: Kind::Glass, top: "#000000", bottom: "#000000", surface: "#1C1C1E", accent: "#0A84FF" },
+    Spec { name: "Light", kind: Kind::Light, top: "#F5F5F7", bottom: "#ECECF0", surface: "#FFFFFF", accent: "#007AFF" },
+    Spec { name: "Light Glass", kind: Kind::LightGlass, top: "#EDF2FA", bottom: "#E5E5EF", surface: "#FFFFFF", accent: "#007AFF" },
 ];
 
 fn rgba(hex: &str, alpha: f32) -> Color {
@@ -68,8 +65,6 @@ pub fn apply(t: &Theme, index: i32, opacity: f32) {
     t.set_backdrop_top(top);
     t.set_backdrop_bottom(bottom);
     t.set_accent(accent);
-    t.set_bloom_a(if s.bloom_a.is_empty() { Color::default() } else { rgba(s.bloom_a, if matches!(s.kind, Kind::Glass) { 0.1 } else { 0.33 }) });
-    t.set_bloom_b(if s.bloom_b.is_empty() { Color::default() } else { rgba(s.bloom_b, if matches!(s.kind, Kind::Glass) { 0.07 } else { 0.2 }) });
     match s.kind {
         Kind::Light | Kind::LightGlass => {
             t.set_light(true);
@@ -112,26 +107,15 @@ pub fn apply(t: &Theme, index: i32, opacity: f32) {
             t.set_glass(glass);
             t.set_solid(mix(top, bottom, 0.55));
             if glass {
-                t.set_glint(white(0.6));
-                t.set_panel(white(0.08));
-                t.set_panel_strong(white(0.12));
-                t.set_content(white(0.05));
-                t.set_float(surface.with_alpha(0.86));
-                t.set_modal(mix(surface, bottom, 0.4).with_alpha(0.95));
-                t.set_dock(surface.with_alpha(0.9));
-                t.set_card(white(0.15));
-                t.set_picker(white(0.12));
-                t.set_bubble_top(mix(surface, white(1.0), 0.15));
-                t.set_bubble_bottom(mix(surface, bottom, 0.5));
-                t.set_well(white(0.08));
-                t.set_hairline(white(0.22));
-                t.set_edge(white(0.35));
+                t.set_well(rgba("#1C1C1E", 0.85));
+                t.set_hairline(white(0.1));
+                t.set_edge(white(0.14));
                 t.set_sheen_color(white(0.16));
                 t.set_sheen_reach(0.4);
                 t.set_text_2(white(0.75));
                 t.set_text_3(white(0.44));
-                t.set_range(white(0.22));
-                t.set_chip(white(0.18));
+                t.set_range(color("#2C2C2E"));
+                t.set_chip(color("#2C2C2E"));
             } else {
                 let lift = |a: f32| mix(surface, white(1.0), a);
                 t.set_panel(surface);
@@ -171,8 +155,8 @@ pub fn apply(t: &Theme, index: i32, opacity: f32) {
         let opacity = crate::prefs::glass_opacity(opacity);
         let light = matches!(s.kind, Kind::LightGlass);
         t.set_glass(true);
-        t.set_glint(white(if light { 0.9 } else { 0.6 }));
-        t.set_sheen_color(white(if light { 0.3 } else { 0.12 }));
+        t.set_glint(white(if light { 0.9 } else { 0.16 }));
+        t.set_sheen_color(white(if light { 0.3 } else { 0.03 }));
         t.set_sheen_reach(0.4);
         let pane = |alpha| surface.with_alpha(alpha * opacity);
         t.set_panel(pane(0.65));
@@ -203,9 +187,9 @@ pub fn cards() -> Vec<ThemeCard> {
                 mid: mix(color(s.top), color(s.bottom), 0.5),
                 card: if glass { surface.with_alpha(0.65) } else if light { surface } else { mix(surface, white(1.0), 0.06) },
                 ink: if light { color("#1D1D1F") } else { color("#F5F5F7") },
-                band: if light { mix(color(s.bottom), black(1.0), 0.08) } else if glass { white(0.24) } else { mix(surface, white(1.0), 0.18) },
+                band: if light { mix(color(s.bottom), black(1.0), 0.08) } else if glass { color("#2C2C2E") } else { mix(surface, white(1.0), 0.18) },
                 accent: color(s.accent),
-                edge: if light { black(0.08) } else { white(if glass { 0.3 } else { 0.12 }) },
+                edge: if light { black(0.08) } else { white(if glass { 0.14 } else { 0.12 }) },
             }
         })
         .collect()

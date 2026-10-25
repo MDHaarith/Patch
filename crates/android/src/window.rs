@@ -2,13 +2,16 @@
 //! [`BackBuffer`] and captures the text input's keyboard requests.
 
 use crate::buffer::{BackBuffer, Rect};
+use crate::glass::{Glass, Settings};
 use crate::ime::ImeState;
 use i_slint_core::input::FocusReason;
 use i_slint_core::item_tree::{ItemRc, ItemWeak, ParentItemTraversalMode};
 use i_slint_core::items::{InputType, TextInput, TouchArea};
 use i_slint_core::window::{InputMethodRequest, WindowAdapterInternal, WindowInner};
+use patch_ui::{MainWindow, Store, Theme};
 use slint::platform::software_renderer::{RepaintBufferType, SoftwareRenderer};
 use slint::platform::{Renderer, WindowAdapter, WindowEvent};
+use slint::ComponentHandle;
 use slint::{LogicalPosition, PhysicalSize, Window, WindowSize};
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -20,6 +23,8 @@ pub struct SurfaceWindow {
     needs_redraw: Cell<bool>,
     pub ime: RefCell<ImeState>,
     selection_drag: RefCell<Option<ItemWeak>>,
+    glass: RefCell<Glass>,
+    glass_state: Cell<Option<(Rect, Settings)>>,
 }
 
 impl SurfaceWindow {
@@ -33,6 +38,8 @@ impl SurfaceWindow {
             needs_redraw: Cell::new(false),
             ime: RefCell::default(),
             selection_drag: RefCell::default(),
+            glass: RefCell::default(),
+            glass_state: Cell::new(None),
         })
     }
 
@@ -123,6 +130,77 @@ impl SurfaceWindow {
 
     pub fn end_selection_drag(&self) {
         self.selection_drag.borrow_mut().take();
+    }
+
+    /// Render normally to learn the actual damage before touching the backdrop.
+    /// Capture and final passes only invalidate the dock; unrelated frames keep
+    /// the cached image. No timers or work are added to the idle path.
+    pub fn draw_main(&self, frame: &mut BackBuffer, full: bool, main: &MainWindow) -> Option<Rect> {
+        let dirty = self.draw(frame, full)?;
+        let store = main.global::<Store>();
+        let theme = main.global::<Theme>();
+        if !store.get_liquid_supported()
+            || !store.get_liquid_glass()
+            || !theme.get_glass()
+            || store.get_settings_open()
+            || store.get_editor_open()
+            || store.get_ime_animating()
+        {
+            self.glass_state.set(None);
+            return Some(dirty);
+        }
+        let scale = self.window.scale_factor();
+        let dock = store.get_dock_rect();
+        let rect = Rect::new(
+            (dock.x * scale).round().max(0.0) as u32,
+            (dock.y * scale).round().max(0.0) as u32,
+            (dock.width * scale).round().max(0.0) as u32,
+            (dock.height * scale).round().max(0.0) as u32,
+        )
+        .clamp(frame.width(), frame.height());
+        if rect.is_empty() {
+            return Some(dirty);
+        }
+        let tint = theme.get_dock();
+        let settings = Settings {
+            blur: store.get_glass_blur(),
+            refraction: store.get_glass_refraction(),
+            chromatic: store.get_glass_chromatic(),
+            depth: store.get_glass_depth(),
+            tint: [tint.red(), tint.green(), tint.blue()],
+            opacity: store.get_glass_opacity(),
+            scale,
+        };
+        let margin = (settings.blur * scale * 2.0).ceil() as u32;
+        let intersects = dirty.x < rect.right().saturating_add(margin)
+            && dirty.right().saturating_add(margin) > rect.x
+            && dirty.y < rect.bottom().saturating_add(margin)
+            && dirty.bottom().saturating_add(margin) > rect.y;
+        if !intersects && self.glass_state.get() == Some((rect, settings)) {
+            return Some(dirty);
+        }
+        store.set_glass_capture(true);
+        // Clear the source while capturing; the filter alternates reusable outputs.
+        store.set_dock_glass(slint::Image::default());
+        let stride = frame.width() as usize;
+        self.renderer.render(frame.pixels_mut(), stride);
+        let (w, h) = (frame.width(), frame.height());
+        let image = self
+            .glass
+            .borrow_mut()
+            .render(frame.pixels_mut(), w, h, rect, settings);
+        store.set_dock_glass(slint::Image::from_rgba8(image));
+        store.set_glass_capture(false);
+        let region = self.renderer.render(frame.pixels_mut(), w as usize);
+        self.glass_state.set(Some((rect, settings)));
+        // These property changes have already been painted, not a new animation.
+        self.needs_redraw.set(false);
+        Some(
+            dirty
+                .union(Rect::bounds_of(&region))
+                .union(rect)
+                .clamp(w, h),
+        )
     }
 
     /// Renders into `frame` if Slint asked for a redraw, or everything when

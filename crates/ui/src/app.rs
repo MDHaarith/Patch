@@ -202,6 +202,7 @@ pub struct App {
     pet_mood: Cell<i32>,
     pet_play: Cell<crate::pet::Play>,
     pet_recovery: Timer,
+    pet_idle: Timer,
     timers: RefCell<Vec<Timer>>,
     toast_timer: Timer,
     focus_timer: Timer,
@@ -336,6 +337,7 @@ impl App {
             pet_mood: Cell::new(1),
             pet_play: Cell::default(),
             pet_recovery: Timer::default(),
+            pet_idle: Timer::default(),
             timers: RefCell::new(Vec::new()),
             toast_timer: Timer::default(),
             focus_timer: Timer::default(),
@@ -391,15 +393,7 @@ impl App {
             }
         });
         timers.push(t);
-        // The pet's idle animation: bob and shuffle, blinking now and then.
-        let weak = Rc::downgrade(self);
-        let t = Timer::default();
-        t.start(TimerMode::Repeated, StdDuration::from_millis(450), move || {
-            if let Some(app) = weak.upgrade() {
-                app.animate_pet();
-            }
-        });
-        timers.push(t);
+        self.set_pet_visible(true);
         // Clock, "now" line, day rollover and reminders.
         let weak = Rc::downgrade(self);
         let t = Timer::default();
@@ -498,6 +492,11 @@ impl App {
         let p = self.prefs.borrow();
         themes::apply(theme, p.look, p.glass_opacity);
         s.set_glass_opacity(p.glass_opacity);
+        s.set_liquid_glass(p.liquid_glass);
+        s.set_glass_blur(p.glass_blur);
+        s.set_glass_refraction(p.glass_refraction);
+        s.set_glass_chromatic(p.glass_chromatic);
+        s.set_glass_depth(p.glass_depth);
         s.set_theme(p.look);
         s.set_pet_skin(p.pet_skin);
         s.set_pet_image(crate::pet::image(
@@ -843,6 +842,28 @@ impl App {
             app.each_theme(|t| themes::apply(t, look, app.prefs.borrow().glass_opacity));
             app.each_store(|s| s.set_theme(look));
             app.refresh();
+        });
+        on!(on_set_liquid, |app, key, value| {
+            {
+                let mut p = app.prefs.borrow_mut();
+                match key {
+                    0 => p.liquid_glass = value != 0.0,
+                    1 => p.glass_blur = crate::prefs::glass_blur(value),
+                    2 => p.glass_refraction = crate::prefs::glass_refraction(value),
+                    3 => p.glass_chromatic = value != 0.0,
+                    4 => p.glass_depth = value != 0.0,
+                    _ => return,
+                }
+            }
+            app.save_prefs();
+            app.each_store(|s| {
+                let p = app.prefs.borrow();
+                s.set_liquid_glass(p.liquid_glass);
+                s.set_glass_blur(p.glass_blur);
+                s.set_glass_refraction(p.glass_refraction);
+                s.set_glass_chromatic(p.glass_chromatic);
+                s.set_glass_depth(p.glass_depth);
+            });
         });
         on!(on_set_glass_opacity, |app, value| {
             let value = crate::prefs::glass_opacity(value);
@@ -1688,6 +1709,23 @@ impl App {
         e.alert_options = alerts;
     }
 
+    /// Android stops idle wakeups when neither window has a drawable surface.
+    pub fn set_pet_visible(self: &Rc<Self>, visible: bool) {
+        if visible == self.pet_idle.running() {
+            return;
+        }
+        if visible {
+            let weak = Rc::downgrade(self);
+            self.pet_idle.start(TimerMode::Repeated, StdDuration::from_millis(450), move || {
+                if let Some(app) = weak.upgrade() {
+                    app.animate_pet();
+                }
+            });
+        } else {
+            self.pet_idle.stop();
+        }
+    }
+
     fn animate_pet(&self) {
         let tick = self.pet_tick.get().wrapping_add(1);
         self.pet_tick.set(tick);
@@ -1719,13 +1757,19 @@ impl App {
         let blink = tick.is_multiple_of(9);
         let skin = self.prefs.borrow().pet_skin.max(0) as usize;
         let img = crate::pet::image(crate::pet::Mood::from_index(self.pet_mood.get()), tick, blink, skin);
-        self.each_store(|s| s.set_pet_image(img.clone()));
-        if self.pet_play.get() != crate::pet::Play::Idle {
-            if let Some(w) = self.overlay.borrow().as_ref().and_then(|w| w.upgrade()) {
-                w.global::<Store>().set_pet_image(crate::pet::play_image(
-                    crate::pet::Mood::from_index(self.pet_mood.get()), tick, false, skin, self.pet_play.get(),
-                ));
-            }
+        if let Some(w) = self.main.borrow().as_ref().and_then(|w| w.upgrade()) {
+            set_pet_image(&w.global::<Store>(), img.clone());
+        }
+        if let Some(w) = self.desk.borrow().as_ref().and_then(|w| w.upgrade()) {
+            set_pet_image(&w.global::<Store>(), img.clone());
+        }
+        if let Some(w) = self.overlay.borrow().as_ref().and_then(|w| w.upgrade()) {
+            let image = if self.pet_play.get() == crate::pet::Play::Idle {
+                img
+            } else {
+                crate::pet::play_image(crate::pet::Mood::from_index(self.pet_mood.get()), tick, false, skin, self.pet_play.get())
+            };
+            set_pet_image(&w.global::<Store>(), image);
         }
     }
 
@@ -1906,6 +1950,14 @@ impl App {
         self.publish_snapshot(&ctx, mood, today_open);
         self.refresh_clock();
         self.sync_os_reminders();
+    }
+}
+
+fn set_pet_image(store: &Store, image: slint::Image) {
+    let unchanged = store.get_pet_image().to_rgba8().zip(image.to_rgba8())
+        .is_some_and(|(old, new)| old.width() == new.width() && old.height() == new.height() && old.as_bytes() == new.as_bytes());
+    if !unchanged {
+        store.set_pet_image(image);
     }
 }
 

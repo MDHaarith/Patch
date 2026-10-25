@@ -2,6 +2,7 @@ package com.mdhaarith.patch;
 
 import android.animation.ValueAnimator;
 import android.app.Service;
+import android.app.Dialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -10,6 +11,7 @@ import android.content.res.Configuration;
 import android.graphics.Outline;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.IBinder;
 import android.provider.Settings;
@@ -24,6 +26,7 @@ import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewOutlineProvider;
 import android.view.WindowInsets;
+import android.view.Window;
 import android.view.WindowManager;
 import android.view.WindowMetrics;
 import android.view.animation.DecelerateInterpolator;
@@ -56,6 +59,12 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
     private Frame frame;
     private PatchSurfaceView view;
     private WindowManager.LayoutParams lp;
+    private final java.util.function.Consumer<Boolean> blurListener = enabled -> refreshBlur();
+    private boolean blurActive;
+    private Dialog panelBlur;
+    private final Rect panel = new Rect();
+    private int panelRadius;
+    private final GradientDrawable panelBackground = new GradientDrawable();
     private boolean expanded;
     private boolean focusable;
     private boolean imeShown;
@@ -105,6 +114,9 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
         PatchNative.init(this);
         instance = this;
         wm = getSystemService(WindowManager.class);
+        if (Build.VERSION.SDK_INT >= 31) {
+            wm.addCrossWindowBlurEnabledListener(getMainExecutor(), blurListener);
+        }
         density = getResources().getDisplayMetrics().density;
         // Show the window before going foreground: since Android 15 an app
         // may only start a foreground service from the background (boot,
@@ -141,6 +153,14 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
 
     @Override
     public void onDestroy() {
+        if (Build.VERSION.SDK_INT >= 31) {
+            wm.removeCrossWindowBlurEnabledListener(blurListener);
+        }
+        if (panelBlur != null) {
+            panelBlur.dismiss();
+            panelBlur = null;
+        }
+        PatchNative.nativeOverlayBlur(false);
         if (frame != null) {
             frame.cancelPlay();
             frame.removeCallbacks(finishTransition);
@@ -231,6 +251,40 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
 
         placeBubble();
         applySize();
+        if (Build.VERSION.SDK_INT >= 31) {
+            try {
+                // Add first: this window stays below the pet and its touch surface.
+                panelBlur = new Dialog(this, android.R.style.Theme_Translucent_NoTitleBar);
+                panelBlur.create();
+                Window window = panelBlur.getWindow();
+                window.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);
+                window.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                        | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED);
+                window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+                window.setDimAmount(0);
+                window.setDecorFitsSystemWindows(false);
+                // Background blur follows this drawable's bounds and rounded outline.
+                panelBackground.setColor(0x01000000);
+                window.setBackgroundDrawable(panelBackground);
+                WindowManager.LayoutParams params = window.getAttributes();
+                params.gravity = Gravity.TOP | Gravity.LEFT;
+                params.width = 1;
+                params.height = 1;
+                params.format = PixelFormat.TRANSLUCENT;
+                params.windowAnimations = 0;
+                params.setFitInsetsTypes(0);
+                disableMoveAnimation(params);
+                window.setAttributes(params);
+                panelBlur.show();
+                panelBlur.hide();
+            } catch (RuntimeException e) {
+                Log.w(PatchNative.TAG, "can't add panel blur; using opaque panel", e);
+                if (panelBlur != null && panelBlur.isShowing()) panelBlur.dismiss();
+                panelBlur = null;
+            }
+        }
         try {
             wm.addView(frame, lp);
         } catch (RuntimeException e) {
@@ -325,7 +379,46 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
         update();
     }
 
+    static void refreshBlur() {
+        if (instance != null) {
+            instance.update();
+        }
+    }
+
+    static void panelRect(int x, int y, int width, int height, int radius) {
+        if (instance != null) {
+            instance.panel.set(x, y, x + width, y + height);
+            instance.panelRadius = radius;
+            instance.update();
+        }
+    }
+
     private void update() {
+        boolean blur = Build.VERSION.SDK_INT >= 31 && panelBlur != null
+                && expanded && targetExpanded && !panel.isEmpty()
+                && PatchNative.liquidGlass && PatchNative.glassBlurRadius > 0
+                && wm.isCrossWindowBlurEnabled();
+        if (Build.VERSION.SDK_INT >= 31 && panelBlur != null) {
+            Window window = panelBlur.getWindow();
+            if (blur) {
+                WindowManager.LayoutParams params = window.getAttributes();
+                params.x = contentX() + panel.left;
+                params.y = contentY() + panel.top;
+                params.width = panel.width();
+                params.height = panel.height();
+                window.setAttributes(params);
+                panelBackground.setCornerRadius(panelRadius);
+                window.setBackgroundBlurRadius(PatchNative.glassBlurRadius);
+                panelBlur.show();
+            } else {
+                window.setBackgroundBlurRadius(0);
+                panelBlur.hide();
+            }
+        }
+        if (blurActive != blur) {
+            blurActive = blur;
+            PatchNative.nativeOverlayBlur(blur);
+        }
         if (frame != null && frame.isAttachedToWindow()) {
             wm.updateViewLayout(frame, lp);
         }
@@ -376,6 +469,7 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
         } else {
             view.imeState(PatchNative.IME_HIDE, 0, "", 0, 0, -1, -1, 0, 0);
         }
+        update();
         // Slint needs the full surface until its panel and backdrop have faded out.
         frame.postDelayed(finishTransition, TRANSITION_MS);
     }

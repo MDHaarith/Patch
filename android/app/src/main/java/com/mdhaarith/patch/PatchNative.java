@@ -58,6 +58,8 @@ final class PatchNative {
 
     /** Look of the app: 0 matte black, 1 black glass, 2 light, 3 light glass. */
     static volatile int look = 0;
+    static boolean liquidGlass;
+    static int glassBlurRadius;
     static WeakReference<MainActivity> activity = new WeakReference<>(null);
 
     private static Context app;
@@ -314,6 +316,20 @@ final class PatchNative {
         });
     }
 
+    static void setLiquidGlass(boolean enabled, int radius) {
+        main.post(() -> {
+            liquidGlass = enabled;
+            glassBlurRadius = radius;
+            OverlayService.refreshBlur();
+        });
+    }
+
+    static void overlayPanel(int x, int y, int width, int height, int radius) {
+        main.post(() -> OverlayService.panelRect(x, y, width, height, radius));
+    }
+
+    static native void nativeOverlayBlur(boolean enabled);
+
     static void setLook(int value) {
         look = value;
         main.post(() -> {
@@ -348,6 +364,7 @@ final class PatchNative {
     static native void nativeBack();
 
     /** System bar and keyboard insets, in pixels. */
+    static native void nativeImeAnimating(boolean active);
     static native void nativeInsets(float top, float bottom);
 
     static native void nativeDensity(float density);

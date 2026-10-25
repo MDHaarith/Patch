@@ -12,7 +12,7 @@ use patch_android::runtime::{Bridge, Kind, Msg, Runtime, Surface};
 use patch_core::doc::{COL_DOING, COL_TODO, DEFAULT_LIST, LIST_WORK};
 use patch_core::time::{hm, today};
 use patch_core::{Doc, Task};
-use patch_ui::{Actions, Store};
+use patch_ui::{Actions, Store, Theme};
 use slint::ComponentHandle;
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
@@ -28,6 +28,7 @@ struct Recorder {
     ime: RefCell<Vec<(Kind, ImeMode, ImeSnapshot, i32)>>,
     frames: RefCell<Vec<Kind>>,
     expand: RefCell<Vec<bool>>,
+    panels: RefCell<Vec<[i32; 5]>>,
     back: RefCell<Vec<bool>>,
     looks: RefCell<Vec<i32>>,
     clipboard: RefCell<Option<String>>,
@@ -49,6 +50,9 @@ impl Bridge for Recorder {
     fn set_overlay_boot(&self, _on: bool) {}
     fn overlay_expand(&self, expanded: bool) {
         self.expand.borrow_mut().push(expanded);
+    }
+    fn overlay_panel(&self, rect: [i32; 5]) {
+        self.panels.borrow_mut().push(rect);
     }
     fn open_app(&self, _task_id: Option<&str>) {}
     fn notify(&self, _title: &str, _body: &str) {}
@@ -342,6 +346,37 @@ fn renders_and_drives_both_windows() {
         h.settle();
         main.save(&format!("android-main-{name}.png"));
     }
+    // Exercise the actual Android software-renderer capture path.
+    mw.global::<Actions>().invoke_set_view(0);
+    mw.global::<Actions>().invoke_set_look(1);
+    mw.global::<Actions>().invoke_set_glass_opacity(0.4);
+    h.settle();
+    assert!(mw.global::<Store>().get_liquid_supported());
+    let image = mw.global::<Store>().get_dock_glass();
+    assert!(image.size().width > 0, "dock captured behind its controls");
+    std::fs::create_dir_all("/tmp/patch-theme-shots").unwrap();
+    main.save("/tmp/patch-theme-shots/phone-liquid-glass-day.png");
+    // A coloured full-day block makes refraction visible at both pill rims.
+    mw.global::<Store>().set_grid_blocks(slint::ModelRc::new(slint::VecModel::from(vec![
+        patch_ui::Block {
+            id: "glass-demo".into(), title: "Coloured event beneath glass".into(),
+            time: "All day".into(), color: slint::Color::from_rgb_u8(25, 140, 210),
+            day: 0, lane_x: 0.0, lane_w: 0.65, top: 0.0, span: 1440.0, done: false,
+        },
+        patch_ui::Block {
+            id: "glass-demo-2".into(), title: "Second event".into(),
+            time: "All day".into(), color: slint::Color::from_rgb_u8(220, 70, 110),
+            day: 0, lane_x: 0.68, lane_w: 0.32, top: 0.0, span: 1440.0, done: false,
+        },
+    ])));
+    h.settle();
+    main.save("/tmp/patch-theme-shots/phone-liquid-glass-coloured.png");
+    mw.global::<Actions>().invoke_set_liquid(0, 0.0);
+    h.settle();
+    main.save("/tmp/patch-theme-shots/phone-liquid-glass-disabled.png");
+    mw.global::<Actions>().invoke_set_liquid(0, 1.0);
+    mw.global::<Actions>().invoke_set_glass_opacity(0.85);
+    mw.global::<Actions>().invoke_set_look(0);
     mw.global::<Actions>().invoke_set_view(2);
 
     // Back with nothing open: not consumed, Java moves the task to the back.
@@ -365,6 +400,12 @@ fn renders_and_drives_both_windows() {
     });
     h.settle();
     wait.try_recv().expect("surface release acknowledged");
+    let idle_pet = mw.global::<Store>().get_pet_image();
+    h.rt.app().set_pet_play(0);
+    assert_eq!(mw.global::<Store>().get_pet_image(), idle_pet, "identical pixels keep the same Slint image");
+    std::thread::sleep(Duration::from_millis(500));
+    h.rt.frame();
+    assert_eq!(mw.global::<Store>().get_pet_image(), idle_pet, "no pet redraw without a surface");
     let main2 = h.surface(Kind::Main, (412.0, 915.0));
     h.settle();
     assert!(main2.presents() >= 1);
@@ -381,16 +422,32 @@ fn renders_and_drives_both_windows() {
         h.rec.expand.borrow().is_empty(),
         "Java's size already matches the app's state"
     );
-    assert!(
-        (95..=110).contains(&panel.pixel(0, 0)[3]),
-        "the single backdrop dims behind the pet: {:?}",
-        panel.pixel(0, 0)
-    );
+    assert_eq!(panel.pixel(0, 0)[3], 0, "outside the panel stays transparent");
     assert!(
         panel.pixel(panel.width / 2, panel.height / 2)[3] > 200,
         "panel body is drawn"
     );
     panel.save("android-overlay-panel.png");
+    mw.global::<Actions>().invoke_set_look(1);
+    let theme = mw.global::<Theme>();
+    assert_eq!(theme.get_backdrop_top(), slint::Color::from_rgb_u8(0, 0, 0));
+    assert_eq!(theme.get_backdrop_top(), theme.get_backdrop_bottom());
+    mw.global::<Actions>().invoke_set_glass_opacity(0.2);
+    h.settle();
+    assert!(theme.get_float().alpha() < 100, "the opacity slider still works");
+    assert_eq!(panel.pixel(0, 0)[3], 0);
+    assert!(panel.pixel(panel.width / 2, panel.height / 2)[3] >= 239, "mobile glass stays legible at low opacity");
+    h.send(Msg::OverlayBlur(true));
+    h.settle();
+    assert!(panel.pixel(panel.width / 2, panel.height / 2)[3] < 200,
+        "compositor blur permits the selected translucent tint");
+    h.send(Msg::OverlayBlur(false));
+    h.settle();
+    assert!(panel.pixel(panel.width / 2, panel.height / 2)[3] >= 239,
+        "loss of compositor blur restores readable fallback");
+    mw.global::<Actions>().invoke_set_glass_opacity(0.85);
+    mw.global::<Actions>().invoke_set_look(0);
+    h.settle();
 
     // Typing into the quick-add field through the IME path.
     h.tap(Kind::Overlay, 150.0, 474.0);
@@ -628,7 +685,7 @@ fn renders_and_drives_both_windows() {
     assert_eq!(
         panel.pixel(panel.width / 2, panel.height / 2)[3],
         0,
-        "panel and dim finish fading before the window shrinks"
+        "panel finishes fading before the window shrinks"
     );
     let bubble = MemSurface::new((60.0 * SCALE).round() as u32, (60.0 * SCALE).round() as u32);
     h.send(Msg::Surface {
@@ -723,6 +780,12 @@ fn renders_and_drives_both_windows() {
     h.settle();
     let overlay = h.rt.overlay_window().unwrap();
     assert_eq!((overlay.get_pet_x(), overlay.get_pet_y()), (160.0, 420.0));
+    let panel_rect = overlay.global::<Store>().get_overlay_panel();
+    let physical = [panel_rect.x, panel_rect.y, panel_rect.width, panel_rect.height, panel_rect.radius]
+        .map(|v| (v * SCALE).round() as i32);
+    assert!(physical[2] > 0 && physical[3] > 0);
+    assert_eq!(physical[4], (24.0 * SCALE).round() as i32);
+    assert_eq!(h.rec.panels.borrow().last(), Some(&physical), "actual panel geometry reaches Java in physical pixels");
     assert!(
         floating.pixel((190.0 * SCALE) as u32, (450.0 * SCALE) as u32)[3] > 200,
         "pet stays at the dropped position"

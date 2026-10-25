@@ -276,8 +276,10 @@ fn main() {
             phone.global::<Store>().set_settings_open(false);
         }
     }
-    let name = "phone-overlay-popup";
-    if want(name) {
+    for (li, look) in looks.iter().enumerate() {
+        let name = format!("phone-overlay-{look}-popup");
+        if !want(&name) { continue; }
+        pa.invoke_set_look(li as i32);
         let pov = OverlayWindow::new().unwrap();
         papp.attach_overlay(&pov);
         let idx = platform.windows.borrow().len() - 1;

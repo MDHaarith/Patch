@@ -13,6 +13,7 @@ import android.provider.Settings;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowInsets;
+import android.view.WindowInsetsAnimation;
 import android.view.WindowInsetsController;
 import android.widget.FrameLayout;
 import android.window.OnBackInvokedCallback;
@@ -49,6 +50,34 @@ public final class MainActivity extends Activity {
         setContentView(view, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         view.setOnApplyWindowInsetsListener((v, insets) -> applyInsets(insets));
+        if (Build.VERSION.SDK_INT >= 30) {
+            view.setWindowInsetsAnimationCallback(new WindowInsetsAnimation.Callback(
+                    WindowInsetsAnimation.Callback.DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
+                private int imeAnimations;
+
+                @Override
+                public void onPrepare(WindowInsetsAnimation animation) {
+                    if ((animation.getTypeMask() & WindowInsets.Type.ime()) != 0) {
+                        imeAnimations++;
+                        PatchNative.nativeImeAnimating(true);
+                    }
+                }
+
+                @Override
+                public WindowInsets onProgress(WindowInsets insets,
+                        java.util.List<WindowInsetsAnimation> animations) {
+                    return insets;
+                }
+
+                @Override
+                public void onEnd(WindowInsetsAnimation animation) {
+                    if ((animation.getTypeMask() & WindowInsets.Type.ime()) != 0) {
+                        imeAnimations = Math.max(0, imeAnimations - 1);
+                        PatchNative.nativeImeAnimating(imeAnimations != 0);
+                    }
+                }
+            });
+        }
         view.requestFocus();
         applyLook(PatchNative.look);
 
@@ -180,6 +209,7 @@ public final class MainActivity extends Activity {
         if (PatchNative.activity.get() == this) {
             PatchNative.activity = new WeakReference<>(null);
         }
+        PatchNative.nativeImeAnimating(false);
         PatchNative.nativeViewGone(PatchNative.MAIN);
         super.onDestroy();
     }

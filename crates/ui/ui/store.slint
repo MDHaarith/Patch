@@ -1,3 +1,5 @@
+export struct GlassRect { x: length, y: length, width: length, height: length, radius: length }
+
 // View models pushed from Rust, and the actions the UI sends back.
 
 export struct CellItem {
@@ -219,6 +221,19 @@ export global Store {
     in-out property <[ThemeCard]> themes;
     in-out property <int> theme: 0;
     in-out property <float> glass-opacity: 0.85;
+    in-out property <bool> liquid-supported: false;
+    in-out property <bool> liquid-glass: true;
+    in-out property <float> glass-blur: 6;
+    in-out property <float> glass-refraction: 0.5;
+    in-out property <bool> glass-chromatic: true;
+    in-out property <bool> glass-depth: true;
+    in-out property <bool> glass-capture: false;
+    in-out property <bool> ime-animating: false;
+    in-out property <image> dock-glass;
+    in-out property <GlassRect> dock-rect;
+    in-out property <GlassRect> overlay-panel;
+    in-out property <length> dock-height: 60px;
+    in-out property <bool> overlay-blur: false;
     in-out property <[color]> palette;
 
     // Custom repeat / alert presets (Settings)
@@ -275,6 +290,8 @@ export global Editor {
 }
 
 export global Actions {
+    // 0 enabled, 1 blur, 2 refraction, 3 chromatic, 4 depth.
+    callback set-liquid(int, float);
     // Navigation
     callback nav(int);
     callback go-today();

@@ -259,6 +259,15 @@ pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeBack(_: JNIEnv
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeImeAnimating(
+    _: JNIEnv,
+    _: JClass,
+    active: jboolean,
+) {
+    send(Msg::ImeAnimating(active != 0));
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeInsets(
     _: JNIEnv,
     _: JClass,
@@ -366,4 +375,11 @@ pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeScanned(
 #[no_mangle]
 pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeSyncNow(_: JNIEnv, _: JClass) {
     send(Msg::SyncNow);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeOverlayBlur(
+    _: JNIEnv, _: JClass, enabled: jboolean,
+) {
+    send(Msg::OverlayBlur(enabled == JNI_TRUE));
 }

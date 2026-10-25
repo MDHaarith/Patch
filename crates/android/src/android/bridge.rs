@@ -106,6 +106,12 @@ impl Bridge for JniBridge {
         self.call_void("overlayExpand", "(Z)V", |_| Ok(vec![Arg::Bool(expanded)]));
     }
 
+    fn overlay_panel(&self, rect: [i32; 5]) {
+        self.call_void("overlayPanel", "(IIIII)V", |_| {
+            Ok(rect.into_iter().map(Arg::Int).collect())
+        });
+    }
+
     fn open_app(&self, task_id: Option<&str>) {
         self.call_void("openApp", "(Ljava/lang/String;)V", |env| {
             Ok(vec![match task_id {
@@ -174,6 +180,10 @@ impl Bridge for JniBridge {
 
     fn back_result(&self, consumed: bool) {
         self.call_void("backResult", "(Z)V", |_| Ok(vec![Arg::Bool(consumed)]));
+    }
+
+    fn set_liquid_glass(&self, enabled: bool, radius: i32) {
+        self.call_void("setLiquidGlass", "(ZI)V", |_| Ok(vec![Arg::Bool(enabled), Arg::Int(radius)]));
     }
 
     fn set_look(&self, look: i32) {
