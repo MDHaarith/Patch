@@ -47,13 +47,13 @@ impl HubConfig {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Stored {
     seq: u64,
     rec: Record,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct State {
     hub: String,
     seq: u64,
@@ -85,10 +85,11 @@ fn load_token(cfg: &HubConfig) -> io::Result<String> {
         }
     }
     let path = cfg.data_dir.join("token");
-    if let Ok(t) = std::fs::read_to_string(&path) {
-        if !t.trim().is_empty() {
-            return Ok(t.trim().to_string());
-        }
+    match std::fs::read_to_string(&path) {
+        Ok(t) if !t.trim().is_empty() => return Ok(t.trim().to_string()),
+        Ok(_) => {},
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {},
+        Err(e) => return Err(e),
     }
     let token = pairing_token();
     write_atomic(&path, token.as_bytes())?;
@@ -170,7 +171,7 @@ impl Hub {
             // Persist a freshly generated hub id right away so it is stable.
             let st = shared.state.lock().unwrap_or_else(|e| e.into_inner());
             if !shared.file.exists() {
-                let _ = save_state(&shared.file, serde_json::to_string(&*st).unwrap_or_default().as_bytes());
+                save_state(&shared.file, &serde_json::to_vec(&*st)?)?;
             }
         }
         let thread = {
@@ -346,18 +347,15 @@ fn handle_request(shared: &Shared, reader: &mut impl Read) -> Response<io::Curso
 }
 
 fn apply(shared: &Shared, sync: SyncRequest) -> Result<SyncResponse, (u16, String)> {
-    let mut st = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+    let mut committed = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+    let reset = sync.since > committed.seq;
+    let mut st = committed.clone();
     let mut changed = false;
     let max_wall = now_ms().saturating_add(MAX_FUTURE_SKEW_MS);
     for field in sync.changes.iter().flat_map(|rec| rec.f.values()) {
-        let Some((wall, counter)) = field.t.parts() else {
+        let Some(wall) = crate::proto::stamp_wall(&field.t) else {
             return Err((400, "Invalid change stamp".into()));
         };
-        // Ordering uses the encoded string, so require the clock's fixed-width format.
-        let node = field.t.0.splitn(3, '-').nth(2).unwrap_or_default();
-        if counter > 9999 || node.is_empty() || patch_core::Stamp::new(wall, counter, node) != field.t {
-            return Err((400, "Invalid change stamp".into()));
-        }
         if wall > max_wall {
             return Err((409, "This device's clock is ahead of the hub; fix the date and time to sync".into()));
         }
@@ -379,25 +377,30 @@ fn apply(shared: &Shared, sync: SyncRequest) -> Result<SyncResponse, (u16, Strin
             }
         }
     }
-    // Retry persistence even when a previous failed save already merged these records.
-    save_state(&shared.file, serde_json::to_vec(&*st).map_err(|e| (500, e.to_string()))?.as_slice())
-        .map_err(|e| (500, format!("Failed to save hub state: {e}")))?;
     if changed {
-        shared.changed.notify_all();
+        save_state(&shared.file, &serde_json::to_vec(&st).map_err(|e| (500, e.to_string()))?)
+            .map_err(|e| (500, format!("Failed to save hub state: {e}")))?;
     }
-    let since = if sync.since > st.seq { 0 } else { sync.since };
-    Ok(SyncResponse {
+    let since = if reset { 0 } else { sync.since };
+    let response = SyncResponse {
         hub: st.hub.clone(),
         seq: st.seq,
+        reset,
         changes: st.records.values().filter(|s| s.seq > since).map(|s| s.rec.clone()).collect(),
-    })
+    };
+    if changed {
+        // Readers and long polls may only see changes after durable persistence.
+        *committed = st;
+        shared.changed.notify_all();
+    }
+    Ok(response)
 }
 
 /// Long poll: returns as soon as the hub has something newer than `since`.
 fn wait(shared: &Shared, since: u64) -> WaitResponse {
     let deadline = Instant::now() + MAX_WAIT;
     let mut st = shared.state.lock().unwrap_or_else(|e| e.into_inner());
-    while st.seq <= since && !shared.stopping.load(Ordering::SeqCst) {
+    while st.seq == since && !shared.stopping.load(Ordering::SeqCst) {
         let now = Instant::now();
         if now >= deadline {
             break;
@@ -566,10 +569,77 @@ mod tests {
         for _ in 0..2 {
             let result = apply(&hub.shared, SyncRequest { since: 0, changes: vec![rec.clone()], node: None });
             assert_eq!(result.unwrap_err().0, 500);
+            let state = hub.shared.state.lock().unwrap();
+            assert_eq!(state.seq, 0, "failed save published a cursor");
+            assert!(state.records.is_empty(), "failed save published records");
         }
+        let pulled = apply(&hub.shared, SyncRequest { since: 0, changes: vec![], node: None }).unwrap();
+        assert_eq!(pulled.seq, 0);
+        assert!(pulled.changes.is_empty());
+        let shared = hub.shared.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn(move || { tx.send(wait(&shared, 0)).unwrap(); });
         std::fs::remove_dir(&hub.shared.file).unwrap();
         assert!(apply(&hub.shared, SyncRequest { since: 0, changes: vec![rec], node: None }).is_ok());
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap().seq, 1);
+        waiter.join().unwrap();
         hub.stop();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn startup_requires_persisting_a_stable_hub_identity() {
+        let dir = std::env::temp_dir().join(format!("patch-hub-startup-{}", random_string(10)));
+        std::fs::create_dir_all(dir.join("hub.tmp")).unwrap();
+        let mut cfg = HubConfig::new(&dir);
+        cfg.bind = "127.0.0.1:0".into();
+        assert!(Hub::start(cfg).is_err());
+        assert!(!dir.join("hub.json").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn unreadable_token_is_never_replaced() {
+        let dir = std::env::temp_dir().join(format!("patch-hub-unreadable-token-{}", random_string(10)));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("token"), [0xff]).unwrap();
+        assert!(load_token(&HubConfig::new(&dir)).is_err());
+        assert_eq!(std::fs::read(dir.join("token")).unwrap(), [0xff]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn rollback_is_detected_before_upload_advances_the_sequence() {
+        let dir = std::env::temp_dir().join(format!("patch-hub-upload-rollback-{}", random_string(10)));
+        let mut cfg = HubConfig::new(&dir);
+        cfg.bind = "127.0.0.1:0".into();
+        let hub = Hub::start(cfg).unwrap();
+        let changes = ["a", "b"].into_iter().map(|id| {
+            let mut rec = Record::new(id, "task");
+            rec.put("title", json!(id), &Stamp::seed());
+            rec
+        }).collect();
+        let response = apply(&hub.shared, SyncRequest { since: 1, changes, node: None }).unwrap();
+        assert_eq!(response.seq, 2);
+        assert!(response.reset);
+        assert_eq!(response.changes.len(), 2, "the full state must be returned after rollback");
+        hub.stop();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn long_poll_reports_a_restored_cursor_immediately() {
+        let dir = std::env::temp_dir().join(format!("patch-hub-rollback-{}", random_string(10)));
+        let mut cfg = HubConfig::new(&dir);
+        cfg.bind = "127.0.0.1:0".into();
+        let hub = Hub::start(cfg).unwrap();
+        let shared = hub.shared.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn(move || { let _ = tx.send(wait(&shared, 99)); });
+        let result = rx.recv_timeout(Duration::from_secs(1));
+        hub.stop();
+        waiter.join().unwrap();
+        assert_eq!(result.unwrap().seq, 0);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

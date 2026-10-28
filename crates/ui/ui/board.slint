@@ -1,7 +1,7 @@
 import { Theme } from "theme.slint";
 import { Icon, IconBox } from "icons.slint";
 import { Store, Actions, TaskItem, BoardCol } from "store.slint";
-import { Glass, Check, Priority, IconButton, Field, Scroll } from "widgets.slint";
+import { Surface, Check, Priority, IconButton, Field, Scroll } from "widgets.slint";
 
 export component Card inherits Rectangle {
     in property <TaskItem> item;
@@ -40,7 +40,7 @@ export component Card inherits Rectangle {
             Text {
                 horizontal-stretch: 1;
                 text: root.item.title;
-                font-size: Store.mobile ? Theme.fs-l : Theme.fs-m;
+                font-size: Theme.fs-l;
                 font-weight: 600;
                 color: root.item.done ? Theme.text-3 : Theme.text;
                 wrap: word-wrap;
@@ -88,11 +88,11 @@ export component Card inherits Rectangle {
 }
 
 export component BoardView inherits Rectangle {
-    property <length> pad: Store.mobile ? 12px : 16px;
-    property <length> col-w: Store.mobile ? Math.min(self.width - 56px, 330px) : 286px;
+    property <length> pad: 12px;
+    property <length> col-w: Math.min(self.width - 56px, 330px);
     property <length> gap: 12px;
     property <length> head-h: 44px;
-    property <length> card-h: Store.mobile ? 86px : 78px;
+    property <length> card-h: 86px;
     property <length> card-gap: 8px;
     property <length> content-h: Math.max(self.height, head-h + pad * 2 + Math.max(Store.board-tallest, 1) * (card-h + card-gap) + 64px);
 
@@ -133,7 +133,7 @@ export component BoardView inherits Rectangle {
         content-width: root.pad * 2 + Store.board.length * (root.col-w + root.gap) + root.col-w;
         content-height: root.content-h;
 
-        for col[ci] in Store.board: Glass {
+        for col[ci] in Store.board: Surface {
             x: root.pad + ci * (root.col-w + root.gap);
             y: root.pad;
             width: root.col-w;
@@ -208,7 +208,7 @@ export component BoardView inherits Rectangle {
                 y: root.head-h + k * (root.card-h + root.card-gap) + shift;
                 width: parent.width - 20px;
                 height: root.card-h;
-                animate y { duration: 120ms; }
+                animate y { duration: Theme.motion-fast; easing: ease-out; }
                 Card {
                     item: card;
                     opacity: parent.lifted ? 0.3 : 1;
@@ -277,7 +277,7 @@ export component BoardView inherits Rectangle {
             }
 
             // Column menu
-            if root.menu-col == col.id: Glass {
+            if root.menu-col == col.id: Surface {
                 x: parent.width - self.width - 8px;
                 y: root.head-h - 4px;
                 width: 168px;

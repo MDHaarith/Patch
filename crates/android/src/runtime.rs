@@ -72,7 +72,7 @@ pub trait Bridge {
     /// A frame requested with [`Msg::RedrawNeeded`] has been posted.
     fn frame_done(&self, kind: Kind);
     fn back_result(&self, consumed: bool);
-    /// The app's look changed (0 matte, 1 glass, 2 light): system bar icons
+    /// The app's look changed (0 matte, 2 light): system bar icons
     /// and the window background follow it.
     fn set_look(&self, look: i32);
     /// The home-screen widget's state changed (JSON, see
@@ -516,8 +516,6 @@ impl Runtime {
         let theme = main.global::<Theme>();
         let look = if theme.get_light() {
             2
-        } else if theme.get_glass() {
-            1
         } else {
             0
         };

@@ -274,11 +274,7 @@ component CompactMonth inherits VerticalLayout {
 }
 
 export component MonthView inherits Rectangle {
-    if !Store.mobile: DesktopMonth {
-        width: parent.width;
-        height: parent.height;
-    }
-    if Store.mobile: CompactMonth {
+    CompactMonth {
         width: parent.width;
         height: parent.height;
     }

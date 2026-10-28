@@ -501,8 +501,7 @@ impl App {
 
     fn apply_prefs_to(&self, s: &Store, theme: &Theme) {
         let p = self.prefs.borrow();
-        themes::apply(theme, p.look, p.glass_opacity);
-        s.set_glass_opacity(p.glass_opacity);
+        themes::apply(theme, p.look);
         s.set_theme(p.look);
         s.set_pet_skin(p.pet_skin);
         s.set_pet_image(crate::pet::image(
@@ -842,20 +841,12 @@ impl App {
             app.refresh();
         });
         on!(on_set_look, |app, look| {
-            let look = if (0..4).contains(&look) { look } else { 0 };
+            let look = if (0..2).contains(&look) { look } else { 0 };
             app.prefs.borrow_mut().look = look;
             app.save_prefs();
-            app.each_theme(|t| themes::apply(t, look, app.prefs.borrow().glass_opacity));
+            app.each_theme(|t| themes::apply(t, look));
             app.each_store(|s| s.set_theme(look));
             app.refresh();
-        });
-        on!(on_set_glass_opacity, |app, value| {
-            let value = crate::prefs::glass_opacity(value);
-            app.prefs.borrow_mut().glass_opacity = value;
-            app.save_prefs();
-            let look = app.prefs.borrow().look;
-            app.each_theme(|t| themes::apply(t, look, value));
-            app.each_store(|s| s.set_glass_opacity(value));
         });
         on!(on_set_pet_skin, |app, i| {
             app.prefs.borrow_mut().pet_skin = i;

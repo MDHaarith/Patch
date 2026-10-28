@@ -6,10 +6,10 @@ import { Scroll } from "widgets.slint";
 // blocks, an all-day lane and the red "now" line.
 export component TimeGrid inherits Rectangle {
     property <int> days: Math.max(1, Store.grid-days.length);
-    property <length> gutter: Store.mobile ? 46px : 56px;
-    property <length> hour-h: Store.mobile ? 54px : 46px;
+    property <length> gutter: 46px;
+    property <length> hour-h: 54px;
     property <length> col-w: (self.width - gutter) / days;
-    property <length> head-h: Store.mobile && days == 1 ? 0px : 44px;
+    property <length> head-h: days == 1 ? 0px : 44px;
     property <length> bar-h: 20px;
     property <length> allday-h: Math.max(1, Store.grid-lanes) * (bar-h + 2px) + 8px;
     property <length> body-y: head-h + allday-h + 1px;
@@ -183,7 +183,7 @@ export component TimeGrid inherits Rectangle {
                 width: parent.width;
                 height: parent.active && root.resizing ? Math.max(parent.height + root.snap-min / 60 * root.hour-h, root.hour-h / 4) : parent.height;
                 border-radius: 8px;
-                background: Theme.light ? b.color.with-alpha(0.18) : Theme.glass ? b.color.with-alpha(0.38) : b.color.with-alpha(0.26);
+                background: Theme.light ? b.color.with-alpha(0.18) : b.color.with-alpha(0.26);
                 border-width: parent.active ? 1px : 0px;
                 border-color: b.color;
                 opacity: b.done ? 0.5 : 1;

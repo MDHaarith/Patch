@@ -1,8 +1,7 @@
-import { Slider } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icon, IconBox } from "icons.slint";
 import { Store, Actions, ThemeCard } from "store.slint";
-import { Glass, Field, Toggle, IconButton, Button, Scroll, SectionLabel, Divider, Segmented } from "widgets.slint";
+import { Surface, Field, Toggle, IconButton, Button, Scroll, SectionLabel, Divider, Segmented } from "widgets.slint";
 
 // A miniature of the range picker drawn in a theme's own colours.
 component ThemePreview inherits Rectangle {
@@ -11,7 +10,7 @@ component ThemePreview inherits Rectangle {
     callback picked();
     border-radius: 16px;
     // Phones use the software renderer, which can't round gradient corners.
-    background: Store.mobile ? theme.mid : @linear-gradient(165deg, theme.top 0%, theme.bottom 100%);
+    background: theme.mid;
     border-width: selected ? 2px : 1px;
     border-color: selected ? Theme.accent : Theme.hairline;
     clip: true;
@@ -71,7 +70,7 @@ component ThemePreview inherits Rectangle {
 component Preset inherits Rectangle {
     in property <string> text;
     callback removed();
-    height: Store.mobile ? 32px : 28px;
+    height: 32px;
     width: lbl.preferred-width + 40px;
     border-radius: self.height / 2;
     background: Theme.well;
@@ -92,7 +91,7 @@ component Row inherits HorizontalLayout {
     in property <string> label;
     in property <string> hint;
     spacing: 12px;
-    min-height: Store.mobile ? 48px : 36px;
+    min-height: 48px;
     VerticalLayout {
         horizontal-stretch: 1;
         alignment: center;
@@ -103,7 +102,7 @@ component Row inherits HorizontalLayout {
     @children
 }
 
-component Card inherits Glass {
+component Card inherits Surface {
     in property <string> title;
     in property <string> icon;
     fill: Theme.panel-strong;
@@ -129,7 +128,7 @@ export component SettingsPanel inherits Rectangle {
         HorizontalLayout {
             padding: 12px;
             padding-left: 18px;
-            height: Store.mobile ? 60px : 52px;
+            height: 60px;
             Text {
                 horizontal-stretch: 1;
                 text: "Settings";
@@ -159,7 +158,7 @@ export component SettingsPanel inherits Rectangle {
                     title: "Appearance";
                     icon: "layers";
                     themes := Rectangle {
-                        property <int> cols: Store.mobile ? 2 : 4;
+                        property <int> cols: 2;
                         property <length> gap: 10px;
                         property <length> cw: (self.width - (self.cols - 1) * self.gap) / self.cols;
                         property <length> ch: 112px;
@@ -172,17 +171,6 @@ export component SettingsPanel inherits Rectangle {
                             theme: t;
                             selected: Store.theme == i;
                             picked => { Actions.set-look(i); }
-                        }
-                    }
-                    if Theme.glass: Row {
-                        label: "Glass opacity";
-                        hint: round(Store.glass-opacity * 100) + "%";
-                        Slider {
-                            width: 140px;
-                            minimum: 0.25;
-                            maximum: 0.95;
-                            value: Store.glass-opacity;
-                            changed(v) => { Actions.set-glass-opacity(v); }
                         }
                     }
                     Row {

@@ -218,7 +218,6 @@ export global Store {
     // Themes and list colours
     in-out property <[ThemeCard]> themes;
     in-out property <int> theme: 0;
-    in-out property <float> glass-opacity: 0.85;
     in-out property <[color]> palette;
 
     // Custom repeat / alert presets (Settings)
@@ -327,7 +326,6 @@ export global Actions {
 
     // Settings
     callback set-look(int);
-    callback set-glass-opacity(float);
     callback set-pet-skin(int);
     callback set-week-monday(bool);
     callback set-time-24h(bool);

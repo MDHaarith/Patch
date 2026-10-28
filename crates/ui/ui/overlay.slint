@@ -1,7 +1,7 @@
 import { Theme } from "theme.slint";
 import { Icon } from "icons.slint";
 import { Store, Actions, TaskItem } from "store.slint";
-import { Glass, Field, IconButton, Segmented, Scroll, Check, Priority } from "widgets.slint";
+import { Surface, Field, IconButton, Segmented, Scroll, Check, Priority } from "widgets.slint";
 import { TaskRow } from "rows.slint";
 import { Pet } from "pet.slint";
 
@@ -23,12 +23,11 @@ export component Bubble inherits Rectangle {
 export component OverlayPanel inherits Rectangle {
     in property <length> radius: 24px;
     property <int> board-col: 0;
-    Glass {
+    Surface {
         width: parent.width;
         height: parent.height;
         radius: root.radius;
-        // Glass themes share the user's opacity; other mobile panels stay opaque.
-        fill: Store.mobile && !Theme.glass ? Theme.float.with-alpha(1) : Theme.float;
+        fill: Store.mobile ? Theme.float.with-alpha(1) : Theme.float;
         elevated: false;
         VerticalLayout {
             padding: 12px;
@@ -157,7 +156,7 @@ export component OverlayPanel inherits Rectangle {
     }
 }
 
-component DeskTile inherits Glass {
+component DeskTile inherits Surface {
     x: 0px;
     y: 0px;
     width: 170px;
@@ -329,7 +328,7 @@ export component OverlayWindow inherits Window {
     in property <length> pet-y: 0px;
     property <bool> panel-surface: root.width > 120px || root.height > 120px;
     property <float> reveal: Store.mobile && Store.overlay-expanded && root.panel-surface ? 1 : 0;
-    animate reveal { duration: 220ms; easing: ease-out; }
+    animate reveal { duration: Theme.motion-panel; easing: ease-out; }
     property <bool> transitioning: false;
     Timer {
         interval: 240ms;
