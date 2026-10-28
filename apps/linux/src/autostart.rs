@@ -21,7 +21,6 @@ pub fn current_exe() -> io::Result<PathBuf> {
 /// around anything with reserved characters, backslash before `"`, `` ` ``,
 /// `$` and `\` inside them, then the general string escaping that doubles
 /// every backslash again. `%` is doubled because it starts a field code.
-
 pub fn exec_arg(arg: &str) -> String 
 {
     const RESERVED: &[char] = &[
