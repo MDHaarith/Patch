@@ -246,6 +246,11 @@ impl Hub {
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
+        // Handler threads are detached; wait for them so none writes to data_dir after stop returns.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while self.shared.active_requests.load(Ordering::SeqCst) > 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 }
 
