@@ -580,7 +580,16 @@ impl Shell {
 
     /// KWin's Show Desktop, which it doesn't mirror to XWayland's root window.
     fn kwin_showing_desktop(&self) -> Option<bool> {
-        let bus = self.session_bus.get_or_init(|| zbus::blocking::Connection::session().ok()).as_ref()?;
+        let bus = self
+            .session_bus
+            .get_or_init(|| {
+                zbus::blocking::connection::Builder::session()
+                    .ok()?
+                    .method_timeout(Duration::from_millis(100))
+                    .build()
+                    .ok()
+            })
+            .as_ref()?;
         let reply = bus
             .call_method(
                 Some("org.kde.KWin"),
@@ -712,7 +721,7 @@ impl Shell {
         let file = self.paths.autostart_file();
         if autostart::is_enabled(&file) {
             if let Ok(exe) = autostart::current_exe() {
-                let _ = autostart::refresh(&file, &exe);
+                let _ = autostart::refresh(&file, &exe, &self.paths.data);
             }
         } else if pref {
             // Removed through the desktop's startup settings: follow along.
@@ -799,7 +808,7 @@ impl Host for Shell {
     fn set_autostart(&self, on: bool) -> Result<(), String> {
         let file = self.paths.autostart_file();
         let result = if on {
-            autostart::current_exe().and_then(|exe| autostart::enable(&file, &exe))
+            autostart::current_exe().and_then(|exe| autostart::enable(&file, &exe, &self.paths.data))
         } else {
             autostart::disable(&file)
         };

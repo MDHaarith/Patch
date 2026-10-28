@@ -116,7 +116,8 @@ impl Shared {
     }
 
     fn config(&self) -> (Option<SyncConfig>, u64) {
-        (self.cfg.lock().unwrap().clone(), self.generation.load(Ordering::SeqCst))
+        let cfg = self.cfg.lock().unwrap();
+        (cfg.clone(), self.generation.load(Ordering::SeqCst))
     }
 }
 
@@ -128,19 +129,29 @@ pub struct SyncClient {
 enum Outcome {
     Done { applied: bool, more: bool },
     HubChanged,
+    Cancelled,
 }
 
-fn sync_once(shared: &Shared, cfg: &SyncConfig) -> Result<Outcome, HttpError> {
+fn sync_once(shared: &Shared, cfg: &SyncConfig, generation: u64) -> Result<Outcome, HttpError> {
+    if shared.stop.load(Ordering::SeqCst) || shared.generation.load(Ordering::SeqCst) != generation {
+        return Ok(Outcome::Cancelled);
+    }
     let (since, pending, node) = {
         let d = shared.doc.lock().unwrap();
         (d.last_seq, d.pending(), d.node().to_string())
     };
     let body = serde_json::to_vec(&SyncRequest { since, changes: pending.clone(), node: Some(node) })
         .map_err(|e| HttpError::Protocol(e.to_string()))?;
+    if shared.stop.load(Ordering::SeqCst) || shared.generation.load(Ordering::SeqCst) != generation {
+        return Ok(Outcome::Cancelled);
+    }
     let resp = request(&cfg.base, "POST", "/api/sync", &cfg.token, Some(&body), Duration::from_secs(30))?;
     let resp: SyncResponse = serde_json::from_slice(&resp.body).map_err(|e| HttpError::Protocol(e.to_string()))?;
 
     let mut d = shared.doc.lock().unwrap();
+    if shared.stop.load(Ordering::SeqCst) || shared.generation.load(Ordering::SeqCst) != generation {
+        return Ok(Outcome::Cancelled);
+    }
     let applied = d.apply_remote(&resp.changes);
     if d.adopt_hub(&resp.hub) {
         // First contact with this hub: push everything and pull from zero.
@@ -187,7 +198,7 @@ impl SyncClient {
                                 return;
                             }
                         }
-                        let (cfg, _) = shared.config();
+                        let (cfg, generation) = shared.config();
                         let Some(cfg) = cfg else {
                             shared.set_status(SyncStatus::Disabled);
                             wait = Duration::from_secs(3600);
@@ -199,7 +210,8 @@ impl SyncClient {
                         let mut rounds = 0;
                         let result = loop {
                             rounds += 1;
-                            match sync_once(&shared, &cfg) {
+                            match sync_once(&shared, &cfg, generation) {
+                                Ok(Outcome::Cancelled) => break Ok(false),
                                 Ok(Outcome::HubChanged) if rounds < 4 => continue,
                                 Ok(Outcome::HubChanged) => break Ok(true),
                                 Ok(Outcome::Done { applied, more }) => {
@@ -214,6 +226,13 @@ impl SyncClient {
                                 Err(e) => break Err(e),
                             }
                         };
+                        if shared.stop.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        if shared.generation.load(Ordering::SeqCst) != generation {
+                            wait = Duration::ZERO;
+                            continue;
+                        }
                         match result {
                             Ok(_) => {
                                 if rounds > 1 {
@@ -266,6 +285,9 @@ impl SyncClient {
                             continue;
                         }
                         let path = format!("/api/wait?since={since}");
+                        if shared.stop.load(Ordering::SeqCst) || shared.generation.load(Ordering::SeqCst) != generation {
+                            continue;
+                        }
                         match request(&cfg.base, "GET", &path, &cfg.token, None, Duration::from_secs(40)) {
                             Ok(r) => {
                                 backoff = Duration::from_secs(2);
@@ -300,9 +322,10 @@ impl SyncClient {
             return;
         }
         *cur = cfg;
-        drop(cur);
         self.shared.generation.fetch_add(1, Ordering::SeqCst);
-        self.shared.set_status(SyncStatus::Connecting);
+        let enabled = cur.is_some();
+        drop(cur);
+        self.shared.set_status(if enabled { SyncStatus::Connecting } else { SyncStatus::Disabled });
         let _ = self.tx.send(Msg::Wake);
     }
 

@@ -370,6 +370,7 @@ final class PatchNative {
 
     static native void nativeOpenTask(String taskId);
     static native void nativeCompleteTask(String taskId);
+    static native boolean nativeTaskOpen(String taskId);
 
     /** The widget's "+": open the editor on a new task. */
     static native void nativeNewTask();

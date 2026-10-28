@@ -132,6 +132,8 @@ pub struct Task {
     /// Minutes before `start` to remind, if any.
     pub reminder: Option<i64>,
     pub repeat: Repeat,
+    /// Original calendar anchor, retained when completion advances a repeat.
+    pub repeat_anchor: Option<NaiveDateTime>,
     pub checklist: Vec<CheckItem>,
     pub order: f64,
     pub created: i64,
@@ -157,6 +159,7 @@ impl Task {
             all_day: false,
             reminder: None,
             repeat: Repeat::None,
+            repeat_anchor: None,
             checklist: Vec::new(),
             order: 0.0,
             created: 0,
@@ -181,6 +184,7 @@ impl Task {
             all_day: r.bool("allDay"),
             reminder: r.i64("reminder"),
             repeat: Repeat::parse(r.str("repeat").unwrap_or("none")),
+            repeat_anchor: r.str("repeatAnchor").and_then(parse_dt),
             checklist: if r.f.keys().any(|key| key.starts_with("checklist.")) {
                 let mut items: Vec<_> = r.f.iter().filter_map(|(key, field)| {
                     let id = key.strip_prefix("checklist.")?;
@@ -214,6 +218,7 @@ impl Task {
             ("allDay", json!(self.all_day)),
             ("reminder", json!(self.reminder)),
             ("repeat", json!(self.repeat.encode())),
+            ("repeatAnchor", opt_dt(self.repeat_anchor)),
             ("checklist", serde_json::to_value(&self.checklist).unwrap_or(Value::Null)),
             ("order", json!(self.order)),
             ("created", json!(self.created)),

@@ -9,7 +9,7 @@ use crate::{
 use crate::{themes, WindowAction};
 use crate::{Bar, Block, BoardCol, DayHead, ListInfo, Section, TaskItem};
 use crate::{Host, Reminder};
-use chrono::{Datelike, Duration, NaiveDate, NaiveTime, Timelike};
+use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use patch_core::doc::{COL_TODO, DEFAULT_LIST};
 use patch_core::model::{CheckItem, Repeat, Task, Unit, PALETTE};
 use patch_core::time::{add_months, fmt_hour_label, hm, minutes_of, month_start, now_local};
@@ -161,6 +161,9 @@ struct EditorState {
     repeat_options: Vec<Repeat>,
     alert_options: Vec<Option<i64>>,
     task: Task,
+    base: Task,
+    list_ids: Vec<String>,
+    column_ids: Vec<String>,
     is_new: bool,
     /// Next tap in the range picker sets the end date.
     picking_end: bool,
@@ -175,6 +178,7 @@ struct UiState {
     search: String,
     editor: Option<EditorState>,
     today: NaiveDate,
+    model_minute: NaiveDateTime,
 }
 
 pub struct App {
@@ -318,6 +322,7 @@ impl App {
                 search: String::new(),
                 editor: None,
                 today,
+                model_minute: now_local(),
             }),
             prefs: RefCell::new(prefs),
             models: Models::new(),
@@ -986,6 +991,18 @@ impl App {
         });
     }
 
+    /// Read on the UI thread by Android alarms; unavailable documents fail open.
+    pub fn current_task_open(id: &str) -> Option<bool> {
+        CURRENT.with(|c| {
+            let app = c.borrow().upgrade()?;
+            // Startup may have recovered a corrupt file as an empty document.
+            let json = std::fs::read_to_string(app.data_dir.join("doc.json")).ok()?;
+            Doc::from_json(&json)?;
+            let doc = app.doc.lock().ok()?;
+            Some(doc.task(id).is_some_and(|task| !task.done))
+        })
+    }
+
     fn toast(&self, text: &str) {
         self.undo_task.borrow_mut().take();
         self.each_store(|s| s.set_toast_action("".into()));
@@ -1302,7 +1319,8 @@ impl App {
                 false
             }
         };
-        if rolled || self.offline_since.get().is_some() {
+        let minute_changed = self.state.borrow().model_minute != now_local();
+        if rolled || minute_changed || self.offline_since.get().is_some() {
             self.refresh();
         } else {
             self.refresh_clock();
@@ -1310,7 +1328,7 @@ impl App {
         self.fire_reminders();
     }
 
-    /// Reminders due within the next two weeks, soonest first.
+    /// Undelivered reminders from the last 15 minutes through the next two weeks.
     fn upcoming_reminders(&self) -> Vec<Reminder> {
         use chrono::TimeZone;
         let now = now_local();
@@ -1322,14 +1340,13 @@ impl App {
             .filter_map(|t| {
                 let (start, before) = (t.start?, t.reminder?);
                 let at = start - Duration::minutes(before);
-                // Only future ones: an alarm set in the past fires at once, so
-                // re-arming one just delivered would notify twice.
-                if at <= now || at > now + Duration::days(14) {
+                let key = format!("{}@{}", t.id, patch_core::time::fmt_dt(start));
+                if at <= now - Duration::minutes(15) || at > now + Duration::days(14) || self.prefs.borrow().notified.contains(&key) {
                     return None;
                 }
                 let at_ms = chrono::Local.from_local_datetime(&at).earliest()?.timestamp_millis();
                 Some(Reminder {
-                    key: format!("{}@{}", t.id, patch_core::time::fmt_dt(start)),
+                    key,
                     at_ms,
                     title: t.title.clone(),
                     body: ctx.when(t, start),
@@ -1389,14 +1406,23 @@ impl App {
 
     /// Open the editor for a task (e.g. tapped in the overlay).
     pub fn open_task(&self, id: &str) {
+        if self.doc.lock().unwrap().task(id).is_none() {
+            return;
+        }
+        if self.state.borrow().editor.is_some() {
+            self.close_editor(true);
+        }
         let Some(task) = self.doc.lock().unwrap().task(id) else { return };
         let month = month_start(task.start.map(|s| s.date()).unwrap_or(self.state.borrow().selected));
-        self.state.borrow_mut().editor = Some(EditorState { repeat_options: Vec::new(), alert_options: Vec::new(), task, is_new: false, picking_end: false, picker_month: month });
+        self.state.borrow_mut().editor = Some(EditorState { repeat_options: Vec::new(), alert_options: Vec::new(), base: task.clone(), task, list_ids: Vec::new(), column_ids: Vec::new(), is_new: false, picking_end: false, picker_month: month });
         self.load_editor();
     }
 
     /// `minutes`: >= 0 timed at that minute, -1 all-day, -2 "+" button.
     fn new_task(&self, key: &str, minutes: i32, column: &str) {
+        if self.state.borrow().editor.is_some() {
+            self.close_editor(true);
+        }
         let (selected, view) = {
             let st = self.state.borrow();
             (st.selected, st.view)
@@ -1426,7 +1452,7 @@ impl App {
             }
             _ => {}
         }
-        self.state.borrow_mut().editor = Some(EditorState { repeat_options: Vec::new(), alert_options: Vec::new(), task: t, is_new: true, picking_end: true, picker_month: month_start(day) });
+        self.state.borrow_mut().editor = Some(EditorState { repeat_options: Vec::new(), alert_options: Vec::new(), base: t.clone(), task: t, list_ids: Vec::new(), column_ids: Vec::new(), is_new: true, picking_end: true, picker_month: month_start(day) });
         self.load_editor();
     }
 
@@ -1436,6 +1462,10 @@ impl App {
             let d = self.doc.lock().unwrap();
             (d.lists(), d.columns())
         };
+        if let Some(e) = self.state.borrow_mut().editor.as_mut() {
+            e.list_ids = lists.iter().map(|l| l.id.clone()).collect();
+            e.column_ids = columns.iter().map(|c| c.id.clone()).collect();
+        }
         update(&self.models.editor_lists, lists.iter().map(|l| Choice { label: l.name.clone().into(), color: color(&l.color) }).collect());
         update(&self.models.editor_columns, columns.iter().map(|c| Choice { label: c.name.clone().into(), color: slint::Color::default() }).collect());
         let st = self.state.borrow();
@@ -1480,11 +1510,15 @@ impl App {
         let t = &mut e.task;
         t.title = ed.get_title().trim().to_string();
         t.notes = ed.get_notes().to_string();
-        if let Some(l) = lists.get(ed.get_list_index().max(0) as usize) {
-            t.list = l.id.clone();
+        if let Some(id) = e.list_ids.get(ed.get_list_index().max(0) as usize).filter(|id| lists.iter().any(|l| &l.id == *id)) {
+            t.list = id.clone();
+        } else {
+            t.list = e.base.list.clone();
         }
-        if let Some(c) = columns.get(ed.get_column_index().max(0) as usize) {
-            t.column = c.id.clone();
+        if let Some(id) = e.column_ids.get(ed.get_column_index().max(0) as usize).filter(|id| columns.iter().any(|c| &c.id == *id)) {
+            t.column = id.clone();
+        } else {
+            t.column = e.base.column.clone();
         }
         t.priority = ed.get_priority().clamp(0, 3) as u8;
         t.repeat = e.repeat_options.get(ed.get_repeat_index().max(0) as usize).copied().unwrap_or_default();
@@ -1512,7 +1546,7 @@ impl App {
                 end = start + Duration::hours(1);
             }
             t.start = Some(start);
-            t.end = Some(end);
+            t.end = if t.end.is_none() && end == start + Duration::hours(1) { None } else { Some(end) };
         }
     }
 
@@ -1646,7 +1680,17 @@ impl App {
             if !e.task.title.is_empty() {
                 let is_new = e.is_new;
                 let title = e.task.title.clone();
-                self.edit(|d| d.save_task(&e.task));
+                let mut task = e.task;
+                if task.start != e.base.start || task.repeat != e.base.repeat {
+                    task.repeat_anchor = None;
+                }
+                self.edit(|d| {
+                    if is_new {
+                        d.add_task(task);
+                    } else {
+                        d.save_task_from(&e.base, &task);
+                    }
+                });
                 if is_new {
                     self.toast(&format!("Added “{title}”"));
                 }
@@ -1810,6 +1854,7 @@ impl App {
 
     /// Recomputes every view model from the document and UI state.
     pub fn refresh(&self) {
+        self.state.borrow_mut().model_minute = now_local();
         let ctx = self.ctx();
         let (columns, all_lists) = {
             let d = self.doc.lock().unwrap();
@@ -1919,6 +1964,149 @@ fn checklist_rows(items: &[CheckItem]) -> Vec<CheckRow> {
 #[cfg(test)]
 mod pairing_tests {
     use super::*;
+
+    #[test]
+    fn editor_and_timer_regressions() {
+        use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
+        use slint::platform::{Platform, WindowAdapter};
+
+        struct TestPlatform(Rc<MinimalSoftwareWindow>);
+        impl Platform for TestPlatform {
+            fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
+                Ok(self.0.clone())
+            }
+        }
+        #[derive(Default)]
+        struct TestHost {
+            notifications: Cell<usize>,
+            os_delivers: Cell<bool>,
+            alarms: RefCell<Vec<Vec<Reminder>>>,
+        }
+        impl Host for TestHost {
+            fn notify_reminder(&self, _: &str, _: &str, _: &str) {
+                self.notifications.set(self.notifications.get() + 1);
+            }
+            fn schedule_reminders(&self, reminders: &[Reminder]) -> bool {
+                self.alarms.borrow_mut().push(reminders.to_vec());
+                self.os_delivers.get()
+            }
+        }
+        let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+        slint::platform::set_platform(Box::new(TestPlatform(window))).unwrap();
+        let dir = std::env::temp_dir().join(format!("patch-editor-regressions-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let host = Rc::new(TestHost::default());
+        let app = App::new(dir.clone(), host.clone());
+        let main = MainWindow::new().unwrap();
+        app.attach_main(&main);
+        let ed = main.global::<Editor>();
+        let mut task = Task::blank("", patch_core::doc::DEFAULT_LIST, patch_core::doc::COL_DOING);
+        task.title = "Original".into();
+        task.start = Some(now_local() + Duration::days(1));
+        let id = app.doc.lock().unwrap().add_task(task.clone());
+        task.title = "Other".into();
+        task.list = patch_core::doc::LIST_WORK.into();
+        let other = app.doc.lock().unwrap().add_task(task);
+        app.doc.lock().unwrap().add_list("Third", "#ffffff");
+
+        // Closing an unchanged editor keeps widget completion and remote fields.
+        app.open_task(&id);
+        {
+            let mut d = app.doc.lock().unwrap();
+            let mut remote = d.task(&id).unwrap();
+            remote.notes = "Remote notes".into();
+            remote.end = remote.start.map(|s| s + Duration::hours(2));
+            d.save_task(&remote);
+            d.set_done(&id, true);
+        }
+        app.close_editor(true);
+        let saved = app.doc.lock().unwrap().task(&id).unwrap();
+        assert!(saved.done);
+        assert_eq!(saved.notes, "Remote notes");
+        assert_eq!(saved.end, saved.start.map(|s| s + Duration::hours(2)));
+
+        // Switching tasks saves the old draft before loading the next snapshot.
+        app.open_task(&id);
+        ed.set_title("Draft title".into());
+        app.open_task(&other);
+        assert_eq!(app.doc.lock().unwrap().task(&id).unwrap().title, "Draft title");
+        assert_eq!(ed.get_title(), "Other");
+        app.close_editor(true);
+
+        // Removing earlier menu entries must not reinterpret the displayed index.
+        app.open_task(&other);
+        {
+            let mut d = app.doc.lock().unwrap();
+            d.delete_list(patch_core::doc::DEFAULT_LIST);
+            d.delete_column(patch_core::doc::COL_TODO);
+        }
+        app.close_editor(true);
+        let saved = app.doc.lock().unwrap().task(&other).unwrap();
+        assert_eq!(saved.list, patch_core::doc::LIST_WORK);
+        assert_eq!(saved.column, patch_core::doc::COL_DOING);
+        assert!(!saved.done);
+
+        // A selected column removed while open keeps the document's fallback.
+        app.open_task(&other);
+        app.doc.lock().unwrap().delete_column(patch_core::doc::COL_DOING);
+        app.close_editor(true);
+        let saved = app.doc.lock().unwrap().task(&other).unwrap();
+        assert_eq!(saved.column, patch_core::doc::COL_DONE);
+        assert!(saved.done);
+
+        // Undelivered inexact OS alarms remain in the set during the grace window.
+        let open_column = app.doc.lock().unwrap().add_column("Open");
+        let mut reminder = Task::blank("", patch_core::doc::LIST_WORK, &open_column);
+        reminder.title = "Reminder".into();
+        reminder.start = Some(now_local() - Duration::minutes(1));
+        reminder.reminder = Some(0);
+        let reminder_id = app.doc.lock().unwrap().add_task(reminder.clone());
+        host.os_delivers.set(true);
+        app.refresh();
+        let key = app.upcoming_reminders()[0].key.clone();
+        let schedules = host.alarms.borrow().len();
+        app.refresh();
+        assert_eq!(host.alarms.borrow().len(), schedules);
+        app.fire_reminders();
+        assert_eq!(host.notifications.get(), 0);
+        app.os_delivers.set(false);
+        app.fire_reminders();
+        app.fire_reminders();
+        assert_eq!(host.notifications.get(), 1);
+        assert!(app.prefs.borrow().notified.contains(&key));
+        assert!(app.upcoming_reminders().is_empty());
+        let mut expired = reminder;
+        expired.id = reminder_id;
+        expired.start = Some(now_local() - Duration::minutes(16));
+        app.doc.lock().unwrap().save_task(&expired);
+        assert!(app.upcoming_reminders().is_empty());
+
+        // A minute change rebuilds time-dependent models, without every-tick work.
+        let mut upcoming = Task::blank("", patch_core::doc::LIST_WORK, &open_column);
+        upcoming.title = "Upcoming".into();
+        upcoming.start = Some(now_local() + Duration::hours(1));
+        app.refresh();
+        let count = app.models.up_next.row_count();
+        let upcoming_id = app.doc.lock().unwrap().add_task(upcoming);
+        app.tick();
+        assert_eq!(app.models.up_next.row_count(), count);
+        app.state.borrow_mut().model_minute -= Duration::minutes(1);
+        app.tick();
+        assert!(app.models.up_next.iter().any(|t| t.id == upcoming_id));
+        {
+            let mut d = app.doc.lock().unwrap();
+            let mut ended = d.task(&upcoming_id).unwrap();
+            ended.start = Some(now_local() - Duration::hours(2));
+            ended.end = Some(now_local() - Duration::hours(1));
+            d.save_task(&ended);
+        }
+        app.state.borrow_mut().model_minute -= Duration::minutes(1);
+        app.tick();
+        assert!(!app.models.up_next.iter().any(|t| t.id == upcoming_id));
+        drop(main);
+        drop(app);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn qr_urls_are_reachable_from_another_device() {

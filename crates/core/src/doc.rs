@@ -307,57 +307,77 @@ impl Doc {
         id
     }
 
-    /// Persists an edited task, writing only the fields that changed so
-    /// concurrent edits to other fields on other devices survive.
+    /// Persists an immediate edit against the current task. Editor snapshots
+    /// must use `save_task_from` with the task they started from.
     pub fn save_task(&mut self, task: &Task) {
-        let mut task = task.clone();
         match self.task(&task.id) {
-            None => {
-                self.add_task(task);
+            Some(base) => {
+                let mut task = task.clone();
+                if task.start != base.start || task.repeat != base.repeat {
+                    task.repeat_anchor = None;
+                }
+                self.save_task_from(&base, &task);
             }
-            Some(old) => {
-                if task.column != old.column {
-                    task.done = self.column_is_done(&task.column);
-                }
-                if task.done && !old.done && task.done_at.is_none() {
-                    task.done_at = Some(now_ms() as i64);
-                }
-                let before: std::collections::BTreeMap<_, _> = old.fields().into_iter().collect();
-                let mut after: std::collections::BTreeMap<_, _> = task.fields().into_iter().collect();
-                let record = &self.records[&task.id];
-                if record.f.keys().any(|key| key.starts_with("checklist.")) {
-                    let mut next_order = record.f.iter()
-                        .filter(|(key, _)| key.starts_with("checklist."))
-                        .filter_map(|(_, field)| field.v.get("order").and_then(Value::as_u64))
-                        .max().map_or(0, |order| order + 1);
-                    // Keep gaps on removal so unchanged items retain their values and stamps.
-                    for item in &task.checklist {
-                        let key = format!("checklist.{}", item.id);
-                        let order = record.get(&key).and_then(|value| value.get("order")).cloned()
-                            .unwrap_or_else(|| {
-                                let order = json!(next_order);
-                                next_order += 1;
-                                order
-                            });
-                        after.get_mut(&key).unwrap()["order"] = order;
-                    }
-                }
-                for key in before.keys().filter(|key| key.starts_with("checklist.")) {
-                    after.entry(key.clone()).or_insert(Value::Null);
-                }
-                let changed = after.iter().filter(|(key, value)| self.records[&task.id].get(key) != Some(*value))
-                    .map(|(key, value)| (key.as_str(), value.clone())).collect();
-                self.write(&task.id, KIND_TASK, changed);
-            }
+            None => { self.add_task(task.clone()); }
         }
+    }
+
+    /// Writes only changes made since `base`, preserving concurrent edits.
+    pub fn save_task_from(&mut self, base: &Task, task: &Task) {
+        if base.id != task.id || self.task(&task.id).is_none() {
+            return;
+        }
+        let mut task = task.clone();
+        if task.column != base.column {
+            task.done = self.column_is_done(&task.column);
+        }
+        if task.done && !base.done && task.done_at.is_none() {
+            task.done_at = Some(now_ms() as i64);
+        }
+        let mut before: std::collections::BTreeMap<_, _> = base.fields().into_iter().collect();
+        let mut after: std::collections::BTreeMap<_, _> = task.fields().into_iter().collect();
+        let record = &self.records[&task.id];
+        if record.f.keys().any(|key| key.starts_with("checklist.")) {
+            let mut next_order = record.f.iter()
+                .filter(|(key, _)| key.starts_with("checklist."))
+                .filter_map(|(_, field)| field.v.get("order").and_then(Value::as_u64))
+                .max().map_or(0, |order| order + 1);
+            // Keep gaps on removal so unchanged items retain their values and stamps.
+            for item in &task.checklist {
+                let key = format!("checklist.{}", item.id);
+                let order = record.get(&key).and_then(|value| value.get("order")).cloned()
+                    .unwrap_or_else(|| {
+                        let order = json!(next_order);
+                        next_order += 1;
+                        order
+                    });
+                if let Some(value) = before.get_mut(&key) {
+                    value["order"] = order.clone();
+                }
+                after.get_mut(&key).unwrap()["order"] = order;
+            }
+        } else {
+            before.retain(|key, _| !key.starts_with("checklist."));
+        }
+        for key in before.keys().filter(|key| key.starts_with("checklist.")) {
+            after.entry(key.clone()).or_insert(Value::Null);
+        }
+        let reset_anchor = task.repeat_anchor.is_none() && (task.start != base.start || task.repeat != base.repeat);
+        let changed = after.iter().filter(|(key, value)| {
+            (before.get(*key) != Some(*value) || (key.as_str() == "repeatAnchor" && reset_anchor)) && record.get(key) != Some(*value)
+        })
+            .map(|(key, value)| (key.as_str(), value.clone())).collect();
+        self.write(&task.id, KIND_TASK, changed);
     }
 
     /// Completes or reopens a task. Completing a repeating task rolls it to
     /// its next occurrence instead.
     pub fn set_done(&mut self, id: &str, done: bool) {
         let Some(mut t) = self.task(id) else { return };
+        let base = t.clone();
         if done && t.repeat != crate::model::Repeat::None && t.start.is_some() {
             if let (Some(start), Some(next)) = (t.start, recur::next_start(&t)) {
+                t.repeat_anchor.get_or_insert(start);
                 let delta = next - start;
                 t.start = Some(next);
                 t.end = t.end.map(|e| e + delta);
@@ -369,7 +389,7 @@ impl Doc {
                 }
                 t.done = false;
                 t.done_at = None;
-                self.save_task(&t);
+                self.save_task_from(&base, &t);
                 return;
             }
         }
@@ -401,6 +421,10 @@ impl Doc {
     pub fn move_task(&mut self, id: &str, column: &str, index: usize) {
         let Some(task) = self.task(id) else { return };
         if self.column(column).is_none() {
+            return;
+        }
+        if self.column_is_done(column) && task.repeat != crate::model::Repeat::None && task.start.is_some() {
+            self.set_done(id, true);
             return;
         }
         let siblings: Vec<f64> = self
@@ -785,6 +809,108 @@ mod tests {
         let order: Vec<String> = d.tasks().into_iter().map(|t| t.title).collect();
         assert_eq!(order, vec!["c", "b", "a"]);
         let _ = b;
+    }
+
+    #[test]
+    fn stale_editor_saves_only_user_changes() {
+        let mut a = Doc::with_node("a");
+        let id = new_task(&mut a, "Original");
+        let base = a.task(&id).unwrap();
+        let mut draft = base.clone();
+        draft.title = "Edited".into();
+        let mut b = Doc::with_node("b");
+        sync(&mut a, &mut b);
+        let mut remote = b.task(&id).unwrap();
+        remote.notes = "Remote notes".into();
+        b.save_task(&remote);
+        b.set_done(&id, true);
+        sync(&mut a, &mut b);
+        a.save_task_from(&base, &draft);
+        let saved = a.task(&id).unwrap();
+        assert_eq!(saved.title, "Edited");
+        assert_eq!(saved.notes, "Remote notes");
+        assert!(saved.done);
+        assert_eq!(saved.column, COL_DONE);
+        let rev = a.rev();
+        a.save_task_from(&base, &base);
+        assert_eq!(a.rev(), rev);
+        a.delete_task(&id);
+        a.save_task_from(&base, &draft);
+        assert!(a.task(&id).is_none());
+    }
+
+    #[test]
+    fn stale_checklist_keeps_remote_changes() {
+        use crate::model::CheckItem;
+        let mut d = Doc::with_node("a");
+        let mut task = Task::blank("", DEFAULT_LIST, COL_TODO);
+        task.checklist = vec![CheckItem { id: "one".into(), text: "One".into(), done: false }];
+        let id = d.add_task(task);
+        let base = d.task(&id).unwrap();
+        let mut remote = base.clone();
+        remote.checklist[0].done = true;
+        remote.checklist.push(CheckItem { id: "two".into(), text: "Two".into(), done: false });
+        d.save_task(&remote);
+        let mut draft = base.clone();
+        draft.notes = "Draft".into();
+        d.save_task_from(&base, &draft);
+        assert_eq!(d.task(&id).unwrap().checklist, remote.checklist);
+    }
+
+    #[test]
+    fn dragging_repeat_to_done_rolls_forward() {
+        use crate::model::CheckItem;
+        let mut d = Doc::with_node("a");
+        let mut task = Task::blank("", DEFAULT_LIST, COL_DOING);
+        task.start = parse_dt("2026-10-13T10:00");
+        task.repeat = Repeat::Daily;
+        task.checklist.push(CheckItem { id: "one".into(), text: "One".into(), done: true });
+        let id = d.add_task(task);
+        d.move_task(&id, COL_DONE, 0);
+        let task = d.task(&id).unwrap();
+        assert_eq!(task.start, parse_dt("2026-10-14T10:00"));
+        assert_eq!(task.column, COL_DOING);
+        assert!(!task.done);
+        assert!(!task.checklist[0].done);
+    }
+
+    #[test]
+    fn completion_preserves_calendar_anchor() {
+        for (repeat, start, dates) in [
+            (Repeat::Monthly, "2026-01-31T10:00", vec!["2026-02-28T10:00", "2026-03-31T10:00", "2026-04-30T10:00"]),
+            (Repeat::Yearly, "2024-02-29T10:00", vec!["2025-02-28T10:00", "2026-02-28T10:00", "2027-02-28T10:00", "2028-02-29T10:00"]),
+            (Repeat::Every(2, crate::model::Unit::Month), "2026-12-31T10:00", vec!["2027-02-28T10:00", "2027-04-30T10:00", "2027-06-30T10:00", "2027-08-31T10:00"]),
+        ] {
+            let mut d = Doc::with_node("a");
+            let mut task = Task::blank("", DEFAULT_LIST, COL_TODO);
+            task.start = parse_dt(start);
+            task.repeat = repeat;
+            let id = d.add_task(task);
+            for date in dates {
+                d.set_done(&id, true);
+                assert_eq!(d.task(&id).unwrap().start, parse_dt(date));
+                d = Doc::from_json(&d.to_json()).unwrap();
+            }
+            d.reschedule(&id, parse_dt("2030-01-15T10:00").unwrap());
+            assert_eq!(d.task(&id).unwrap().repeat_anchor, None);
+        }
+    }
+
+    #[test]
+    fn stale_reschedule_clears_remote_calendar_anchor() {
+        let mut d = Doc::with_node("a");
+        let mut task = Task::blank("", DEFAULT_LIST, COL_TODO);
+        task.start = parse_dt("2026-01-31T10:00");
+        task.repeat = Repeat::Monthly;
+        let id = d.add_task(task);
+        let base = d.task(&id).unwrap();
+        d.set_done(&id, true);
+        let mut draft = base.clone();
+        draft.start = parse_dt("2026-03-15T10:00");
+        d.save_task_from(&base, &draft);
+        assert_eq!(d.task(&id).unwrap().repeat_anchor, None);
+        d.set_done(&id, true);
+        assert_eq!(d.task(&id).unwrap().start, parse_dt("2026-04-15T10:00"));
     }
 
     #[test]

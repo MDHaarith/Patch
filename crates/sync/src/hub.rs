@@ -1,5 +1,6 @@
 //! The sync hub: an HTTP server holding the merged state of every device.
 
+use crate::http::{read_head, DeadlineStream, MAX_BODY};
 use crate::net;
 use crate::proto::{HubInfo, SyncRequest, SyncResponse, WaitResponse};
 use patch_core::doc::{preserve_corrupt, write_atomic};
@@ -8,15 +9,17 @@ use patch_core::id::{pairing_token, random_string};
 use patch_core::Record;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::io::{self, Read};
+use std::io::{self, BufReader, Read};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use tiny_http::{Header, Method, Request, Response, Server};
+use tiny_http::{Header, HTTPVersion, Response};
 
-const MAX_BODY: u64 = 64 * 1024 * 1024;
+const MAX_REQUESTS: usize = 64;
+const READ_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_WAIT: Duration = Duration::from_secs(25);
 
 #[derive(Clone, Debug)]
@@ -66,17 +69,20 @@ struct Shared {
     name: String,
     port: u16,
     stopping: AtomicBool,
+    active_requests: AtomicUsize,
 }
 
 pub struct Hub {
     shared: Arc<Shared>,
-    server: Arc<Server>,
+    server: Arc<TcpListener>,
     thread: Option<JoinHandle<()>>,
 }
 
 fn load_token(cfg: &HubConfig) -> io::Result<String> {
     if let Some(t) = &cfg.token {
-        return Ok(t.trim().to_string());
+        if !t.trim().is_empty() {
+            return Ok(t.trim().to_string());
+        }
     }
     let path = cfg.data_dir.join("token");
     if let Ok(t) = std::fs::read_to_string(&path) {
@@ -107,7 +113,9 @@ fn save_state(path: &std::path::Path, bytes: &[u8]) -> io::Result<()> {
 fn json_response(status: u16, body: String) -> Response<io::Cursor<Vec<u8>>> {
     Response::from_string(body)
         .with_status_code(status)
+        .with_chunked_threshold(MAX_BODY + 1)
         .with_header(Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).expect("static header"))
+        .with_header(Header::from_bytes(&b"Connection"[..], &b"close"[..]).expect("static header"))
 }
 
 fn error(status: u16, msg: &str) -> Response<io::Cursor<Vec<u8>>> {
@@ -143,8 +151,9 @@ impl Hub {
             Err(e) => return Err(e),
         }
         .unwrap_or_else(|| State { hub: format!("hub-{}", random_string(10)), seq: 0, records: BTreeMap::new() });
-        let server = Server::http(&cfg.bind).map_err(|e| io::Error::new(io::ErrorKind::AddrInUse, e.to_string()))?;
-        let port = server.server_addr().to_ip().map(|a| a.port()).unwrap_or(crate::DEFAULT_PORT);
+        // tiny_http pre-reads small bodies and exposes no socket deadlines or connection limit.
+        let server = TcpListener::bind(&cfg.bind)?;
+        let port = server.local_addr()?.port();
         let server = Arc::new(server);
         let shared = Arc::new(Shared {
             state: Mutex::new(state),
@@ -155,6 +164,7 @@ impl Hub {
             name: cfg.name,
             port,
             stopping: AtomicBool::new(false),
+            active_requests: AtomicUsize::new(0),
         });
         {
             // Persist a freshly generated hub id right away so it is stable.
@@ -167,11 +177,21 @@ impl Hub {
             let server = server.clone();
             let shared = shared.clone();
             std::thread::Builder::new().name("patch-hub".into()).spawn(move || {
-                for req in server.incoming_requests() {
-                    let shared = shared.clone();
+                for stream in server.incoming() {
+                    if shared.stopping.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let Ok(mut stream) = stream else { continue };
+                    if shared.active_requests.load(Ordering::SeqCst) >= MAX_REQUESTS {
+                        let _ = stream.set_write_timeout(Some(Duration::from_millis(100)));
+                        let _ = error(503, "Hub is busy").raw_print(&mut stream, HTTPVersion(1, 1), &[], false, None);
+                        continue;
+                    }
+                    shared.active_requests.fetch_add(1, Ordering::SeqCst);
+                    let active = ActiveRequest(shared.clone());
                     let _ = std::thread::Builder::new()
                         .name("patch-hub-req".into())
-                        .spawn(move || handle(&shared, req));
+                        .spawn(move || handle(&active.0, stream));
                 }
             })?
         };
@@ -202,7 +222,12 @@ impl Hub {
     fn shutdown(&mut self) {
         self.shared.stopping.store(true, Ordering::SeqCst);
         self.shared.changed.notify_all();
-        self.server.unblock();
+        if let Ok(mut addr) = self.server.local_addr() {
+            if addr.ip().is_unspecified() {
+                addr.set_ip(if addr.is_ipv4() { IpAddr::V4(Ipv4Addr::LOCALHOST) } else { IpAddr::V6(Ipv6Addr::LOCALHOST) });
+            }
+            let _ = TcpStream::connect_timeout(&addr, Duration::from_secs(1));
+        }
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
@@ -215,36 +240,81 @@ impl Drop for Hub {
     }
 }
 
-fn handle(shared: &Shared, mut req: Request) {
-    let peer_ok = req.remote_addr().is_some_and(|a| net::peer_allowed(a.ip(), shared.allow_lan));
-    if !peer_ok {
-        let _ = req.respond(error(403, "Patch only syncs over Tailscale"));
-        return;
+struct ActiveRequest(Arc<Shared>);
+
+impl Drop for ActiveRequest {
+    fn drop(&mut self) {
+        self.0.active_requests.fetch_sub(1, Ordering::SeqCst);
     }
-    let url = req.url().to_string();
-    let path = url.split('?').next().unwrap_or("").to_string();
+}
+
+fn handle(shared: &Shared, stream: TcpStream) {
+    let peer_ok = stream.peer_addr().is_ok_and(|a| net::peer_allowed(a.ip(), shared.allow_lan));
+    let mut stream = DeadlineStream { stream, deadline: Instant::now() + READ_TIMEOUT };
+    let response = if peer_ok {
+        handle_request(shared, &mut BufReader::new(&mut stream))
+    } else {
+        error(403, "Patch only syncs over Tailscale")
+    };
+    stream.deadline = Instant::now() + Duration::from_secs(15);
+    let _ = response.raw_print(&mut stream, HTTPVersion(1, 1), &[], false, None);
+}
+
+fn handle_request(shared: &Shared, reader: &mut impl Read) -> Response<io::Cursor<Vec<u8>>> {
+    let head = match read_head(reader) {
+        Ok(head) => head,
+        Err(e) => return error(400, &e.to_string()),
+    };
+    let mut lines = head.trim_end_matches("\r\n").split("\r\n");
+    let mut request_line = lines.next().unwrap_or_default().split_whitespace();
+    let method = request_line.next().unwrap_or_default();
+    let url = request_line.next().unwrap_or_default();
+    if !url.starts_with('/') || !matches!(request_line.next(), Some("HTTP/1.1" | "HTTP/1.0")) || request_line.next().is_some() {
+        return error(400, "Bad request line");
+    }
+    let mut headers = Vec::new();
+    for line in lines {
+        let Ok(header) = line.parse::<Header>() else { return error(400, "Bad header") };
+        headers.push(header);
+    }
+    let path = url.split('?').next().unwrap_or("");
 
     if path == "/api/ping" {
         let hub = shared.state.lock().unwrap_or_else(|e| e.into_inner()).hub.clone();
-        let _ = req.respond(json_response(200, serde_json::json!({ "ok": true, "hub": hub, "name": shared.name }).to_string()));
-        return;
+        return json_response(200, serde_json::json!({ "ok": true, "hub": hub, "name": shared.name }).to_string());
     }
 
-    let header_token = req
-        .headers()
-        .iter()
+    let token = headers.iter()
         .find(|h| h.field.equiv("Authorization"))
-        .map(|h| h.value.as_str().trim().trim_start_matches("Bearer").trim().to_string());
-    let token = header_token.unwrap_or_default();
-    if !constant_time_eq(token.as_bytes(), shared.token.as_bytes()) {
-        let _ = req.respond(error(401, "Wrong pairing token"));
-        return;
+        .and_then(|h| h.value.as_str().trim().strip_prefix("Bearer "))
+        .unwrap_or_default().trim();
+    if token.is_empty() || !constant_time_eq(token.as_bytes(), shared.token.as_bytes()) {
+        return error(401, "Wrong pairing token");
     }
 
-    let response = match (req.method(), path.as_str()) {
-        (Method::Post, "/api/sync") => {
+    match (method, path) {
+        ("POST", "/api/sync") => {
+            let mut length = None;
+            for header in &headers {
+                // shortcut: uploads require Content-Length; add chunked uploads if another client needs them.
+                if header.field.equiv("Transfer-Encoding") {
+                    return error(400, "Use Content-Length, not Transfer-Encoding");
+                }
+                if header.field.equiv("Content-Length") {
+                    if length.is_some() {
+                        return error(400, "Duplicate Content-Length");
+                    }
+                    let Ok(n) = header.value.as_str().parse::<usize>() else { return error(400, "Bad Content-Length") };
+                    if n > MAX_BODY {
+                        return error(413, "Sync request too large");
+                    }
+                    length = Some(n);
+                }
+            }
+            let Some(length) = length else { return error(411, "Content-Length required") };
             let mut body = Vec::new();
-            match req.as_reader().take(MAX_BODY).read_to_end(&mut body) {
+            match reader.take(length as u64).read_to_end(&mut body) {
+                Ok(_) if body.len() != length => error(400, "Truncated body"),
                 Ok(_) => match serde_json::from_slice::<SyncRequest>(&body) {
                     Ok(sync) => match apply(shared, sync) {
                         Ok(response) => json_response(200, serde_json::to_string(&response).unwrap_or_default()),
@@ -255,11 +325,11 @@ fn handle(shared: &Shared, mut req: Request) {
                 Err(e) => error(400, &e.to_string()),
             }
         }
-        (Method::Get, "/api/wait") => {
-            let since = query_param(&url, "since").and_then(|s| s.parse().ok()).unwrap_or(0);
+        ("GET", "/api/wait") => {
+            let since = query_param(url, "since").and_then(|s| s.parse().ok()).unwrap_or(0);
             json_response(200, serde_json::to_string(&wait(shared, since)).unwrap_or_default())
         }
-        (Method::Get, "/api/info") => {
+        ("GET", "/api/info") => {
             let st = shared.state.lock().unwrap_or_else(|e| e.into_inner());
             let info = HubInfo {
                 hub: st.hub.clone(),
@@ -272,18 +342,25 @@ fn handle(shared: &Shared, mut req: Request) {
             json_response(200, serde_json::to_string(&info).unwrap_or_default())
         }
         _ => error(404, "not found"),
-    };
-    let _ = req.respond(response);
+    }
 }
 
 fn apply(shared: &Shared, sync: SyncRequest) -> Result<SyncResponse, (u16, String)> {
     let mut st = shared.state.lock().unwrap_or_else(|e| e.into_inner());
     let mut changed = false;
     let max_wall = now_ms().saturating_add(MAX_FUTURE_SKEW_MS);
-    if sync.changes.iter().any(|rec| rec.f.values().any(|field| {
-        field.t.parts().is_some_and(|(wall, _)| wall > max_wall)
-    })) {
-        return Err((409, "This device's clock is ahead of the hub; fix the date and time to sync".into()));
+    for field in sync.changes.iter().flat_map(|rec| rec.f.values()) {
+        let Some((wall, counter)) = field.t.parts() else {
+            return Err((400, "Invalid change stamp".into()));
+        };
+        // Ordering uses the encoded string, so require the clock's fixed-width format.
+        let node = field.t.0.splitn(3, '-').nth(2).unwrap_or_default();
+        if counter > 9999 || node.is_empty() || patch_core::Stamp::new(wall, counter, node) != field.t {
+            return Err((400, "Invalid change stamp".into()));
+        }
+        if wall > max_wall {
+            return Err((409, "This device's clock is ahead of the hub; fix the date and time to sync".into()));
+        }
     }
     for rec in sync.changes {
         let next = st.seq + 1;
@@ -335,6 +412,145 @@ mod tests {
     use super::*;
     use patch_core::Stamp;
     use serde_json::json;
+
+    #[test]
+    fn invalid_stamps_are_rejected_before_insert_and_merge() {
+        let dir = std::env::temp_dir().join(format!("patch-hub-stamps-{}", random_string(10)));
+        let mut cfg = HubConfig::new(&dir);
+        cfg.bind = "127.0.0.1:0".into();
+        let hub = Hub::start(cfg).unwrap();
+        let mut good = Record::new("task", "task");
+        good.put("notes", json!("original"), &Stamp::seed());
+        apply(&hub.shared, SyncRequest { since: 0, changes: vec![good.clone()], node: None }).unwrap();
+        let seq = hub.shared.state.lock().unwrap().seq;
+        for stamp in [
+            "z".to_string(), "1-0000-node".into(), "000000000000001-0000".into(),
+            "000000000000001-0000-".into(), "000000000000001-+001-node".into(),
+            Stamp::new(now_ms(), 10_000, "node").0,
+            Stamp::new(now_ms(), u32::MAX - 1, "node").0,
+            Stamp::new(now_ms(), u32::MAX, "node").0,
+        ] {
+            for id in ["new", "task"] {
+                let mut bad = Record::new(id, "task");
+                bad.put("notes", json!("poison"), &Stamp(stamp.clone()));
+                let result = apply(&hub.shared, SyncRequest { since: 0, changes: vec![bad], node: None });
+                assert_eq!(result.unwrap_err().0, 400, "accepted {stamp}");
+            }
+        }
+        let st = hub.shared.state.lock().unwrap();
+        assert_eq!(st.seq, seq);
+        assert_eq!(st.records.len(), 1);
+        assert_eq!(st.records["task"].rec, good);
+        drop(st);
+        hub.stop();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn blank_configured_tokens_use_the_stored_or_generated_token() {
+        let dir = std::env::temp_dir().join(format!("patch-hub-token-{}", random_string(10)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut cfg = HubConfig::new(&dir);
+        cfg.token = Some(" \t\n".into());
+        let token = load_token(&cfg).unwrap();
+        assert!(!token.trim().is_empty());
+        cfg.token = Some(String::new());
+        assert_eq!(load_token(&cfg).unwrap(), token);
+        std::fs::write(dir.join("token"), "   ").unwrap();
+        assert!(!load_token(&cfg).unwrap().trim().is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn unauthorized_partial_bodies_are_rejected_before_reading() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("patch-hub-partial-{}", random_string(10)));
+        let mut cfg = HubConfig::new(&dir);
+        cfg.bind = "127.0.0.1:0".into();
+        cfg.token = Some(String::new());
+        let hub = Hub::start(cfg).unwrap();
+        for auth in ["", "Authorization: Bearer \r\n", "Authorization: Bearer wrong\r\n"] {
+            let mut stream = TcpStream::connect(("127.0.0.1", hub.port())).unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+            write!(stream, "POST /api/sync HTTP/1.1\r\nHost: localhost\r\n{auth}Content-Length: 4\r\n\r\n").unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            assert!(response.starts_with("HTTP/1.1 401"), "{response}");
+        }
+        hub.stop();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn authenticated_bodies_have_a_deadline_and_size_limit() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("patch-hub-body-{}", random_string(10)));
+        let mut cfg = HubConfig::new(&dir);
+        cfg.bind = "127.0.0.1:0".into();
+        let hub = Hub::start(cfg).unwrap();
+        for (framing, status) in [
+            ("Content-Length: 67108865\r\n", 413),
+            ("Content-Length: bad\r\n", 400),
+            ("Content-Length: 0\r\nContent-Length: 0\r\n", 400),
+            ("Transfer-Encoding: chunked\r\n", 400),
+            ("", 411),
+        ] {
+            let head = format!("POST /api/sync HTTP/1.1\r\nAuthorization: Bearer {}\r\n{framing}\r\n", hub.token());
+            assert_eq!(handle_request(&hub.shared, &mut head.as_bytes()).status_code().0, status);
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        write!(client, "POST /api/sync HTTP/1.1\r\nAuthorization: Bearer {}\r\nContent-Length: 20\r\n\r\n", hub.token()).unwrap();
+        let sender = std::thread::spawn(move || {
+            for _ in 0..20 {
+                if client.write_all(b"x").is_err() { break; }
+                std::thread::sleep(Duration::from_millis(40));
+            }
+        });
+        let (stream, _) = listener.accept().unwrap();
+        let started = Instant::now();
+        let stream = DeadlineStream { stream, deadline: started + Duration::from_millis(250) };
+        let response = handle_request(&hub.shared, &mut BufReader::new(stream));
+        assert_eq!(response.status_code().0, 400);
+        assert!(started.elapsed() < Duration::from_millis(650));
+        sender.join().unwrap();
+        hub.stop();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn partial_headers_cannot_create_unlimited_workers() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("patch-hub-limit-{}", random_string(10)));
+        let mut cfg = HubConfig::new(&dir);
+        cfg.bind = "127.0.0.1:0".into();
+        let hub = Hub::start(cfg).unwrap();
+        let mut sockets = Vec::new();
+        for _ in 0..MAX_REQUESTS {
+            let mut stream = TcpStream::connect(("127.0.0.1", hub.port())).unwrap();
+            stream.write_all(b"POST /api/sync HTTP/1.1\r\n").unwrap();
+            sockets.push(stream);
+        }
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while hub.shared.active_requests.load(Ordering::SeqCst) < MAX_REQUESTS && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(hub.shared.active_requests.load(Ordering::SeqCst), MAX_REQUESTS);
+        let mut extra = TcpStream::connect(("127.0.0.1", hub.port())).unwrap();
+        extra.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        let mut response = String::new();
+        extra.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 503"), "{response}");
+        assert_eq!(hub.shared.active_requests.load(Ordering::SeqCst), MAX_REQUESTS);
+        drop(sockets);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while hub.shared.active_requests.load(Ordering::SeqCst) != 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(hub.shared.active_requests.load(Ordering::SeqCst), 0);
+        hub.stop();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn failed_save_is_not_acknowledged_even_on_retry() {

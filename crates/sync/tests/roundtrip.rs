@@ -134,3 +134,34 @@ fn clock_rejection_keeps_pending_edits() {
     hub.stop();
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn config_changes_stop_in_flight_rounds_to_the_old_hub() {
+    use tiny_http::{Response, Server};
+
+    for disconnect in [true, false] {
+        let old = Server::http("127.0.0.1:0").unwrap();
+        let new = Server::http("127.0.0.1:0").unwrap();
+        let doc = Arc::new(Mutex::new(Doc::with_node("changing-hubs")));
+        let cfg = |server: &Server| SyncConfig::new(&server.server_addr().to_string(), "TOKEN").unwrap();
+        let client = SyncClient::start(doc.clone(), Some(cfg(&old)), |_| {});
+        let mut req = old.recv_timeout(Duration::from_secs(3)).unwrap().unwrap();
+        assert_eq!(req.url(), "/api/sync");
+        req.as_reader().read_to_end(&mut Vec::new()).unwrap();
+        client.set_config(if disconnect { None } else { Some(cfg(&new)) });
+        req.respond(Response::from_string(r#"{"hub":"old","seq":99,"changes":[]}"#)).unwrap();
+        if disconnect {
+            assert_eq!(client.status(), SyncStatus::Disabled);
+        } else {
+            let mut req = new.recv_timeout(Duration::from_secs(3)).unwrap().unwrap();
+            req.as_reader().read_to_end(&mut Vec::new()).unwrap();
+            // Keep the new round in flight while checking the old hub.
+            assert_eq!(doc.lock().unwrap().hub_id, None);
+            client.set_config(None);
+            req.respond(Response::from_string(r#"{"hub":"new","seq":0,"changes":[]}"#)).unwrap();
+        }
+        assert!(old.recv_timeout(Duration::from_millis(700)).unwrap().is_none(), "old hub received another request");
+        assert_eq!(doc.lock().unwrap().hub_id, None, "stale response was applied");
+        assert_eq!(doc.lock().unwrap().last_seq, 0);
+    }
+}
