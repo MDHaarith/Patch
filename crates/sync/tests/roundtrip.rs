@@ -135,6 +135,17 @@ fn clock_rejection_keeps_pending_edits() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+// Other local processes (dev tools) probe loopback ports, so ignore non-API strays (answered 404).
+fn api_request(server: &tiny_http::Server, wait: Duration) -> Option<tiny_http::Request> {
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        let left = deadline.checked_duration_since(std::time::Instant::now())?;
+        let req = server.recv_timeout(left).unwrap()?;
+        if req.url().starts_with("/api/") { return Some(req); }
+        req.respond(tiny_http::Response::from_string("").with_status_code(404)).unwrap();
+    }
+}
+
 #[test]
 fn config_changes_stop_in_flight_rounds_to_the_old_hub() {
     use tiny_http::{Response, Server};
@@ -145,7 +156,7 @@ fn config_changes_stop_in_flight_rounds_to_the_old_hub() {
         let doc = Arc::new(Mutex::new(Doc::with_node("changing-hubs")));
         let cfg = |server: &Server| SyncConfig::new(&server.server_addr().to_string(), "TOKEN").unwrap();
         let client = SyncClient::start(doc.clone(), Some(cfg(&old)), |_| {});
-        let mut req = old.recv_timeout(Duration::from_secs(3)).unwrap().unwrap();
+        let mut req = api_request(&old, Duration::from_secs(3)).unwrap();
         assert_eq!(req.url(), "/api/sync");
         req.as_reader().read_to_end(&mut Vec::new()).unwrap();
         client.set_config(if disconnect { None } else { Some(cfg(&new)) });
@@ -153,14 +164,14 @@ fn config_changes_stop_in_flight_rounds_to_the_old_hub() {
         if disconnect {
             assert_eq!(client.status(), SyncStatus::Disabled);
         } else {
-            let mut req = new.recv_timeout(Duration::from_secs(3)).unwrap().unwrap();
+            let mut req = api_request(&new, Duration::from_secs(3)).unwrap();
             req.as_reader().read_to_end(&mut Vec::new()).unwrap();
             // Keep the new round in flight while checking the old hub.
             assert_eq!(doc.lock().unwrap().hub_id, None);
             client.set_config(None);
             req.respond(Response::from_string(r#"{"hub":"new","seq":0,"changes":[]}"#)).unwrap();
         }
-        assert!(old.recv_timeout(Duration::from_millis(700)).unwrap().is_none(), "old hub received another request");
+        assert!(api_request(&old, Duration::from_millis(700)).is_none(), "old hub received another request");
         assert_eq!(doc.lock().unwrap().hub_id, None, "stale response was applied");
         assert_eq!(doc.lock().unwrap().last_seq, 0);
     }

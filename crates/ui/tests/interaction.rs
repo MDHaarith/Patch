@@ -107,10 +107,10 @@ fn find(d: &Doc, title: &str) -> Task {
 }
 
 // Desktop shell geometry
-const MAIN_X: f32 = 268.0;
-const MAIN_W: f32 = 1162.0;
-const CONTENT_Y: f32 = 119.0;
-const CONTENT_H: f32 = 771.0;
+const MAIN_X: f32 = 0.0;
+const MAIN_W: f32 = 1440.0;
+// MobileShell: 56px header, 34px view selector and 8px bottom padding.
+const CONTENT_Y: f32 = 56.0 + 34.0 + 8.0;
 
 #[test]
 fn desktop_interactions() {
@@ -141,7 +141,7 @@ fn desktop_interactions() {
 
     // --- Board: drag the first card into "In Progress".
     let col_x = |c: f32| 12.0 + c * 342.0;
-    let card_y = |k: f32| 104.0 + 12.0 + 44.0 + k * 94.0;
+    let card_y = |k: f32| CONTENT_Y + 12.0 + 44.0 + k * 94.0;
     ui.drag((col_x(0.0) + 80.0, card_y(0.0) + 30.0), (col_x(1.0) + 80.0, card_y(0.0) + 30.0));
     let d = doc(&app, &dir);
     assert_eq!(find(&d, "Alpha").column, COL_DOING, "card dropped into In Progress");
@@ -159,7 +159,7 @@ fn desktop_interactions() {
 
     // --- Quick add from the toolbar with natural language.
     let day = today();
-    ui.click(MAIN_X + 120.0, 35.0);
+    ui.click(MAIN_X + 120.0, 900.0 - 12.0 - 30.0);
     ui.type_text(&format!("Dentist {} 3pm #work !!!", day.format("%Y-%m-%d")));
     ui.key(Key::Return);
     let dentist = find(&doc(&app, &dir), "Dentist");
@@ -167,32 +167,31 @@ fn desktop_interactions() {
     assert_eq!(dentist.list, LIST_WORK);
     assert_eq!(dentist.priority, 3);
 
-    // --- Month: drag Dentist two days later (same week row if possible).
+    // The compact month uses a date grid and agenda instead of draggable cards.
     main.global::<Actions>().invoke_set_view(2);
     ui.settle();
     let grid0 = patch_core::time::month_grid(day, true)[0];
-    let idx = (day - grid0).num_days() as f32;
-    let target_offset: i64 = if day.weekday().num_days_from_monday() <= 4 { 2 } else { -2 };
-    let cell_w = MAIN_W / 7.0;
-    let cell_h = (CONTENT_H - 30.0) / 6.0;
-    let cell_xy = |i: f32| (MAIN_X + (i % 7.0) * cell_w, CONTENT_Y + 30.0 + (i / 7.0).floor() * cell_h);
-    let (cx, cy) = cell_xy(idx);
-    let (tx, ty) = cell_xy(idx + target_offset as f32);
-    ui.drag((cx + 30.0, cy + 31.0 + 9.0), (tx + cell_w / 2.0, ty + cell_h / 2.0));
-    let moved = find(&doc(&app, &dir), "Dentist");
-    let new_day = day + Duration::days(target_offset);
-    assert_eq!(moved.start, Some(new_day.and_time(hm(15, 0))), "month drag keeps the time");
+    let cell_w = (MAIN_W - 16.0) / 7.0;
+    let cell_xy = |i: f32| (8.0 + (i % 7.0 + 0.5) * cell_w,
+        CONTENT_Y + 18.0 + 6.0 + ((i / 7.0).floor() + 0.5) * 46.0);
+    let (cx, cy) = cell_xy((day - grid0).num_days() as f32);
+    ui.click(cx, cy);
+    ui.click(100.0, CONTENT_Y + 18.0 + 6.0 + 6.0 * 46.0 + 6.0 + 1.0 + 4.0 + 20.0 + 20.0);
+    assert!(main.global::<Store>().get_editor_open(), "agenda opens the task");
+    main.global::<Actions>().invoke_editor_close();
+    ui.settle();
+    let new_day = day;
 
     // --- Week: drag the block one hour later.
     main.global::<Actions>().invoke_select_date(new_day.to_string().into());
     main.global::<Actions>().invoke_set_view(1);
     ui.settle();
     let di = new_day.weekday().num_days_from_monday() as f32;
-    let col_w = (MAIN_W - 56.0) / 7.0;
+    let col_w = (MAIN_W - 46.0) / 7.0;
     let body_y = CONTENT_Y + 44.0 + 30.0 + 1.0;
-    let hour_h = 46.0;
+    let hour_h = 54.0;
     let block_y = body_y + 10.0 + 15.0 * hour_h - 7.5 * hour_h + 12.0;
-    let block_x = MAIN_X + 56.0 + di * col_w + 30.0;
+    let block_x = MAIN_X + 46.0 + di * col_w + 30.0;
     ui.drag((block_x, block_y), (block_x, block_y + hour_h));
     let later = find(&doc(&app, &dir), "Dentist");
     assert_eq!(later.start, Some(new_day.and_time(hm(16, 0))), "week drag snaps to the hour");
@@ -213,38 +212,31 @@ fn desktop_interactions() {
         .find(|d| d.month() == day.month() && (*d - day).num_days().abs() > 3 && d.day() <= 20)
         .unwrap();
     let (ex, ey) = cell_xy((empty - grid0).num_days() as f32);
-    ui.double_click(ex + cell_w / 2.0, ey + cell_h - 12.0);
+    ui.double_click(ex, ey);
     assert!(main.global::<Store>().get_editor_open(), "double-click opens the editor");
     // Let the inspector finish sliding in before clicking inside it.
     std::thread::sleep(StdDuration::from_millis(250));
     ui.settle();
     ui.type_text("Conference");
-    // Picker cells: find them by key through the model and click via the
-    // picker geometry inside the 360px inspector.
     let ed = main.global::<patch_ui::Editor>();
-    let cells = ed.get_picker_cells();
-    use slint::Model;
-    let pos_of = |key: &str| (0..cells.row_count()).find(|i| cells.row_data(*i).unwrap().key == key).unwrap() as f32;
     let start = empty;
     let end = empty + Duration::days(2);
-    assert!(main.global::<patch_ui::Editor>().get_all_day());
-    let inspector_x = 1440.0 - 10.0 - 360.0;
-    let picker_x = inspector_x + 16.0 + 16.0;
-    let picker_w = 360.0 - 32.0 - 32.0;
-    // Inspector header 52 + divider 1 + scroll padding 16; blocks above the
-    // picker: title(30)+18, list group(13+8+28)+18, status(13+8+28)+18,
-    // priority(13+8+28)+18, schedule label 13+8, two toggle rows (22+8)*2.
-    let picker_top = 10.0 + 53.0 + 16.0 + 48.0 + 67.0 + 67.0 + 67.0 + 21.0 + 60.0;
-    let days_top = picker_top + 14.0 + 28.0 + 6.0 + 16.0 + 6.0;
-    let cell_xy_p = |i: f32| (picker_x + (i % 7.0 + 0.5) * picker_w / 7.0, days_top + ((i / 7.0).floor() + 0.5) * 30.0);
-    let (sx, sy) = cell_xy_p(pos_of(&start.to_string()));
-    let (qx, qy) = cell_xy_p(pos_of(&end.to_string()));
+    assert!(ed.get_all_day());
+    use slint::Model;
+    let cells = ed.get_picker_cells();
+    let picker_cell = |key: &str| {
+        let i = (0..cells.row_count()).find(|i| cells.row_data(*i).unwrap().key == key).unwrap() as f32;
+        // Editor body padding and RangePicker padding, with 38px day rows.
+        (34.0 + (i % 7.0 + 0.5) * (MAIN_W - 68.0) / 7.0,
+            500.0 + ((i / 7.0).floor() + 0.5) * 38.0)
+    };
+    let (sx, sy) = picker_cell(&start.to_string());
+    let (ex, ey) = picker_cell(&end.to_string());
     ui.click(sx, sy);
-    ui.click(qx, qy);
+    ui.click(ex, ey);
     assert_eq!(ed.get_start_key(), start.to_string());
     assert_eq!(ed.get_end_key(), end.to_string(), "second tap extends the range");
-    // Save with the Add button.
-    ui.click(1440.0 - 10.0 - 12.0 - 22.0, 10.0 + 26.0);
+    ui.click(MAIN_W - 32.0, 30.0);
     assert!(!main.global::<Store>().get_editor_open());
     let conf = find(&doc(&app, &dir), "Conference");
     assert!(conf.all_day);

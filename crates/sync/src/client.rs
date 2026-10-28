@@ -486,8 +486,17 @@ mod tests {
         (Arc::new(Mutex::new(d)), id)
     }
 
+    // Next request to /api/*. Other local processes (dev tools) probe ephemeral loopback ports, so strays get a 404.
+    fn recv_api(server: &Server) -> tiny_http::Request {
+        loop {
+            let request = server.recv_timeout(Duration::from_secs(4)).unwrap().expect("sync request");
+            if request.url().starts_with("/api/") { return request; }
+            request.respond(Response::from_string("").with_status_code(404)).unwrap();
+        }
+    }
+
     fn receive(server: &Server) -> (tiny_http::Request, SyncRequest) {
-        let mut request = server.recv_timeout(Duration::from_secs(4)).unwrap().expect("sync request");
+        let mut request = recv_api(server);
         assert_eq!(request.url(), "/api/sync");
         let body = serde_json::from_reader(request.as_reader()).unwrap();
         (request, body)
@@ -623,12 +632,20 @@ mod tests {
         let cfg = SyncConfig::new(&listener.local_addr().unwrap().to_string(), "TOKEN").unwrap();
         let (doc, id) = doc();
         let (tx, rx) = channel();
-        let client = SyncClient::start(doc.clone(), Some(cfg), move |e| { let _ = tx.send(e); });
+        let (ready_tx, ready_rx) = channel();
+        let ready_rx = Mutex::new(ready_rx);
+        let client = SyncClient::start(doc.clone(), Some(cfg), move |e| {
+            let offline = matches!(e, SyncEvent::Status(SyncStatus::Offline(_)));
+            let _ = tx.send(e);
+            if offline { let _ = ready_rx.lock().unwrap().recv(); }
+        });
         let (stream, _) = listener.accept().unwrap();
         drop(stream);
         wait_status(&rx, |s| matches!(s, SyncStatus::Offline(_)));
-        // The same address comes back while the worker is backing off.
+        // Release the worker only after the replacement server is ready.
         let server = Server::from_listener(listener, None).unwrap();
+        ready_tx.send(()).unwrap();
+        wait_status(&rx, |s| matches!(s, SyncStatus::Syncing));
         let (request, sent) = receive(&server);
         assert!(sent.changes.iter().any(|r| r.id == id));
         request.respond(Response::from_string(r#"{"hub":"hub","seq":1,"changes":[]}"#)).unwrap();
@@ -646,7 +663,7 @@ mod tests {
         let (request, _) = receive(&server);
         request.respond(Response::from_string(r#"{"hub":"hub","seq":1,"changes":[]}"#)).unwrap();
         wait_status(&rx, |s| matches!(s, SyncStatus::Synced(_)));
-        let request = server.recv_timeout(Duration::from_secs(4)).unwrap().unwrap();
+        let request = recv_api(&server);
         assert!(request.url().starts_with("/api/wait?"));
         request.respond(Response::from_string("broken JSON")).unwrap();
         wait_status(&rx, |s| matches!(s, SyncStatus::Offline(e) if e.contains("bad response")));
