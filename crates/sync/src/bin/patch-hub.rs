@@ -36,15 +36,6 @@ fn listen_address(bind: &str, port: u16) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn ipv6_bind_is_bracketed() {
-        assert_eq!(super::listen_address("fd7a:115c:a1e0::1", 4747), "[fd7a:115c:a1e0::1]:4747");
-        assert_eq!(super::listen_address("0.0.0.0", 4747), "0.0.0.0:4747");
-    }
-}
-
 fn main() {
     let mut port = DEFAULT_PORT;
     let mut bind = "0.0.0.0".to_string();
@@ -84,5 +75,14 @@ fn main() {
     }
     loop {
         std::thread::park();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn ipv6_bind_is_bracketed() {
+        assert_eq!(super::listen_address("fd7a:115c:a1e0::1", 4747), "[fd7a:115c:a1e0::1]:4747");
+        assert_eq!(super::listen_address("0.0.0.0", 4747), "0.0.0.0:4747");
     }
 }
