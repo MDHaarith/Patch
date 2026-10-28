@@ -14,6 +14,7 @@ import androidx.camera.core.ImageProxy;
 import androidx.camera.core.Preview;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
+import androidx.core.content.ContextCompat;
 import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.LifecycleOwner;
 import androidx.lifecycle.LifecycleRegistry;
@@ -104,16 +105,16 @@ final class QrScanner implements LifecycleOwner, AutoCloseable {
                 Toast.makeText(activity, "Camera unavailable. Enter the address and code below.", Toast.LENGTH_LONG).show();
                 activity.stopScan();
             }
-        }, activity.getMainExecutor());
+        }, ContextCompat.getMainExecutor(activity));
     }
 
-    @androidx.camera.core.ExperimentalGetImage
+    @androidx.annotation.OptIn(markerClass = androidx.camera.core.ExperimentalGetImage.class)
     private void analyze(ImageProxy frame) {
         if (closed || frame.getImage() == null) { frame.close(); return; }
         InputImage image = InputImage.fromMediaImage(frame.getImage(), frame.getImageInfo().getRotationDegrees());
         try {
             decoder.process(image)
-                    .addOnSuccessListener(activity.getMainExecutor(), codes -> {
+                    .addOnSuccessListener(ContextCompat.getMainExecutor(activity), codes -> {
                         if (closed || delivered) return;
                         for (Barcode code : codes) {
                             String value = code.getRawValue();

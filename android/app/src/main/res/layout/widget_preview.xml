@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- What the widget picker shows (API 31+): the widget with sample rows. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/widget_bg"
@@ -78,7 +79,8 @@
             android:layout_height="8dp"
             android:importantForAccessibility="no"
             android:src="@drawable/widget_dot"
-            android:tint="#FF0A84FF" />
+            android:tint="#FF0A84FF"
+            tools:ignore="UseAppTint" />
 
         <TextView
             android:layout_width="0dp"
@@ -120,7 +122,8 @@
             android:layout_height="8dp"
             android:importantForAccessibility="no"
             android:src="@drawable/widget_dot"
-            android:tint="#FF30D158" />
+            android:tint="#FF30D158"
+            tools:ignore="UseAppTint" />
 
         <TextView
             android:layout_width="0dp"
@@ -177,7 +180,8 @@
             android:layout_height="8dp"
             android:importantForAccessibility="no"
             android:src="@drawable/widget_dot"
-            android:tint="#FFFF9F0A" />
+            android:tint="#FFFF9F0A"
+            tools:ignore="UseAppTint" />
 
         <TextView
             android:layout_width="0dp"
