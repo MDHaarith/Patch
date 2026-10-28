@@ -15,9 +15,6 @@ import android.util.Log;
 import android.view.Surface;
 import android.widget.Toast;
 
-import com.google.mlkit.vision.barcode.common.Barcode;
-import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions;
-import com.google.mlkit.vision.codescanner.GmsBarcodeScanning;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayDeque;
@@ -111,7 +108,7 @@ final class PatchNative {
     }
 
     /**
-     * Holds {@code drawingFinished} (from surfaceRedrawNeededAsync) until Rust
+     * Holds {@code drawingFinished} (surface redraw or texture resize) until Rust
      * has posted a frame at the new size, so the window manager never shows a
      * stale or stretched frame. A timeout keeps a stuck frame from freezing the
      * window.
@@ -203,24 +200,18 @@ final class PatchNative {
         main.post(() -> PatchWidget.publish(app, json));
     }
 
-    /** Google's code scanner: no camera permission, the camera UI is Play services'. */
+    static String deviceName() { return android.os.Build.MODEL; }
+
+    static void scanPreview(int x, int y, int width, int height) {
+        main.post(() -> { MainActivity a = activity.get(); if (a != null) a.scanPreview(x, y, width, height); });
+    }
+
     static void scanQr() {
-        main.post(() -> {
-            Context context = activity.get() != null ? activity.get() : app;
-            GmsBarcodeScannerOptions options = new GmsBarcodeScannerOptions.Builder()
-                    .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
-                    .build();
-            GmsBarcodeScanning.getClient(context, options).startScan()
-                    .addOnSuccessListener(code -> {
-                        if (code.getRawValue() != null) {
-                            nativeScanned(code.getRawValue());
-                        }
-                    })
-                    .addOnFailureListener(e -> {
-                        Log.w(TAG, "QR scanner unavailable", e);
-                        Toast.makeText(app, "Scanner unavailable: type the hub address and token instead", Toast.LENGTH_LONG).show();
-                    });
-        });
+        main.post(() -> { MainActivity a = activity.get(); if (a != null) a.startScan(); });
+    }
+
+    static void stopScan() {
+        main.post(() -> { MainActivity a = activity.get(); if (a != null) a.stopScan(); });
     }
 
     static void checkUpdate() {
@@ -374,6 +365,8 @@ final class PatchNative {
 
     /** The widget's "+": open the editor on a new task. */
     static native void nativeNewTask();
+
+    static native void nativeScanStopped();
 
     /** Text of a QR code scanned for pairing. */
     static native void nativeScanned(String text);

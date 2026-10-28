@@ -1,5 +1,6 @@
 //! Background sync client used by the apps.
 
+use crate::DeviceIdentity;
 use crate::http::{request, Base, HttpError};
 use crate::proto::{SyncRequest, SyncResponse, WaitResponse};
 use patch_core::Doc;
@@ -13,6 +14,8 @@ use std::time::Duration;
 pub struct SyncConfig {
     pub base: Base,
     pub token: String,
+    /// Explicit user pairing; persisted credentials always set this to false.
+    pub pairing: bool,
 }
 
 impl SyncConfig {
@@ -24,7 +27,7 @@ impl SyncConfig {
         if !token.is_ascii() || token.bytes().any(|b| b.is_ascii_control()) {
             return Err("Bad pairing token".into());
         }
-        Ok(SyncConfig { base: Base::parse(url)?, token: token.to_string() })
+        Ok(SyncConfig { base: Base::parse(url)?, token: token.to_string(), pairing: false })
     }
 
     /// What a hub's pairing QR code encodes.
@@ -105,7 +108,7 @@ impl SyncStatus {
             SyncStatus::Syncing => "Syncing…".into(),
             SyncStatus::Synced(_) => "Synced".into(),
             SyncStatus::Offline(e) => format!("Offline — {e}"),
-            SyncStatus::Unauthorized => "Wrong pairing token".into(),
+            SyncStatus::Unauthorized => "Access revoked, pair again".into(),
             SyncStatus::ClockAhead => "This device's clock is ahead of the hub; fix the date and time to sync".into(),
         }
     }
@@ -115,6 +118,8 @@ pub enum SyncEvent {
     Status(SyncStatus),
     /// Records or sync bookkeeping changed; refresh and persist the doc.
     RemoteApplied,
+    /// Save this credential in device preferences, never in the synced document.
+    Registered(SyncConfig, String),
 }
 
 enum Msg {
@@ -125,6 +130,7 @@ enum Msg {
 struct Shared {
     doc: Arc<Mutex<Doc>>,
     cfg: Mutex<Option<SyncConfig>>,
+    identity: Mutex<DeviceIdentity>,
     changed: Condvar,
     generation: AtomicU64,
     status: Mutex<SyncStatus>,
@@ -185,7 +191,9 @@ fn sync_once(shared: &Shared, cfg: &SyncConfig, generation: u64) -> Result<Outco
         let d = shared.doc.lock().unwrap();
         (d.last_seq, d.pending(), d.node().to_string())
     };
-    let body = serde_json::to_vec(&SyncRequest { since, changes: pending.clone(), node: Some(node) })
+    let mut identity = shared.identity.lock().unwrap().clone();
+    identity.pairing = cfg.pairing;
+    let body = serde_json::to_vec(&SyncRequest { device: Some(identity), since, changes: pending.clone(), node: Some(node) })
         .map_err(|e| HttpError::Protocol(e.to_string()))?;
     if shared.stop.load(Ordering::SeqCst) || shared.generation.load(Ordering::SeqCst) != generation {
         return Ok(Outcome::Cancelled);
@@ -205,7 +213,7 @@ fn sync_once(shared: &Shared, cfg: &SyncConfig, generation: u64) -> Result<Outco
         }
     }
 
-    let _cfg = shared.cfg.lock().unwrap();
+    let mut current_cfg = shared.cfg.lock().unwrap();
     let mut d = shared.doc.lock().unwrap();
     if shared.stop.load(Ordering::SeqCst) || shared.generation.load(Ordering::SeqCst) != generation {
         return Ok(Outcome::Cancelled);
@@ -221,10 +229,24 @@ fn sync_once(shared: &Shared, cfg: &SyncConfig, generation: u64) -> Result<Outco
         d.ack(&pending);
         d.advance_seq(resp.seq);
     }
-    Ok(Outcome::Done { applied: d.rev() != rev, more: adopted || d.has_pending() })
+    let outcome = Outcome::Done { applied: d.rev() != rev, more: adopted || d.has_pending() };
+    let registered = resp.credential.filter(|token| token.starts_with("device-") && token.len() <= 256 && token.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
+        .map(|token| { let mut cfg = cfg.clone(); cfg.token = token; cfg.pairing = false; cfg });
+    if let Some(cfg) = &registered { *current_cfg = Some(cfg.clone()); }
+    drop(d);
+    drop(current_cfg);
+    if let Some(cfg) = registered {
+        let name = resp.name.filter(|name| !name.trim().is_empty() && name.len() <= 256 && !name.chars().any(char::is_control)).unwrap_or_else(|| cfg.base.host.clone());
+        (shared.on_event)(SyncEvent::Registered(cfg, name));
+    }
+    Ok(outcome)
 }
 
 impl SyncClient {
+    pub fn set_identity(&self, name: String, platform: String) {
+        *self.shared.identity.lock().unwrap() = DeviceIdentity { name, platform, pairing: false };
+    }
+
     pub fn start(
         doc: Arc<Mutex<Doc>>,
         cfg: Option<SyncConfig>,
@@ -235,6 +257,7 @@ impl SyncClient {
             doc,
             status: Mutex::new(if cfg.is_some() { SyncStatus::Connecting } else { SyncStatus::Disabled }),
             cfg: Mutex::new(cfg),
+            identity: Mutex::new(DeviceIdentity { pairing: false, name: std::env::var("HOSTNAME").unwrap_or_else(|_| "Unknown device".into()), platform: std::env::consts::OS.into() }),
             changed: Condvar::new(),
             generation: AtomicU64::new(0),
             stop: AtomicBool::new(false),
@@ -276,6 +299,7 @@ impl SyncClient {
                         let mut rounds = 0;
                         let result = loop {
                             rounds += 1;
+                            let cfg = shared.config().0.unwrap_or_else(|| cfg.clone());
                             match sync_once(&shared, &cfg, generation) {
                                 Ok(Outcome::Cancelled) => break Ok(false),
                                 Ok(Outcome::Done { applied, more }) => {
@@ -516,7 +540,7 @@ mod tests {
                 task.title = format!("Edit {seq}");
                 d.save_task(&task);
             }
-            let response = SyncResponse { reset: false, hub: "hub".into(), seq, changes: sent.changes };
+            let response = SyncResponse { name: None, credential: None, reset: false, hub: "hub".into(), seq, changes: sent.changes };
             request.respond(Response::from_string(serde_json::to_string(&response).unwrap())).unwrap();
             if seq < 5 {
                 assert!(!matches!(client.status(), SyncStatus::Synced(_)));
@@ -576,7 +600,7 @@ mod tests {
         let (tx, rx) = channel();
         let client = SyncClient::start(doc.clone(), Some(cfg), move |e| { let _ = tx.send(e); });
         let (request, _) = receive(&server);
-        let response = SyncResponse { reset: false, hub: "hub".into(), seq: 1, changes: source.lock().unwrap().pending() };
+        let response = SyncResponse { name: None, credential: None, reset: false, hub: "hub".into(), seq: 1, changes: source.lock().unwrap().pending() };
         request.respond(Response::from_string(serde_json::to_string(&response).unwrap())).unwrap();
         let (request, _) = receive(&server);
         request.respond(Response::from_string("disk failed").with_status_code(500)).unwrap();
@@ -633,6 +657,7 @@ mod tests {
 
     fn shared(doc: Arc<Mutex<Doc>>) -> Shared {
         Shared {
+            identity: Mutex::new(DeviceIdentity::default()),
             doc, cfg: Mutex::new(None), changed: Condvar::new(), generation: AtomicU64::new(0),
             status: Mutex::new(SyncStatus::Connecting), stop: AtomicBool::new(false), on_event: Box::new(|_| {}),
         }
@@ -661,12 +686,12 @@ mod tests {
         let shared = shared(doc.clone());
         for (seq, reset) in [(0, false), (100, true)] {
             doc.lock().unwrap().advance_seq(99);
-            let (result, sent) = round(&shared, SyncResponse { reset, hub: "hub".into(), seq, changes: vec![] });
+            let (result, sent) = round(&shared, SyncResponse { name: None, credential: None, reset, hub: "hub".into(), seq, changes: vec![] });
             assert_eq!(sent.since, 99);
             assert!(matches!(result, Ok(Outcome::Done { applied: true, more: true })));
             assert_eq!(doc.lock().unwrap().last_seq, 0);
         }
-        let (result, sent) = round(&shared, SyncResponse { reset: false, hub: "hub".into(), seq: 1, changes: vec![] });
+        let (result, sent) = round(&shared, SyncResponse { name: None, credential: None, reset: false, hub: "hub".into(), seq: 1, changes: vec![] });
         assert_eq!(sent.since, 0);
         assert!(sent.changes.iter().any(|r| r.id == id));
         assert!(matches!(result, Ok(Outcome::Done { more: false, .. })));
@@ -683,7 +708,7 @@ mod tests {
         future.put("title", serde_json::json!("future"), &patch_core::Stamp::new(
             patch_core::hlc::now_ms() + patch_core::hlc::MAX_FUTURE_SKEW_MS + 60_000, 0, "remote"));
         for (hub, changes) in [(String::new(), vec![]), ("hub".into(), vec![bad]), ("hub".into(), vec![future])] {
-            let (result, _) = round(&shared, SyncResponse { reset: false, hub, seq: 99, changes });
+            let (result, _) = round(&shared, SyncResponse { name: None, credential: None, reset: false, hub, seq: 99, changes });
             assert!(matches!(result, Err(HttpError::Protocol(_))));
             assert_eq!(doc.lock().unwrap().to_json(), before);
         }

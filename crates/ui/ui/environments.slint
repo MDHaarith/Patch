@@ -1,0 +1,137 @@
+import { Theme } from "theme.slint";
+import { Icon, IconBox } from "icons.slint";
+import { Store, Actions } from "store.slint";
+import { Surface, Field, Toggle, IconButton, Button, Scroll } from "widgets.slint";
+
+// The native camera is positioned over this card, in logical window pixels.
+component ScanCard inherits Rectangle {
+    height: 240px;
+    border-radius: 20px;
+    background: #141518;
+    border-width: 1px;
+    border-color: #303136;
+    clip: true;
+    public function update-preview() {
+        Actions.scan-preview(self.absolute-position.x / 1px, self.absolute-position.y / 1px, self.width / 1px, self.height / 1px);
+    }
+    Rectangle {
+        width: 170px;
+        height: 170px;
+        border-radius: 28px;
+        border-width: 2px;
+        border-color: #ffffff88;
+        VerticalLayout {
+            alignment: center;
+            spacing: 12px;
+            HorizontalLayout { alignment: center; IconBox { name: "qr"; size: 32px; tint: #ffffff; } }
+            Text { text: Store.scan-active ? "Starting camera…" : "Tap to scan"; color: #ffffff; horizontal-alignment: center; font-size: 15px; }
+        }
+    }
+    TouchArea {
+        enabled: Store.can-scan;
+        clicked => {
+            root.update-preview();
+            Store.scan-active = true;
+            Actions.scan-pair();
+        }
+        accessible-role: button;
+        accessible-label: "Start QR camera scanner";
+    }
+    Timer { interval: 100ms; running: Store.scan-active; triggered => { root.update-preview(); } }
+}
+
+export component EnvironmentsPanel inherits Rectangle {
+    property <string> address;
+    property <string> code;
+    VerticalLayout {
+        HorizontalLayout {
+            height: 76px;
+            padding-left: 10px;
+            padding-right: 14px;
+            spacing: 6px;
+            IconButton {
+                icon: "chevron-left";
+                clicked => { Actions.stop-scan(); Store.scan-active = false; Store.environment-page -= 1; }
+            }
+            Text {
+                horizontal-stretch: 1;
+                text: Store.environment-page == 2 ? "Add environment" : "Environments";
+                color: Theme.text;
+                font-size: 27px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+            IconButton {
+                icon: Store.environment-page == 2 ? "check" : "plus";
+                tint: Store.environment-page == 2 && (root.address == "" || root.code == "" || Store.pairing) ? Theme.text-3 : Theme.text;
+                clicked => {
+                    if Store.environment-page == 2 { if root.address != "" && root.code != "" && !Store.pairing { Actions.connect-hub(root.address, root.code); } }
+                    else { root.address = ""; root.code = ""; Store.environment-page = 2; }
+                }
+            }
+        }
+        scroll := Scroll {
+            content-height: body.preferred-height;
+            body := VerticalLayout {
+                width: scroll.width;
+                alignment: start;
+                padding: 18px;
+                padding-top: 8px;
+                spacing: 20px;
+                if Store.environment-page == 1 && Store.environments.length == 0: VerticalLayout {
+                    padding-top: 64px;
+                    spacing: 16px;
+                    HorizontalLayout { alignment: center; IconBox { name: "laptop"; size: 44px; tint: Theme.text-3; } }
+                    Text { text: "No hubs connected yet. Tap + to add one."; wrap: word-wrap; horizontal-alignment: center; color: Theme.text-2; font-size: Theme.fs-m; }
+                }
+                if Store.environment-page == 1 && Store.environments.length > 0: Surface {
+                    radius: 20px;
+                    fill: Theme.panel-strong;
+                    height: hubs.preferred-height;
+                    hubs := VerticalLayout {
+                        padding: 6px;
+                        spacing: 0px;
+                        for hub in Store.environments: HorizontalLayout {
+                            padding: 14px;
+                            spacing: 12px;
+                            IconBox { name: "laptop"; size: 26px; tint: Theme.text; }
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 5px;
+                                Text { text: hub.name; color: Theme.text; font-size: 17px; font-weight: 600; overflow: elide; }
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    Rectangle { width: 7px; height: 7px; border-radius: 4px; background: hub.connected ? #43d78b : Theme.text-3; y: (parent.height - self.height) / 2; }
+                                    Text { horizontal-stretch: 1; text: hub.status; color: Theme.text-2; font-size: 12px; wrap: word-wrap; }
+                                }
+                            }
+                            Toggle { checked: hub.enabled; toggled(on) => { Actions.enable-environment(hub.url, on); } }
+                            IconButton { icon: "chevron-right"; size: 26px; clicked => { root.address = hub.url; root.code = ""; Store.environment-page = 2; } }
+                        }
+                    }
+                }
+                if Store.environment-page == 2: VerticalLayout {
+                    spacing: 16px;
+                    ScanCard {}
+                    Text { text: "Scan the code from your laptop's Patch Settings"; color: Theme.text-2; font-size: 13px; horizontal-alignment: center; wrap: word-wrap; }
+                    Text { text: "Or enter it"; color: Theme.text; font-size: 20px; font-weight: 600; }
+                    Surface {
+                        radius: 18px;
+                        fill: Theme.panel-strong;
+                        height: fields.preferred-height;
+                        fields := VerticalLayout {
+                            padding: 14px;
+                            spacing: 12px;
+                            Field { text <=> root.address; placeholder: "Address"; }
+                            Field { text <=> root.code; placeholder: "Code"; }
+                        }
+                    }
+                    Text { text: "Enter the address and code shown on your laptop. Keep both devices on the same Wi-Fi or Tailscale."; color: Theme.text-2; font-size: 13px; wrap: word-wrap; }
+                    if Store.pairing: Text { text: "Connecting…"; color: Theme.accent; font-size: Theme.fs-m; }
+                    if Store.sync-state == 3 || Store.sync-state == 4: Text { text: Store.sync-label; color: Theme.text-2; wrap: word-wrap; font-size: Theme.fs-s; }
+                }
+                Rectangle { height: 20px; }
+            }
+        }
+    }
+}

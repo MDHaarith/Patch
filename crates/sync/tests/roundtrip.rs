@@ -126,7 +126,7 @@ fn clock_rejection_keeps_pending_edits() {
     d.save_task(&task);
     let doc = Arc::new(Mutex::new(d));
     let url = format!("http://127.0.0.1:{}", hub.port());
-    let client = SyncClient::start(doc.clone(), Some(SyncConfig::new(&url, hub.token()).unwrap()), |_| {});
+    let client = SyncClient::start(doc.clone(), Some(SyncConfig::new(&url, &hub.token()).unwrap()), |_| {});
     wait_until("visible clock error", || client.status() == SyncStatus::ClockAhead);
     assert!(doc.lock().unwrap().has_pending());
     assert_eq!(doc.lock().unwrap().last_seq, 0);
@@ -188,7 +188,7 @@ fn concurrent_fields_and_tombstones_converge_without_overwriting_other_edits() {
     right.save_task(&task);
     let left = Arc::new(Mutex::new(left));
     let right = Arc::new(Mutex::new(right));
-    let cfg = SyncConfig::new(&format!("http://127.0.0.1:{}", hub.port()), hub.token()).unwrap();
+    let cfg = SyncConfig::new(&format!("http://127.0.0.1:{}", hub.port()), &hub.token()).unwrap();
     let a = SyncClient::start(left.clone(), Some(cfg.clone()), |_| {});
     let b = SyncClient::start(right.clone(), Some(cfg), |_| {});
     wait_until("both concurrent fields", || {

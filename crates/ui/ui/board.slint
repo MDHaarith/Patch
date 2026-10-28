@@ -10,7 +10,7 @@ export component Card inherits Rectangle {
     background: Theme.card;
     border-width: 1px;
     border-color: Theme.edge;
-    drop-shadow-blur: ghost ? 24px : (Theme.light ? 6px : 0px);
+    drop-shadow-blur: ghost && !Store.mobile ? 24px : (!Store.mobile && Theme.light ? 6px : 0px);
     drop-shadow-offset-y: ghost ? 10px : 2px;
     drop-shadow-color: ghost ? #00000080 : (Theme.light ? #00000014 : transparent);
     if !Store.mobile: Rectangle {
@@ -208,7 +208,6 @@ export component BoardView inherits Rectangle {
                 y: root.head-h + k * (root.card-h + root.card-gap) + shift;
                 width: parent.width - 20px;
                 height: root.card-h;
-                animate y { duration: Theme.motion-fast; easing: ease-out; }
                 Card {
                     item: card;
                     opacity: parent.lifted ? 0.3 : 1;

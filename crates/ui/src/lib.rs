@@ -39,6 +39,15 @@ pub trait Host {
         Err("This device can't host the hub".into())
     }
 
+    fn device_name(&self) -> String {
+        std::env::var("HOSTNAME").ok().or_else(|| std::fs::read_to_string("/etc/hostname").ok())
+            .map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "Unknown device".into())
+    }
+
+    fn devices(&self) -> Vec<patch_sync::Device> { vec![] }
+    fn revoke_device(&self, _id: &str) -> Result<(), String> { Err("Hub is not running".into()) }
+    fn regenerate_code(&self) -> Result<Option<HostedHub>, String> { Err("Hub is not running".into()) }
+
     /// Launch Patch at login (desktop).
     fn set_autostart(&self, _on: bool) -> Result<(), String> {
         Ok(())
@@ -118,6 +127,9 @@ pub trait Host {
     /// Scan a hub's pairing QR code; the host hands the text to
     /// [`App::pair_from_link`] when it gets one.
     fn scan_qr(&self) {}
+    /// Logical window coordinates for the inline native camera preview.
+    fn scan_preview(&self, _rect: [f32; 4]) {}
+    fn stop_scan(&self) {}
 
     /// Whether the host can download and install app updates.
     fn can_update(&self) -> bool {

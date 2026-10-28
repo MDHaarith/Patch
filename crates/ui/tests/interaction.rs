@@ -140,8 +140,8 @@ fn desktop_interactions() {
     assert_eq!(main.global::<Store>().get_view(), 3, "board view restored from prefs");
 
     // --- Board: drag the first card into "In Progress".
-    let col_x = |c: f32| MAIN_X + 16.0 + c * 298.0;
-    let card_y = |k: f32| CONTENT_Y + 16.0 + 44.0 + k * 86.0;
+    let col_x = |c: f32| 12.0 + c * 342.0;
+    let card_y = |k: f32| 104.0 + 12.0 + 44.0 + k * 94.0;
     ui.drag((col_x(0.0) + 80.0, card_y(0.0) + 30.0), (col_x(1.0) + 80.0, card_y(0.0) + 30.0));
     let d = doc(&app, &dir);
     assert_eq!(find(&d, "Alpha").column, COL_DOING, "card dropped into In Progress");
@@ -152,7 +152,7 @@ fn desktop_interactions() {
     assert_eq!(order, vec!["Charlie", "Bravo"]);
 
     // Tick the first card's checkbox: it completes and moves to Done.
-    ui.click(col_x(0.0) + 10.0 + 266.0 - 12.0 - 9.0, card_y(0.0) + 19.0);
+    ui.click(col_x(0.0) + 330.0 - 10.0 - 12.0 - 9.0, card_y(0.0) + 19.0);
     let charlie = find(&doc(&app, &dir), "Charlie");
     assert!(charlie.done);
     assert_eq!(charlie.column, COL_DONE);

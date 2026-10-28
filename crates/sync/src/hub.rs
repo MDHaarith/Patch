@@ -64,12 +64,13 @@ struct Shared {
     state: Mutex<State>,
     changed: Condvar,
     file: PathBuf,
-    token: String,
+    registry: Mutex<crate::devices::Registry>,
     allow_lan: bool,
     name: String,
     port: u16,
     stopping: AtomicBool,
     active_requests: AtomicUsize,
+    revocations: AtomicUsize,
 }
 
 pub struct Hub {
@@ -123,10 +124,6 @@ fn error(status: u16, msg: &str) -> Response<io::Cursor<Vec<u8>>> {
     json_response(status, serde_json::json!({ "error": msg }).to_string())
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
-}
-
 fn query_param<'a>(url: &'a str, key: &str) -> Option<&'a str> {
     let q = url.split_once('?')?.1;
     q.split('&').find_map(|kv| {
@@ -160,12 +157,13 @@ impl Hub {
             state: Mutex::new(state),
             changed: Condvar::new(),
             file,
-            token,
+            registry: Mutex::new(crate::devices::Registry::load(&cfg.data_dir, token)?),
             allow_lan: cfg.allow_lan,
             name: cfg.name,
             port,
             stopping: AtomicBool::new(false),
             active_requests: AtomicUsize::new(0),
+            revocations: AtomicUsize::new(0),
         });
         {
             // Persist a freshly generated hub id right away so it is stable.
@@ -203,8 +201,24 @@ impl Hub {
         self.shared.port
     }
 
-    pub fn token(&self) -> &str {
-        &self.shared.token
+    pub fn token(&self) -> String {
+        self.shared.registry.lock().unwrap().code.clone()
+    }
+
+    pub fn devices(&self) -> Vec<crate::Device> {
+        self.shared.registry.lock().unwrap().devices()
+    }
+
+    pub fn revoke_device(&self, id: &str) -> io::Result<()> {
+        self.shared.registry.lock().unwrap().revoke(id)?;
+        let _state = self.shared.state.lock().unwrap();
+        self.shared.revocations.fetch_add(1, Ordering::SeqCst);
+        self.shared.changed.notify_all();
+        Ok(())
+    }
+
+    pub fn regenerate_code(&self) -> io::Result<String> {
+        self.shared.registry.lock().unwrap().rotate()
     }
 
     pub fn hub_id(&self) -> String {
@@ -250,10 +264,11 @@ impl Drop for ActiveRequest {
 }
 
 fn handle(shared: &Shared, stream: TcpStream) {
+    let peer_address = stream.peer_addr().map(|a| a.ip().to_string()).unwrap_or_default();
     let peer_ok = stream.peer_addr().is_ok_and(|a| net::peer_allowed(a.ip(), shared.allow_lan));
     let mut stream = DeadlineStream { stream, deadline: Instant::now() + READ_TIMEOUT };
     let response = if peer_ok {
-        handle_request(shared, &mut BufReader::new(&mut stream))
+        handle_request_from(shared, &mut BufReader::new(&mut stream), &peer_address)
     } else {
         error(403, "Patch only syncs over Tailscale")
     };
@@ -261,7 +276,12 @@ fn handle(shared: &Shared, stream: TcpStream) {
     let _ = response.raw_print(&mut stream, HTTPVersion(1, 1), &[], false, None);
 }
 
+#[cfg(test)]
 fn handle_request(shared: &Shared, reader: &mut impl Read) -> Response<io::Cursor<Vec<u8>>> {
+    handle_request_from(shared, reader, "127.0.0.1")
+}
+
+fn handle_request_from(shared: &Shared, reader: &mut impl Read, address: &str) -> Response<io::Cursor<Vec<u8>>> {
     let head = match read_head(reader) {
         Ok(head) => head,
         Err(e) => return error(400, &e.to_string()),
@@ -285,14 +305,20 @@ fn handle_request(shared: &Shared, reader: &mut impl Read) -> Response<io::Curso
         return json_response(200, serde_json::json!({ "ok": true, "hub": hub, "name": shared.name }).to_string());
     }
 
+    let revocations = shared.revocations.load(Ordering::SeqCst);
     let token = headers.iter()
         .find(|h| h.field.equiv("Authorization"))
         .and_then(|h| h.value.as_str().trim().strip_prefix("Bearer "))
         .unwrap_or_default().trim();
-    if token.is_empty() || !constant_time_eq(token.as_bytes(), shared.token.as_bytes()) {
+    if !shared.registry.lock().unwrap().known_token(token) {
         return error(401, "Wrong pairing token");
     }
 
+    if (method, path) != ("POST", "/api/sync") {
+        if let Err((code, msg)) = shared.registry.lock().unwrap().authorize(token, None, None, address, false) {
+            return error(code, &msg);
+        }
+    }
     match (method, path) {
         ("POST", "/api/sync") => {
             let mut length = None;
@@ -317,10 +343,14 @@ fn handle_request(shared: &Shared, reader: &mut impl Read) -> Response<io::Curso
             match reader.take(length as u64).read_to_end(&mut body) {
                 Ok(_) if body.len() != length => error(400, "Truncated body"),
                 Ok(_) => match serde_json::from_slice::<SyncRequest>(&body) {
-                    Ok(sync) => match apply(shared, sync) {
-                        Ok(response) => json_response(200, serde_json::to_string(&response).unwrap_or_default()),
+                    Ok(sync) => {
+                        let sync: SyncRequest = sync;
+                        let auth = shared.registry.lock().unwrap().authorize(token, sync.node.as_deref(), sync.device.as_ref(), address, true);
+                        let credential = match auth { Ok(c) => c, Err((code, msg)) => return error(code, &msg) };
+                        match apply(shared, sync) {
+                        Ok(mut response) => { response.credential = credential; json_response(200, serde_json::to_string(&response).unwrap_or_default()) },
                         Err((code, message)) => error(code, &message),
-                    },
+                    }},
                     Err(e) => error(400, &format!("bad sync request: {e}")),
                 },
                 Err(e) => error(400, &e.to_string()),
@@ -328,7 +358,9 @@ fn handle_request(shared: &Shared, reader: &mut impl Read) -> Response<io::Curso
         }
         ("GET", "/api/wait") => {
             let since = query_param(url, "since").and_then(|s| s.parse().ok()).unwrap_or(0);
-            json_response(200, serde_json::to_string(&wait(shared, since)).unwrap_or_default())
+            let response = wait_for(shared, since, revocations);
+            if let Err((code, msg)) = shared.registry.lock().unwrap().authorize(token, None, None, address, false) { return error(code, &msg); }
+            json_response(200, serde_json::to_string(&response).unwrap_or_default())
         }
         ("GET", "/api/info") => {
             let st = shared.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -383,6 +415,7 @@ fn apply(shared: &Shared, sync: SyncRequest) -> Result<SyncResponse, (u16, Strin
     }
     let since = if reset { 0 } else { sync.since };
     let response = SyncResponse {
+        name: Some(shared.name.clone()),        credential: None,
         hub: st.hub.clone(),
         seq: st.seq,
         reset,
@@ -397,10 +430,16 @@ fn apply(shared: &Shared, sync: SyncRequest) -> Result<SyncResponse, (u16, Strin
 }
 
 /// Long poll: returns as soon as the hub has something newer than `since`.
+#[cfg(test)]
 fn wait(shared: &Shared, since: u64) -> WaitResponse {
+    wait_for(shared, since, shared.revocations.load(Ordering::SeqCst))
+}
+
+fn wait_for(shared: &Shared, since: u64, revocations: usize) -> WaitResponse {
     let deadline = Instant::now() + MAX_WAIT;
     let mut st = shared.state.lock().unwrap_or_else(|e| e.into_inner());
     while st.seq == since && !shared.stopping.load(Ordering::SeqCst) {
+        if shared.revocations.load(Ordering::SeqCst) != revocations { break; }
         let now = Instant::now();
         if now >= deadline {
             break;
@@ -424,7 +463,7 @@ mod tests {
         let hub = Hub::start(cfg).unwrap();
         let mut good = Record::new("task", "task");
         good.put("notes", json!("original"), &Stamp::seed());
-        apply(&hub.shared, SyncRequest { since: 0, changes: vec![good.clone()], node: None }).unwrap();
+        apply(&hub.shared, SyncRequest { device: None, since: 0, changes: vec![good.clone()], node: None }).unwrap();
         let seq = hub.shared.state.lock().unwrap().seq;
         for stamp in [
             "z".to_string(), "1-0000-node".into(), "000000000000001-0000".into(),
@@ -436,7 +475,7 @@ mod tests {
             for id in ["new", "task"] {
                 let mut bad = Record::new(id, "task");
                 bad.put("notes", json!("poison"), &Stamp(stamp.clone()));
-                let result = apply(&hub.shared, SyncRequest { since: 0, changes: vec![bad], node: None });
+                let result = apply(&hub.shared, SyncRequest { device: None, since: 0, changes: vec![bad], node: None });
                 assert_eq!(result.unwrap_err().0, 400, "accepted {stamp}");
             }
         }
@@ -498,12 +537,12 @@ mod tests {
             ("Transfer-Encoding: chunked\r\n", 400),
             ("", 411),
         ] {
-            let head = format!("POST /api/sync HTTP/1.1\r\nAuthorization: Bearer {}\r\n{framing}\r\n", hub.token());
+            let head = format!("POST /api/sync HTTP/1.1\r\nAuthorization: Bearer {}\r\n{framing}\r\n", &hub.token());
             assert_eq!(handle_request(&hub.shared, &mut head.as_bytes()).status_code().0, status);
         }
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        write!(client, "POST /api/sync HTTP/1.1\r\nAuthorization: Bearer {}\r\nContent-Length: 20\r\n\r\n", hub.token()).unwrap();
+        write!(client, "POST /api/sync HTTP/1.1\r\nAuthorization: Bearer {}\r\nContent-Length: 20\r\n\r\n", &hub.token()).unwrap();
         let sender = std::thread::spawn(move || {
             for _ in 0..20 {
                 if client.write_all(b"x").is_err() { break; }
@@ -567,20 +606,20 @@ mod tests {
         let mut rec = Record::new("task", "task");
         rec.put("title", json!("saved later"), &Stamp::seed());
         for _ in 0..2 {
-            let result = apply(&hub.shared, SyncRequest { since: 0, changes: vec![rec.clone()], node: None });
+            let result = apply(&hub.shared, SyncRequest { device: None, since: 0, changes: vec![rec.clone()], node: None });
             assert_eq!(result.unwrap_err().0, 500);
             let state = hub.shared.state.lock().unwrap();
             assert_eq!(state.seq, 0, "failed save published a cursor");
             assert!(state.records.is_empty(), "failed save published records");
         }
-        let pulled = apply(&hub.shared, SyncRequest { since: 0, changes: vec![], node: None }).unwrap();
+        let pulled = apply(&hub.shared, SyncRequest { device: None, since: 0, changes: vec![], node: None }).unwrap();
         assert_eq!(pulled.seq, 0);
         assert!(pulled.changes.is_empty());
         let shared = hub.shared.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         let waiter = std::thread::spawn(move || { tx.send(wait(&shared, 0)).unwrap(); });
         std::fs::remove_dir(&hub.shared.file).unwrap();
-        assert!(apply(&hub.shared, SyncRequest { since: 0, changes: vec![rec], node: None }).is_ok());
+        assert!(apply(&hub.shared, SyncRequest { device: None, since: 0, changes: vec![rec], node: None }).is_ok());
         assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap().seq, 1);
         waiter.join().unwrap();
         hub.stop();
@@ -619,7 +658,7 @@ mod tests {
             rec.put("title", json!(id), &Stamp::seed());
             rec
         }).collect();
-        let response = apply(&hub.shared, SyncRequest { since: 1, changes, node: None }).unwrap();
+        let response = apply(&hub.shared, SyncRequest { device: None, since: 1, changes, node: None }).unwrap();
         assert_eq!(response.seq, 2);
         assert!(response.reset);
         assert_eq!(response.changes.len(), 2, "the full state must be returned after rollback");
@@ -652,7 +691,7 @@ mod tests {
         let mut rec = Record::new("task", "task");
         let future = Stamp::new(now_ms() + MAX_FUTURE_SKEW_MS + 60_000, 0, "remote");
         rec.put("title", json!("future"), &future);
-        let send = |rec| apply(&hub.shared, SyncRequest { since: 0, changes: vec![rec], node: None });
+        let send = |rec| apply(&hub.shared, SyncRequest { device: None, since: 0, changes: vec![rec], node: None });
         assert_eq!(send(rec.clone()).unwrap_err().0, 409);
         rec.put("notes", json!("seed"), &Stamp::seed());
         assert_eq!(send(rec.clone()).unwrap_err().0, 409);

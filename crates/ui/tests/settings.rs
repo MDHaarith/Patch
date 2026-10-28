@@ -141,6 +141,17 @@ fn settings_do_not_paint_covered_mobile_layers() {
     main.global::<Actions>().invoke_undo_delete();
     app.save_now();
     assert!(patch_core::Doc::load_or_new(&dir.join("doc.json")).task(&id).is_none());
+    store.set_settings_open(true);
+    store.set_environment_page(2);
+    store.set_scan_active(true);
+    assert!(app.back());
+    assert_eq!(store.get_environment_page(), 1);
+    assert!(store.get_settings_open());
+    assert!(!store.get_scan_active());
+    assert!(app.back());
+    assert_eq!(store.get_environment_page(), 0);
+    assert!(app.back());
+    assert!(!store.get_settings_open());
     drop(main);
     drop(app);
     std::fs::remove_dir_all(dir).unwrap();

@@ -184,6 +184,20 @@ impl Bridge for JniBridge {
         self.call_void("scanQr", "()V", |_| Ok(vec![]));
     }
 
+    fn scan_preview(&self, rect: [f32; 4]) {
+        self.call_void("scanPreview", "(IIII)V", |_| Ok(rect.into_iter().map(|v| Arg::Int(v.round() as i32)).collect()));
+    }
+
+    fn stop_scan(&self) { self.call_void("stopScan", "()V", |_| Ok(vec![])); }
+
+    fn device_name(&self) -> String {
+        self.with_env("deviceName", |env| {
+            let obj = env.call_static_method(self.class, "deviceName", "()Ljava/lang/String;", &[])?.l()?;
+            let name = env.get_string(&JString::from(obj))?.into();
+            Ok(name)
+        }).unwrap_or_else(|| "Android device".into())
+    }
+
     fn check_update(&self) {
         self.call_void("checkUpdate", "()V", |_| Ok(vec![]));
     }

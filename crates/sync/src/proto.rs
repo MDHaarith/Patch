@@ -11,10 +11,16 @@ pub struct SyncRequest {
     pub changes: Vec<Record>,
     #[serde(default)]
     pub node: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<crate::DeviceIdentity>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SyncResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
     pub hub: String,
     pub seq: u64,
     /// The client's cursor predates a hub restore; re-push local records.

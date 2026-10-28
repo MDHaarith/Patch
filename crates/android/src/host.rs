@@ -73,6 +73,10 @@ impl Host for AndroidHost {
         self.bridge.scan_qr();
     }
 
+    fn scan_preview(&self, rect: [f32; 4]) { self.bridge.scan_preview(rect); }
+    fn stop_scan(&self) { self.bridge.stop_scan(); }
+    fn device_name(&self) -> String { self.bridge.device_name() }
+
     fn can_update(&self) -> bool {
         true
     }

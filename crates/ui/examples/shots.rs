@@ -42,6 +42,18 @@ impl Host for DemoHost {
     fn custom_chrome(&self) -> bool {
         !self.mobile
     }
+    fn set_hosting(&self, on: bool) -> Result<Option<patch_ui::HostedHub>, String> {
+        Ok(on.then(|| patch_ui::HostedHub {
+            local_url: "http://127.0.0.1:1".into(), urls: vec!["http://100.64.0.2:4747".into()], token: "K7QF-2MZD-9XPA-T4RH".into(),
+        }))
+    }
+    fn devices(&self) -> Vec<patch_sync::Device> {
+        ["demo", "phone"].into_iter().map(|id| patch_sync::Device {
+            id: id.into(), name: if id == "demo" { "Laptop".into() } else { "Pixel 9".into() },
+            platform: if id == "demo" { "linux".into() } else { "android".into() },
+            paired_at: 0, last_seen: patch_core::hlc::now_ms(), address: "100.64.0.3".into(), revoked: false,
+        }).collect()
+    }
 }
 
 fn seed(dir: &Path) {
@@ -198,6 +210,19 @@ fn main() {
             render(&platform, idx, (1440, 900), 1.0, &out.join(format!("{name}.png")));
             a.invoke_editor_close();
         }
+        let name = format!("desktop-{look}-pairing");
+        if want(&name) {
+            a.invoke_set_hosting(true);
+            main.global::<Store>().set_settings_open(true);
+            let path = out.join(format!("{name}.png"));
+            render(&platform, idx, (1440, 1100), 1.0, &path);
+            platform.windows.borrow()[idx].dispatch_event(WindowEvent::PointerScrolled {
+                position: slint::LogicalPosition::new(700.0, 500.0), delta_x: 0.0, delta_y: -720.0,
+            });
+            render(&platform, idx, (1440, 1100), 1.0, &path);
+            main.global::<Store>().set_settings_open(false);
+            a.invoke_set_hosting(false);
+        }
         let name = format!("desktop-{look}-settings");
         if want(&name) {
             main.global::<Store>().set_settings_open(true);
@@ -268,6 +293,23 @@ fn main() {
             pa.invoke_open_task(id.into());
             render(&platform, pidx, psize, scale, &out.join(format!("{name}.png")));
             pa.invoke_editor_close();
+        }
+        for (page, suffix) in [(1, "environments"), (1, "environments-connected"), (2, "add-environment")] {
+            let name = format!("phone-{look}-{suffix}");
+            if want(&name) {
+                let store = phone.global::<Store>();
+                store.set_settings_open(true);
+                store.set_environment_page(page);
+                if suffix == "environments-connected" {
+                    store.set_environments(Rc::new(slint::VecModel::from(vec![patch_ui::EnvironmentRow {
+                        url: "http://laptop:4747".into(), name: "My laptop".into(), status: "Connected".into(), connected: true, enabled: true,
+                    }])).into());
+                }
+                render(&platform, pidx, psize, scale, &out.join(format!("{name}.png")));
+                store.set_environments(Rc::new(slint::VecModel::from(Vec::<patch_ui::EnvironmentRow>::new())).into());
+                store.set_environment_page(0);
+                store.set_settings_open(false);
+            }
         }
         let name = format!("phone-{look}-settings");
         if want(&name) {

@@ -4,6 +4,7 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.PixelFormat;
+import android.graphics.SurfaceTexture;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
@@ -18,7 +19,10 @@ import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
+import android.view.Surface;
 import android.view.SurfaceView;
+import android.view.TextureView;
+import android.view.ViewTreeObserver;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup.LayoutParams;
 import android.view.inputmethod.BaseInputConnection;
@@ -26,6 +30,7 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.LinearLayout;
+import android.widget.FrameLayout;
 import android.widget.PopupWindow;
 import android.widget.TextView;
 
@@ -37,7 +42,7 @@ import android.widget.TextView;
  * immediately, and forwards every edit to Rust, which echoes the real state
  * back through {@link #imeState}.
  */
-final class PatchSurfaceView extends SurfaceView implements SurfaceHolder.Callback2 {
+final class PatchSurfaceView extends FrameLayout implements SurfaceHolder.Callback2 {
     /** Overlay windows have to be made focusable before the IME can attach. */
     interface FocusHost {
         boolean setImeFocus(boolean focus);
@@ -46,6 +51,10 @@ final class PatchSurfaceView extends SurfaceView implements SurfaceHolder.Callba
     final int kind;
     private final InputMethodManager imm;
     private FocusHost focusHost;
+    private Surface textureSurface;
+    private int textureWidth, textureHeight, textureGeneration;
+    private boolean framePending;
+    private final ViewTreeObserver.OnPreDrawListener waitForFrame = () -> !framePending;
 
     // IME mirror. Main thread only.
     final Editable editable = new SpannableStringBuilder();
@@ -70,15 +79,44 @@ final class PatchSurfaceView extends SurfaceView implements SurfaceHolder.Callba
         super(context);
         this.kind = kind;
         imm = context.getSystemService(InputMethodManager.class);
-        SurfaceHolder holder = getHolder();
-        holder.addCallback(this);
         if (kind == PatchNative.OVERLAY) {
-            // Transparent around the bubble and the panel's rounded corners,
-            // composited above the (also transparent) overlay window.
-            holder.setFormat(PixelFormat.TRANSLUCENT);
-            setZOrderOnTop(true);
+            // Composite with the window: an independent SurfaceView can show a
+            // resized bubble at the old full-screen origin before the window moves.
+            TextureView texture = new TextureView(context);
+            texture.setOpaque(false);
+            texture.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
+                @Override
+                public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
+                    textureSurface = new Surface(surface);
+                    resizeTexture(width, height);
+                }
+
+                @Override
+                public void onSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height) {
+                    resizeTexture(width, height);
+                }
+
+                @Override
+                public boolean onSurfaceTextureDestroyed(SurfaceTexture surface) {
+                    ++textureGeneration;
+                    framePending = false;
+                    textureWidth = textureHeight = 0;
+                    PatchNative.nativeSurfaceDestroyed(kind);
+                    textureSurface.release();
+                    textureSurface = null;
+                    return true;
+                }
+
+                @Override
+                public void onSurfaceTextureUpdated(SurfaceTexture surface) {}
+            });
+            addView(texture, new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
         } else {
+            SurfaceView surface = new SurfaceView(context);
+            SurfaceHolder holder = surface.getHolder();
+            holder.addCallback(this);
             holder.setFormat(PixelFormat.RGBX_8888);
+            addView(surface, new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
         }
         setFocusable(true);
         setFocusableInTouchMode(true);
@@ -92,17 +130,47 @@ final class PatchSurfaceView extends SurfaceView implements SurfaceHolder.Callba
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
         PatchNative.register(kind, this);
+        getViewTreeObserver().addOnPreDrawListener(waitForFrame);
     }
 
     @Override
     protected void onDetachedFromWindow() {
         removeCallbacks(longPress);
         finishTextActions();
+        getViewTreeObserver().removeOnPreDrawListener(waitForFrame);
         PatchNative.unregister(kind, this);
         super.onDetachedFromWindow();
     }
 
     // ---- Surface ------------------------------------------------------------
+
+    @Override
+    protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {
+        super.onSizeChanged(width, height, oldWidth, oldHeight);
+        // Start the resize before pre-draw, so the window retains its previous
+        // complete frame until the texture contains pixels for the new layout.
+        resizeTexture(width, height);
+    }
+
+    private void resizeTexture(int width, int height) {
+        if (textureSurface == null || width <= 0 || height <= 0
+                || (width == textureWidth && height == textureHeight)) {
+            return;
+        }
+        TextureView texture = (TextureView) getChildAt(0);
+        texture.getSurfaceTexture().setDefaultBufferSize(width, height);
+        textureWidth = width;
+        textureHeight = height;
+        int generation = ++textureGeneration;
+        framePending = true;
+        PatchNative.nativeSurfaceChanged(kind, textureSurface, width, height);
+        PatchNative.awaitFrame(kind, () -> {
+            if (generation == textureGeneration) {
+                framePending = false;
+                invalidate();
+            }
+        });
+    }
 
     @Override
     public void surfaceCreated(SurfaceHolder holder) {

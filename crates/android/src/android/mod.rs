@@ -381,6 +381,11 @@ pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeScanned(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeScanStopped(_: JNIEnv, _: JClass) {
+    send(Msg::ScanStopped);
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeSyncNow(_: JNIEnv, _: JClass) {
     send(Msg::SyncNow);
 }

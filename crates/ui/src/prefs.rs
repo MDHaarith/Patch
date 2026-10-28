@@ -4,6 +4,13 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Environment {
+    pub url: String,
+    pub credential: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prefs {
     /// Index into the theme list (0 Matte Black, 1 Light).
@@ -20,6 +27,9 @@ pub struct Prefs {
     pub hub_url: String,
     pub hub_token: String,
     pub hosting: bool,
+    pub environments: Vec<Environment>,
+    pub sync_enabled: bool,
+    pub host_credential: String,
     pub autostart: bool,
     pub widget: bool,
     /// The widget floats above other apps instead of sitting on the desktop.
@@ -51,6 +61,9 @@ impl Default for Prefs {
             hub_url: String::new(),
             hub_token: String::new(),
             hosting: false,
+            environments: vec![],
+            sync_enabled: true,
+            host_credential: String::new(),
             autostart: false,
             widget: false,
             widget_float: false,
@@ -81,6 +94,9 @@ impl Prefs {
         } else if !(0..2).contains(&prefs.look) {
             prefs.look = 0;
         }
+        if prefs.environments.is_empty() && !prefs.hub_url.is_empty() {
+            prefs.environments.push(Environment { url: prefs.hub_url.clone(), credential: prefs.hub_token.clone(), name: prefs.hub_url.clone() });
+        }
         prefs.theme_version = 2;
         prefs
     }
@@ -91,13 +107,36 @@ impl Prefs {
             serde_json::to_string_pretty(self)
                 .unwrap_or_default()
                 .as_bytes(),
-        )
+        )?;
+        #[cfg(unix)] {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_hub_becomes_a_saved_environment_and_credentials_stay_local() {
+        let path = std::env::temp_dir().join(format!("patch-environment-prefs-{}.json", std::process::id()));
+        std::fs::write(&path, r#"{"hub_url":"http://laptop:4747","hub_token":"old-code"}"#).unwrap();
+        let mut prefs = Prefs::load(&path);
+        assert_eq!(prefs.environments.len(), 1);
+        assert!(prefs.sync_enabled);
+        prefs.environments[0].credential = "device-private".into();
+        prefs.hub_token = "device-private".into();
+        prefs.sync_enabled = false;
+        prefs.save(&path).unwrap();
+        let loaded = Prefs::load(&path);
+        assert_eq!(loaded.environments[0].credential, "device-private");
+        assert_eq!(loaded.hub_token, "device-private");
+        assert!(!loaded.sync_enabled);
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn retired_theme_migration() {

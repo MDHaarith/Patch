@@ -1,5 +1,8 @@
 // View models pushed from Rust, and the actions the UI sends back.
 
+export struct DeviceRow { id: string, name: string, platform: string, status: string, connected: bool, this-device: bool, revoked: bool }
+export struct EnvironmentRow { url: string, name: string, status: string, connected: bool, enabled: bool }
+
 export struct CellItem {
     id: string,
     title: string,
@@ -194,8 +197,15 @@ export global Store {
     in-out property <string> hub-token;
     in-out property <bool> hosting: false;
     in-out property <string> host-urls;
+    in-out property <string> host-address;
     in-out property <string> host-token;
     in-out property <image> host-qr;
+    in-out property <[DeviceRow]> devices;
+    in-out property <[EnvironmentRow]> environments;
+    // 0 Settings, 1 Environments, 2 Add environment.
+    in-out property <int> environment-page: 0;
+    in-out property <bool> scan-active: false;
+    in-out property <bool> pairing: false;
     in-out property <bool> client-pairing;
     in-out property <image> client-qr;
     // Android: scan a hub's pairing QR code with the camera.
@@ -236,6 +246,12 @@ export global Store {
     // Sheets
     in-out property <bool> editor-open: false;
     in-out property <bool> settings-open: false;
+    changed settings-open => {
+        if !Store.settings-open { Actions.stop-scan(); Store.scan-active = false; Store.environment-page = 0; }
+    }
+    changed environment-page => {
+        if Store.environment-page != 2 { Actions.stop-scan(); Store.scan-active = false; }
+    }
     in-out property <bool> search-open: false;
     in-out property <string> toast;
     in-out property <string> toast-action;
@@ -332,6 +348,12 @@ export global Actions {
     callback connect-hub(string, string);
     callback disconnect-hub();
     callback scan-pair();
+    callback scan-preview(float, float, float, float);
+    callback stop-scan();
+    callback refresh-devices();
+    callback revoke-device(string);
+    callback regenerate-code();
+    callback enable-environment(string, bool);
     callback check-update();
     callback refresh-background();
     callback undo-delete();

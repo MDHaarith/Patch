@@ -2,7 +2,7 @@
 //!
 //! The whole UI — the app screen and the floating "display over other apps"
 //! panel — runs in one process on one Rust thread with one Slint platform.
-//! Each Java `SurfaceView` hands us its `Surface`; we render the matching
+//! Each Java view hands us its `Surface`; we render the matching
 //! Slint window with the software renderer into a back buffer and copy the
 //! changed part into the surface.
 //!

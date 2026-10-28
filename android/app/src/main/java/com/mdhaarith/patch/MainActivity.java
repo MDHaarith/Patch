@@ -27,6 +27,11 @@ public final class MainActivity extends Activity {
     static final String EXTRA_NEW_TASK = "new_task";
 
     private PatchSurfaceView view;
+    private QrScanner scanner;
+    private FrameLayout content;
+    private boolean cameraRequested;
+    private boolean scanWanted;
+    private int[] scanRect = {0, 0, 0, 0};
     private OnBackInvokedCallback backCallback;
     private int sideLeft = -1;
     private int sideRight = -1;
@@ -46,8 +51,10 @@ public final class MainActivity extends Activity {
         }
 
         view = new PatchSurfaceView(this, PatchNative.MAIN);
-        setContentView(view, new FrameLayout.LayoutParams(
+        content = new FrameLayout(this);
+        content.addView(view, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        setContentView(content);
         view.setOnApplyWindowInsetsListener((v, insets) -> applyInsets(insets));
         view.requestFocus();
         applyLook(PatchNative.look);
@@ -120,6 +127,46 @@ public final class MainActivity extends Activity {
         }
     }
 
+    void scanPreview(int x, int y, int width, int height) {
+        scanRect = new int[] {x, y, width, height};
+        if (scanner != null) scanner.place(scanRect, view.getLeft(), view.getTop());
+    }
+
+    void startScan() {
+        scanWanted = true;
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            if (!cameraRequested) {
+                cameraRequested = true;
+                requestPermissions(new String[] {Manifest.permission.CAMERA}, 2);
+            }
+            return;
+        }
+        if (scanner == null) {
+            scanner = new QrScanner(this, content);
+            scanner.place(scanRect, view.getLeft(), view.getTop());
+            scanner.start();
+        }
+    }
+
+    void stopScan() {
+        scanWanted = false;
+        if (scanner != null) { scanner.close(); scanner = null; }
+        PatchNative.nativeScanStopped();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode == 2) {
+            cameraRequested = false;
+            if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) { if (scanWanted) startScan(); }
+            else {
+                stopScan();
+                android.widget.Toast.makeText(this, "Camera access denied. Enter the address and code below.", android.widget.Toast.LENGTH_LONG).show();
+            }
+        }
+    }
+
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
@@ -154,6 +201,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
+        if (!cameraRequested) stopScan();
         PatchNative.nativePause();
         super.onPause();
     }
