@@ -537,12 +537,12 @@ mod tests {
             ("Transfer-Encoding: chunked\r\n", 400),
             ("", 411),
         ] {
-            let head = format!("POST /api/sync HTTP/1.1\r\nAuthorization: Bearer {}\r\n{framing}\r\n", &hub.token());
+            let head = format!("POST /api/sync HTTP/1.1\r\nAuthorization: Bearer {}\r\n{framing}\r\n", hub.token());
             assert_eq!(handle_request(&hub.shared, &mut head.as_bytes()).status_code().0, status);
         }
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        write!(client, "POST /api/sync HTTP/1.1\r\nAuthorization: Bearer {}\r\nContent-Length: 20\r\n\r\n", &hub.token()).unwrap();
+        write!(client, "POST /api/sync HTTP/1.1\r\nAuthorization: Bearer {}\r\nContent-Length: 20\r\n\r\n", hub.token()).unwrap();
         let sender = std::thread::spawn(move || {
             for _ in 0..20 {
                 if client.write_all(b"x").is_err() { break; }
