@@ -77,10 +77,10 @@ export component Button inherits Rectangle {
     in property <bool> enabled: true;
     in property <length> pad: 14px;
     callback clicked();
-    height: 40px;
+    height: Store.mobile ? 40px : 30px;
     min-width: lay.preferred-width;
     horizontal-stretch: 0;
-    border-radius: 12px;
+    border-radius: Store.mobile ? 12px : 8px;
     opacity: enabled ? 1 : 0.45;
     background: kind == 1
         ? (ta.pressed ? Theme.accent.darker(0.15) : Theme.accent)
@@ -103,7 +103,7 @@ export component Button inherits Rectangle {
         Text {
             text: root.text;
             vertical-alignment: center;
-            font-size: Theme.fs-l;
+            font-size: Store.mobile ? Theme.fs-l : Theme.fs-m;
             font-weight: 500;
             color: root.kind == 1 ? Theme.on-accent : root.kind == 2 ? Theme.danger : Theme.text;
         }
@@ -119,11 +119,11 @@ export component Segmented inherits Rectangle {
     in property <[string]> items;
     in property <[string]> icons;
     in-out property <int> current;
-    in property <length> seg-height: 34px;
+    in property <length> seg-height: Store.mobile ? 34px : 28px;
     in property <bool> stretch: false;
     callback picked(int);
     height: seg-height;
-    border-radius: 10px;
+    border-radius: Store.mobile ? 10px : 8px;
     background: Theme.well;
     border-width: Theme.light ? 0px : 1px;
     border-color: Theme.hairline;
@@ -132,8 +132,8 @@ export component Segmented inherits Rectangle {
         spacing: 2px;
         for item[i] in root.items: Rectangle {
             horizontal-stretch: root.stretch ? 1 : 0;
-            min-width: inner.preferred-width + (20px);
-            border-radius: 8px;
+            min-width: inner.preferred-width + (Store.mobile ? 20px : 22px);
+            border-radius: Store.mobile ? 8px : 6px;
             background: i == root.current ? (Theme.light ? #ffffff : Theme.range) : sta.has-hover ? Theme.hover : transparent;
             drop-shadow-blur: i == root.current ? 3px : 0px;
             drop-shadow-offset-y: i == root.current ? 1px : 0px;
@@ -150,7 +150,7 @@ export component Segmented inherits Rectangle {
                 Text {
                     text: item;
                     vertical-alignment: center;
-                    font-size: Theme.fs-m;
+                    font-size: Store.mobile ? Theme.fs-m : Theme.fs-s;
                     font-weight: i == root.current ? 600 : 500;
                     color: i == root.current ? Theme.text : Theme.text-2;
                 }
@@ -174,7 +174,7 @@ export component Scroll inherits Flickable {
 export component Field inherits Rectangle {
     in-out property <string> text <=> input.text;
     in property <string> placeholder;
-    in property <length> font-size: Theme.fs-l;
+    in property <length> font-size: Store.mobile ? Theme.fs-l : Theme.fs-m;
     in property <int> font-weight: 400;
     in property <bool> multiline: false;
     in property <bool> boxed: true;
@@ -185,10 +185,10 @@ export component Field inherits Rectangle {
     callback edited(string);
     callback escaped();
     min-width: 0px;
-    min-height: multiline ? 72px : (40px);
+    min-height: multiline ? 72px : (Store.mobile ? 40px : 30px);
     preferred-height: Math.max(self.min-height, multiline ? input.preferred-height + 16px : Math.min(160px, input.preferred-height + 16px));
     vertical-stretch: 0;
-    border-radius: 12px;
+    border-radius: Store.mobile ? 12px : 8px;
     background: boxed ? Theme.well : transparent;
     border-width: boxed ? 1px : 0px;
     border-color: input.has-focus ? Theme.accent.with-alpha(0.7) : (boxed ? Theme.hairline : transparent);
@@ -352,7 +352,7 @@ export component Toggle inherits Rectangle {
 export component Check inherits Rectangle {
     in property <bool> checked;
     in property <color> tint: Theme.accent;
-    in property <length> size: 22px;
+    in property <length> size: Store.mobile ? 22px : 18px;
     callback toggled();
     width: size;
     height: size;
@@ -379,7 +379,7 @@ export component Chip inherits Rectangle {
     in property <color> dot: transparent;
     in property <string> icon;
     callback clicked();
-    height: 32px;
+    height: Store.mobile ? 32px : 26px;
     min-width: lay.preferred-width;
     horizontal-stretch: 0;
     border-radius: self.height / 2;
@@ -409,7 +409,7 @@ export component Chip inherits Rectangle {
         Text {
             text: root.text;
             vertical-alignment: center;
-            font-size: Theme.fs-m;
+            font-size: Store.mobile ? Theme.fs-m : Theme.fs-s;
             font-weight: 500;
             color: root.selected ? Theme.accent : Theme.text;
         }

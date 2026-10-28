@@ -77,7 +77,7 @@ component TimeChip inherits Rectangle {
         }
         return "\{Math.mod(Math.floor(m / 60) + 11, 12) + 1}:\{two(Math.mod(m, 60))} \{m < 720 ? "AM" : "PM"}";
     }
-    height: 30px;
+    height: Store.mobile ? 30px : 24px;
     width: t.preferred-width + 18px;
     border-radius: 6px;
     background: active ? Theme.accent-soft : Theme.chip;
@@ -115,7 +115,7 @@ export component RangePicker inherits Rectangle {
     in property <bool> show-footer: true;
     callback confirmed();
     property <int> editing: 0; // 0 none, 1 start time, 2 end time
-    property <length> cell-h: 38px;
+    property <length> cell-h: Store.mobile ? 38px : 30px;
     function two(n: int) -> string {
         return n < 10 ? "0\{n}" : "\{n}";
     }
@@ -148,7 +148,7 @@ export component RangePicker inherits Rectangle {
     }
 
     VerticalLayout {
-        padding: 18px;
+        padding: Store.mobile ? 18px : 16px;
         padding-top: 14px;
         spacing: 6px;
 
@@ -216,7 +216,7 @@ export component RangePicker inherits Rectangle {
                     border-color: Theme.today;
                     Text {
                         text: cell.in-month ? cell.day : "";
-                        font-size: Theme.fs-l;
+                        font-size: Store.mobile ? Theme.fs-l : Theme.fs-m;
                         font-weight: day-cell.ends ? 700 : 500;
                         color: day-cell.ends ? #ffffff : cell.today ? Theme.today : Theme.text;
                     }
@@ -271,7 +271,7 @@ export component RangePicker inherits Rectangle {
             padding-top: 6px;
             Rectangle {
                 width: rt.preferred-width + 24px;
-                height: 34px;
+                height: Store.mobile ? 34px : 28px;
                 border-radius: self.height / 2;
                 background: rta.pressed ? Theme.press : Theme.chip;
                 rt := Text {
@@ -289,7 +289,7 @@ export component RangePicker inherits Rectangle {
             }
             Rectangle { horizontal-stretch: 1; }
             Rectangle {
-                width: 38px;
+                width: Store.mobile ? 38px : 32px;
                 height: self.width;
                 border-radius: self.width / 2;
                 background: cta.pressed ? Theme.accent.darker(0.2) : Theme.accent;
