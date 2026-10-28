@@ -136,17 +136,17 @@ fn duration_of(tok: &str) -> Option<Duration> {
         let unit_len = rest.find(|ch: char| ch.is_ascii_digit()).unwrap_or(rest.len());
         let unit = &rest[..unit_len];
         rest = &rest[unit_len..];
-        total += match unit {
-            "h" | "hr" | "hrs" | "hour" | "hours" => n * 60,
+        total = total.checked_add(match unit {
+            "h" | "hr" | "hrs" | "hour" | "hours" => n.checked_mul(60)?,
             "m" | "min" | "mins" | "minute" | "minutes" => n,
             _ => return None,
-        };
+        })?;
         any = true;
     }
     if !num.is_empty() || !any || total == 0 {
         return None;
     }
-    Some(Duration::minutes(total))
+    Duration::try_minutes(total)
 }
 
 struct Parser<'a> {
@@ -182,13 +182,13 @@ impl Parser<'_> {
 
     /// Resolve day/month without a year to the next such date.
     fn upcoming(&self, month: u32, day: u32, year: Option<i32>) -> Option<NaiveDate> {
-        let y = year.unwrap_or(self.today().year());
-        let d = NaiveDate::from_ymd_opt(y, month, day)?;
-        if year.is_none() && d < self.today() {
-            NaiveDate::from_ymd_opt(y + 1, month, day)
-        } else {
-            Some(d)
+        if let Some(year) = year {
+            return NaiveDate::from_ymd_opt(year, month, day);
         }
+        // Eight years covers Feb 29 even across a non-leap century.
+        (self.today().year()..=self.today().year() + 8)
+            .filter_map(|y| NaiveDate::from_ymd_opt(y, month, day))
+            .find(|d| *d >= self.today())
     }
 
     fn year_at(&self, i: usize) -> Option<i32> {
@@ -253,11 +253,11 @@ impl Parser<'_> {
             if let (Some(n), Some(unit)) = (self.tok(i + 1).and_then(|n| n.parse::<i64>().ok()), self.tok(i + 2)) {
                 let unit = unit.trim_end_matches(['s', ',', '.']);
                 let applied = match unit {
-                    "day" => Some((Some(today + Duration::days(n)), None)),
-                    "week" => Some((Some(today + Duration::weeks(n)), None)),
-                    "month" => Some((Some(add_months(today, n as i32)), None)),
-                    "hour" | "hr" | "h" => Some((None, Some(self.now + Duration::hours(n)))),
-                    "min" | "minute" | "m" => Some((None, Some(self.now + Duration::minutes(n)))),
+                    "day" => Duration::try_days(n).and_then(|d| today.checked_add_signed(d)).map(|d| (Some(d), None)),
+                    "week" => Duration::try_weeks(n).and_then(|d| today.checked_add_signed(d)).map(|d| (Some(d), None)),
+                    "month" => u32::try_from(n).ok().and_then(|n| today.checked_add_months(chrono::Months::new(n))).map(|d| (Some(d), None)),
+                    "hour" | "hr" | "h" => Duration::try_hours(n).and_then(|d| self.now.checked_add_signed(d)).map(|at| (None, Some(at))),
+                    "min" | "minute" | "m" => Duration::try_minutes(n).and_then(|d| self.now.checked_add_signed(d)).map(|at| (None, Some(at))),
                     _ => None,
                 };
                 if let Some((date, at)) = applied {
@@ -450,13 +450,13 @@ impl Parser<'_> {
             return true;
         }
         if t == "for" {
-            if let Some(d) = self.tok(i + 1).and_then(duration_of) {
+            if let Some(d) = self.tok(i + 1).and_then(duration_of).filter(|d| self.now.checked_add_signed(*d).is_some()) {
                 self.duration = Some(d);
                 self.take(i, 2);
                 return true;
             }
             if let (Some(n), Some(unit)) = (self.tok(i + 1).and_then(|n| n.parse::<i64>().ok()), self.tok(i + 2)) {
-                if let Some(d) = duration_of(&format!("{n}{unit}")) {
+                if let Some(d) = duration_of(&format!("{n}{unit}")).filter(|d| self.now.checked_add_signed(*d).is_some()) {
                     self.duration = Some(d);
                     self.take(i, 3);
                     return true;
@@ -519,7 +519,7 @@ pub fn parse(input: &str, now: NaiveDateTime, lists: &[List]) -> QuickTask {
                     }
                     Some(end)
                 }
-                (None, Some(d)) => Some(start + d),
+                (None, Some(d)) => start.checked_add_signed(d),
                 (None, None) => p.end_date.map(|d| d.and_time(time)).filter(|e| *e > start),
             };
         }
@@ -632,6 +632,39 @@ mod tests {
     fn in_n_units() {
         assert_eq!(q("Follow up in 3 days").start, parse_dt("2026-10-25"));
         assert_eq!(q("Check oven in 2 hours").start, parse_dt("2026-10-22T11:30"));
+    }
+
+    #[test]
+    fn overflowing_dates_and_durations_are_unparsed() {
+        for input in [
+            "Call in 100000000 days", "Call in 9223372036854775807 weeks",
+            "Call in 9223372036854775807 hours", "Call in 9223372036854775807 minutes",
+            "Call in 4294967296 months",
+        ] {
+            let task = q(input);
+            assert_eq!(task.start, None, "{input}");
+            assert_eq!(task.title, input);
+        }
+        for duration in ["9223372036854775807m", "9223372036854775807h", "9223372036854775800m8m"] {
+            assert!(duration_of(duration).is_none());
+            let task = q(&format!("Call 3pm for {duration}"));
+            assert_eq!(task.end, None);
+            assert!(task.title.contains(duration));
+        }
+        let task = q("Call 3pm for 1000000000000m");
+        assert_eq!(task.end, None);
+        assert!(task.title.contains("1000000000000m"));
+    }
+
+    #[test]
+    fn leap_day_finds_next_valid_year() {
+        assert_eq!(q("Birthday 29 feb").start, parse_dt("2028-02-29"));
+        assert_eq!(q("Birthday feb 29").start, parse_dt("2028-02-29"));
+        assert_eq!(q("Birthday 29/2").start, parse_dt("2028-02-29"));
+        assert_eq!(q("Birthday 29 feb 2027").start, None);
+        assert_eq!(q("Birthday 30 feb").start, None);
+        let after_leap_day = parse_dt("2096-03-01").unwrap();
+        assert_eq!(parse("Birthday 29 feb", after_leap_day, &[]).start, parse_dt("2104-02-29"));
     }
 
     #[test]

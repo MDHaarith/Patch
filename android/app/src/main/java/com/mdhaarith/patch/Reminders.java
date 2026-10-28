@@ -5,6 +5,7 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import android.os.Build;
 import android.util.Log;
 
@@ -25,8 +26,11 @@ final class Reminders {
     private static final String PREFS = "reminders";
     private static final String KEY_JSON = "json";
     private static final String KEY_CODES = "codes";
+    private static final String KEY_KEYS = "keys";
     private static final String KEY_SNOOZES = "snoozes";
+    private static final String KEY_DELIVERED = "delivered";
     static final String EXTRA_KEY = "key";
+    static final String EXTRA_SNOOZED = "snoozed";
     static final String ACTION_DONE = "com.mdhaarith.patch.DONE";
     static final String ACTION_SNOOZE = "com.mdhaarith.patch.SNOOZE";
     static final String EXTRA_NOTIFICATION_ID = "notification_id";
@@ -71,27 +75,55 @@ final class Reminders {
         }
     }
 
+    /** Claims a delivery before posting; snoozes are independent of the original delivery. */
+    static synchronized boolean delivered(Context context, String key, boolean snoozed) {
+        SharedPreferences sp = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        Set<String> delivered = new HashSet<>(sp.getStringSet(KEY_DELIVERED, new HashSet<>()));
+        if (!snoozed && delivered.contains(key)) return false;
+        delivered.add(key);
+        sp.edit().putStringSet(KEY_DELIVERED, delivered).apply();
+        return true;
+    }
+
     private static void arm(Context context, String json) {
         AlarmManager am = context.getSystemService(AlarmManager.class);
         SharedPreferences sp = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         for (String code : sp.getStringSet(KEY_CODES, new HashSet<>())) {
-            am.cancel(pending(context, Integer.parseInt(code), null, null, null));
+            PendingIntent pi = pending(context, Integer.parseInt(code), null, null, null, false);
+            am.cancel(pi);
+            pi.cancel();
         }
-        Set<String> codes = new HashSet<>();
+        for (String key : sp.getStringSet(KEY_KEYS, new HashSet<>())) {
+            PendingIntent pi = pending(context, key.hashCode(), key, null, null, false);
+            am.cancel(pi);
+            pi.cancel();
+        }
+        Set<String> keys = new HashSet<>();
         long now = System.currentTimeMillis();
         try {
             JSONArray list = new JSONArray(json);
+            int upcoming = list.length();
+            Set<String> delivered = new HashSet<>(sp.getStringSet(KEY_DELIVERED, new HashSet<>()));
+            Set<String> current = new HashSet<>();
             // Rust replaces upcoming alarms as tasks change; keep user snoozes separately.
             JSONArray snoozes = new JSONArray(sp.getString(KEY_SNOOZES, "[]"));
-            for (int i = 0; i < snoozes.length(); i++) list.put(snoozes.getJSONObject(i));
+            JSONArray kept = new JSONArray();
+            for (int i = 0; i < snoozes.length(); i++) {
+                JSONObject r = snoozes.getJSONObject(i);
+                if (r.getLong("at") > now) {
+                    kept.put(r);
+                    list.put(r);
+                }
+            }
+            sp.edit().putString(KEY_SNOOZES, kept.toString()).apply();
             for (int i = 0; i < list.length(); i++) {
                 JSONObject r = list.getJSONObject(i);
-                long at = r.getLong("at");
-                if (at <= now) {
-                    continue;
-                }
-                int code = r.getString("key").hashCode();
-                PendingIntent pi = pending(context, code, r.getString("key"), r.getString("title"), r.getString("body"));
+                String key = r.getString("key");
+                current.add(key);
+                boolean snoozed = i >= upcoming;
+                if (!snoozed && delivered.contains(key)) continue;
+                long at = Math.max(now, r.getLong("at"));
+                PendingIntent pi = pending(context, key.hashCode(), key, r.getString("title"), r.getString("body"), snoozed);
                 // Exact alarms need the user's (or the calendar-app) grant;
                 // otherwise Android may delay delivery by a few minutes.
                 if (Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms()) {
@@ -99,18 +131,24 @@ final class Reminders {
                 } else {
                     am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi);
                 }
-                codes.add(Integer.toString(code));
+                keys.add(key);
             }
+            delivered.retainAll(current);
+            sp.edit().putStringSet(KEY_DELIVERED, delivered).apply();
         } catch (JSONException | SecurityException e) {
             Log.w(TAG, "can't schedule reminders", e);
         }
-        sp.edit().putStringSet(KEY_CODES, codes).apply();
+        sp.edit().remove(KEY_CODES).putStringSet(KEY_KEYS, keys).apply();
     }
 
-    private static PendingIntent pending(Context context, int code, String key, String title, String body) {
+    private static PendingIntent pending(Context context, int code, String key, String title, String body, boolean snoozed) {
         Intent intent = new Intent(context, ReminderReceiver.class);
+        if (key != null) {
+            intent.setData(new Uri.Builder().scheme("patch-reminder").authority("alarm").appendPath(key).build());
+        }
         if (title != null) {
-            intent.putExtra(EXTRA_KEY, key).putExtra(EXTRA_TITLE, title).putExtra(EXTRA_BODY, body);
+            intent.putExtra(EXTRA_KEY, key).putExtra(EXTRA_TITLE, title).putExtra(EXTRA_BODY, body)
+                    .putExtra(EXTRA_SNOOZED, snoozed);
         }
         return PendingIntent.getBroadcast(context, code, intent,
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);

@@ -34,7 +34,20 @@ public final class ReminderReceiver extends BroadcastReceiver {
                     .cancel(intent.getIntExtra(Reminders.EXTRA_NOTIFICATION_ID, -1));
             return;
         }
-        Notifications.createChannels(context);
-        Notifications.reminder(context, intent.getStringExtra(Reminders.EXTRA_KEY), title, intent.getStringExtra(Reminders.EXTRA_BODY));
+        String key = intent.getStringExtra(Reminders.EXTRA_KEY);
+        if (key == null) return;
+        PatchNative.init(context);
+        PendingResult pending = goAsync();
+        new Thread(() -> {
+            try {
+                boolean open = PatchNative.nativeTaskOpen(key.split("@", 2)[0]);
+                if (Reminders.delivered(context, key, intent.getBooleanExtra(Reminders.EXTRA_SNOOZED, false)) && open) {
+                    Notifications.createChannels(context);
+                    Notifications.reminder(context, key, title, intent.getStringExtra(Reminders.EXTRA_BODY));
+                }
+            } finally {
+                pending.finish();
+            }
+        }, "patch-reminder").start();
     }
 }

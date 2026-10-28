@@ -70,12 +70,11 @@ impl Clock {
         if now > self.wall {
             self.wall = now;
             self.counter = 0;
+        } else if self.counter >= 9999 {
+            self.wall = self.wall.saturating_add(1);
+            self.counter = 0;
         } else {
             self.counter += 1;
-            if self.counter > 9999 {
-                self.wall += 1;
-                self.counter = 0;
-            }
         }
         Stamp::new(self.wall, self.counter, &self.node)
     }
@@ -121,6 +120,17 @@ mod tests {
             "remote",
         ));
         assert_eq!(clock.state(), (100, 0));
+    }
+
+    #[test]
+    fn maximum_remote_counter_advances_wall_time() {
+        let mut clock = Clock::new("local");
+        let remote = Stamp::new(now_ms(), u32::MAX, "remote");
+        clock.observe(&remote);
+        let local = clock.tick_at(0);
+        assert!(local > remote);
+        assert_eq!(local.parts(), Some((remote.parts().unwrap().0 + 1, 0)));
+        assert!(clock.tick_at(0) > local);
     }
 
     #[test]

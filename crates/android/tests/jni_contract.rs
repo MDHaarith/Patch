@@ -81,14 +81,16 @@ fn rust_type(java: &str) -> &'static str {
 }
 
 /// Rust exports `Java_com_mdhaarith_patch_PatchNative_<name>(env, class, params…)`.
-fn rust_exports() -> BTreeMap<String, Vec<String>> {
+fn rust_exports() -> BTreeMap<String, (String, Vec<String>)> {
     let src = read("src/android/mod.rs");
     let mut out = BTreeMap::new();
     let prefix = "fn Java_com_mdhaarith_patch_PatchNative_";
     for (i, _) in src.match_indices(prefix) {
         let rest = &src[i + prefix.len()..];
         let (name, rest) = rest.split_once('(').unwrap();
-        let params = rest.split(')').next().unwrap();
+        let (params, tail) = rest.split_once(')').unwrap();
+        let ret = tail.split('{').next().unwrap().trim();
+        let ret = ret.strip_prefix("->").map(str::trim).unwrap_or("()");
         let types: Vec<String> = params
             .split(',')
             .map(str::trim)
@@ -99,7 +101,7 @@ fn rust_exports() -> BTreeMap<String, Vec<String>> {
             types.len() >= 2 && types[0] == "JNIEnv" && types[1] == "JClass",
             "{name}: (JNIEnv, JClass, …)"
         );
-        out.insert(name.to_string(), types[2..].to_vec());
+        out.insert(name.to_string(), (ret.to_string(), types[2..].to_vec()));
     }
     out
 }
@@ -115,9 +117,10 @@ fn native_methods_match_rust_exports() {
         "native method names"
     );
     for (name, (ret, params)) in &java {
-        assert_eq!(ret, "void", "{name}: Rust exports return nothing");
+        let expected_ret = if ret == "void" { "()" } else { rust_type(ret) };
+        assert_eq!(rust[name].0, expected_ret, "{name}: return type");
         let expected: Vec<&str> = params.iter().map(|p| rust_type(p)).collect();
-        assert_eq!(rust[name], expected, "{name}: parameter types");
+        assert_eq!(rust[name].1, expected, "{name}: parameter types");
     }
     let src = read("src/android/mod.rs");
     assert_eq!(

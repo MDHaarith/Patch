@@ -5,9 +5,57 @@
 //! free of TLS and async dependencies.
 
 use std::fmt;
-use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
-use std::time::Duration;
+use std::io::{self, BufReader, Read, Write};
+use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
+use std::time::{Duration, Instant};
+
+pub(crate) const MAX_BODY: usize = 64 * 1024 * 1024;
+const MAX_HEAD: usize = 16 * 1024;
+
+pub(crate) struct DeadlineStream {
+    pub stream: TcpStream,
+    pub deadline: Instant,
+}
+
+impl DeadlineStream {
+    fn remaining(&self) -> io::Result<Duration> {
+        self.deadline.checked_duration_since(Instant::now())
+            .filter(|d| !d.is_zero())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "HTTP deadline exceeded"))
+    }
+}
+
+impl Read for DeadlineStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.stream.set_read_timeout(Some(self.remaining()?))?;
+        self.stream.read(buf)
+    }
+}
+
+impl Write for DeadlineStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.stream.set_write_timeout(Some(self.remaining()?))?;
+        self.stream.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stream.flush()
+    }
+}
+
+pub(crate) fn read_head(reader: &mut impl Read) -> io::Result<String> {
+    let mut head = Vec::new();
+    while head.len() < MAX_HEAD {
+        let mut byte = [0];
+        reader.read_exact(&mut byte)?;
+        head.push(byte[0]);
+        if head.ends_with(b"\r\n\r\n") {
+            return String::from_utf8(head)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "non-UTF-8 HTTP header"));
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::InvalidData, "HTTP header too large"))
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Base {
@@ -83,13 +131,25 @@ pub struct Response {
     pub body: Vec<u8>,
 }
 
-fn connect(base: &Base, timeout: Duration) -> Result<TcpStream, HttpError> {
-    let addrs: Vec<_> = (base.host.as_str(), base.port)
-        .to_socket_addrs()
-        .map_err(|e| HttpError::Connect(format!("{}: {e}", base.host)))?
-        .collect();
+fn connect(base: &Base, deadline: Instant) -> Result<TcpStream, HttpError> {
+    let addrs = if let Ok(ip) = base.host.parse::<IpAddr>() {
+        vec![SocketAddr::new(ip, base.port)]
+    } else {
+        // The system resolver has no timeout API; don't let it hold the request past its deadline.
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let address = (base.host.clone(), base.port);
+        std::thread::Builder::new().name("patch-dns".into()).spawn(move || {
+            let _ = tx.send(address.to_socket_addrs().map(|addrs| addrs.collect::<Vec<_>>()));
+        }).map_err(|e| HttpError::Connect(e.to_string()))?;
+        rx.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .map_err(|e| HttpError::Connect(format!("DNS: {e}")))?
+            .map_err(|e| HttpError::Connect(format!("{}: {e}", base.host)))?
+    };
     let mut last = String::from("no addresses");
     for addr in addrs {
+        let timeout = deadline.checked_duration_since(Instant::now())
+            .filter(|d| !d.is_zero())
+            .ok_or_else(|| HttpError::Connect("HTTP deadline exceeded".into()))?;
         match TcpStream::connect_timeout(&addr, Duration::from_secs(5).min(timeout)) {
             Ok(s) => return Ok(s),
             Err(e) => last = e.to_string(),
@@ -106,10 +166,9 @@ pub fn request(
     body: Option<&[u8]>,
     timeout: Duration,
 ) -> Result<Response, HttpError> {
-    let mut stream = connect(base, timeout)?;
-    stream.set_read_timeout(Some(timeout)).ok();
-    stream.set_write_timeout(Some(Duration::from_secs(15))).ok();
-    let _ = stream.set_nodelay(true);
+    let deadline = Instant::now() + timeout;
+    let mut stream = DeadlineStream { stream: connect(base, deadline)?, deadline };
+    let _ = stream.stream.set_nodelay(true);
 
     let body = body.unwrap_or_default();
     let host = if base.host.contains(':') { format!("[{}]", base.host) } else { base.host.clone() };
@@ -123,17 +182,11 @@ pub fn request(
     stream.write_all(head.as_bytes()).map_err(|e| HttpError::Io(e.to_string()))?;
     stream.write_all(body).map_err(|e| HttpError::Io(e.to_string()))?;
 
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw).map_err(|e| HttpError::Io(e.to_string()))?;
-    parse_response(&raw)
+    read_response(&mut BufReader::new(stream))
 }
 
-fn parse_response(raw: &[u8]) -> Result<Response, HttpError> {
-    let split = raw
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .ok_or_else(|| HttpError::Protocol("no header terminator".into()))?;
-    let head = String::from_utf8_lossy(&raw[..split]);
+fn read_response(reader: &mut impl Read) -> Result<Response, HttpError> {
+    let head = read_head(reader).map_err(|e| HttpError::Io(e.to_string()))?;
     let mut lines = head.split("\r\n");
     let status_line = lines.next().unwrap_or_default();
     let status: u16 = status_line
@@ -147,20 +200,30 @@ fn parse_response(raw: &[u8]) -> Result<Response, HttpError> {
         if let Some((k, v)) = line.split_once(':') {
             let (k, v) = (k.trim().to_ascii_lowercase(), v.trim());
             if k == "content-length" {
-                length = v.parse::<usize>().ok();
+                if length.is_some() {
+                    return Err(HttpError::Protocol("duplicate Content-Length".into()));
+                }
+                let n = v.parse::<usize>().map_err(|_| HttpError::Protocol("bad Content-Length".into()))?;
+                if n > MAX_BODY {
+                    return Err(HttpError::Protocol("response too large".into()));
+                }
+                length = Some(n);
             } else if k == "transfer-encoding" && v.to_ascii_lowercase().contains("chunked") {
                 chunked = true;
             }
         }
     }
-    let rest = &raw[split + 4..];
-    let body = if chunked {
-        dechunk(rest)?
-    } else if let Some(n) = length {
-        rest.get(..n).ok_or_else(|| HttpError::Protocol("truncated body".into()))?.to_vec()
-    } else {
-        rest.to_vec()
-    };
+    let mut body = Vec::new();
+    let limit = if chunked { MAX_BODY + 1 } else { length.unwrap_or(MAX_BODY + 1) };
+    reader.take(limit as u64).read_to_end(&mut body).map_err(|e| HttpError::Io(e.to_string()))?;
+    if body.len() > MAX_BODY {
+        return Err(HttpError::Protocol("response too large".into()));
+    }
+    if chunked {
+        body = dechunk(&body)?;
+    } else if length.is_some_and(|n| body.len() != n) {
+        return Err(HttpError::Protocol("truncated body".into()));
+    }
     if !(200..300).contains(&status) {
         return Err(HttpError::Status(status, String::from_utf8_lossy(&body).chars().take(200).collect()));
     }
@@ -191,6 +254,59 @@ mod tests {
     use super::*;
 
     #[test]
+    fn content_length_bounds_the_read() {
+        let mut raw = io::Cursor::new(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nokextra");
+        assert_eq!(read_response(&mut raw).unwrap().body, b"ok");
+        assert_eq!(raw.position(), raw.get_ref().len() as u64 - 5);
+        for length in ["67108865", "invalid", "-1"] {
+            let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {length}\r\n\r\n");
+            assert!(matches!(read_response(&mut head.as_bytes()), Err(HttpError::Protocol(_))));
+        }
+        let mut truncated = &b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nok"[..];
+        assert!(matches!(read_response(&mut truncated), Err(HttpError::Protocol(_))));
+        assert!(read_head(&mut io::repeat(b'x')).is_err());
+    }
+
+    #[test]
+    fn content_length_does_not_wait_for_eof() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = Base::parse(&listener.local_addr().unwrap().to_string()).unwrap();
+        let base = Base { host: "localhost".into(), ..base };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            read_head(&mut BufReader::new(&mut stream)).unwrap();
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok").unwrap();
+            let _ = rx.recv_timeout(Duration::from_secs(3));
+        });
+        let response = request(&base, "GET", "/", "token", None, Duration::from_secs(1));
+        tx.send(()).unwrap();
+        server.join().unwrap();
+        assert_eq!(response.unwrap().body, b"ok");
+    }
+
+    #[test]
+    fn overall_deadline_stops_a_trickling_response() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = Base::parse(&listener.local_addr().unwrap().to_string()).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            read_head(&mut BufReader::new(&mut stream)).unwrap();
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\n\r\n").unwrap();
+            for _ in 0..20 {
+                if stream.write_all(b"x").is_err() { break; }
+                std::thread::sleep(Duration::from_millis(40));
+            }
+        });
+        let started = Instant::now();
+        let response = request(&base, "GET", "/", "token", None, Duration::from_millis(250));
+        let elapsed = started.elapsed();
+        server.join().unwrap();
+        assert!(matches!(response, Err(HttpError::Io(_))));
+        assert!(elapsed < Duration::from_millis(650), "deadline took {elapsed:?}");
+    }
+
+    #[test]
     fn parses_bases() {
         assert_eq!(Base::parse("laptop").unwrap().url(), "http://laptop:4747");
         assert_eq!(Base::parse("http://100.64.0.2:9000/").unwrap().url(), "http://100.64.0.2:9000");
@@ -203,8 +319,8 @@ mod tests {
     #[test]
     fn parses_chunked() {
         let raw = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n";
-        assert_eq!(parse_response(raw).unwrap().body, b"Wikipedia");
+        assert_eq!(read_response(&mut io::Cursor::new(raw)).unwrap().body, b"Wikipedia");
         let raw = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 3\r\n\r\nbad";
-        assert!(matches!(parse_response(raw), Err(HttpError::Status(401, _))));
+        assert!(matches!(read_response(&mut io::Cursor::new(raw)), Err(HttpError::Status(401, _))));
     }
 }

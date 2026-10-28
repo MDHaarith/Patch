@@ -347,6 +347,23 @@ pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeCompleteTask(
     }
 }
 
+#[no_mangle]
+pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeTaskOpen(
+    mut env: JNIEnv,
+    _: JClass,
+    id: JString,
+) -> jboolean {
+    let id = string(&mut env, &id);
+    let (reply, wait) = sync_channel(1);
+    send(Msg::Invoke(Box::new(move || {
+        let _ = reply.send(patch_ui::App::current_task_open(&id));
+    })));
+    wait.recv_timeout(Duration::from_secs(8))
+        .ok()
+        .flatten()
+        .unwrap_or(true) as jboolean
+}
+
 /// The widget's "+": open the editor on a new task.
 #[no_mangle]
 pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeNewTask(_env: JNIEnv, _: JClass) {

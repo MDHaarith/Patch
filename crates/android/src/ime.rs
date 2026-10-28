@@ -96,9 +96,9 @@ pub struct ImeState {
     /// The composition shown at the cursor. Slint only reports it with the
     /// next cursor/text change, so the edits we send keep it current.
     preedit: String,
-    /// A cursor inside the composition (UTF-16 offset), for the composition
-    /// it was set with; otherwise the cursor sits after the composition.
-    preedit_cursor: Option<(String, usize)>,
+    /// Selection relative to the composition (UTF-16 offsets), for the
+    /// composition it was set with; otherwise the cursor sits after it.
+    preedit_selection: Option<(String, std::ops::Range<i32>)>,
     pending: Option<ImeMode>,
     /// Sequence number of the last Java edit applied.
     seq: i32,
@@ -177,13 +177,19 @@ impl ImeState {
             }
         };
         let c16 = utf16_len(&text[..cursor]) as i32;
-        let inside = self
-            .preedit_cursor
+        let len16 = utf16_len(text) as i32 + pre16;
+        let selection = self
+            .preedit_selection
             .as_ref()
             .filter(|(for_text, _)| !pre.is_empty() && for_text == pre)
-            .map(|(_, k)| c16 + *k as i32);
-        let (cur16, anc16) = match inside {
-            Some(k) => (k, k),
+            .map(|(_, range)| {
+                (
+                    (c16 + range.end).clamp(0, len16),
+                    (c16 + range.start).clamp(0, len16),
+                )
+            });
+        let (cur16, anc16) = match selection {
+            Some(selection) => selection,
             None => (
                 at(cursor),
                 if anchor == cursor {
@@ -302,9 +308,10 @@ impl ImeState {
                 } else {
                     new_cursor as i64
                 };
-                self.preedit_cursor = (0..len16).contains(&k).then(|| (t.clone(), k as usize));
-                let caret = self.preedit_cursor.as_ref().map(|(_, k)| {
-                    let b = byte_at_utf16(&t, *k as u32) as i32;
+                self.preedit_selection =
+                    (0..len16).contains(&k).then(|| (t.clone(), k as i32..k as i32));
+                let caret = self.preedit_selection.as_ref().map(|(_, range)| {
+                    let b = byte_at_utf16(&t, range.end as u32) as i32;
                     b..b
                 });
                 self.preedit = t;
@@ -317,13 +324,17 @@ impl ImeState {
             }
             ImeOp::FinishComposing => {
                 if !self.preedit.is_empty() {
+                    let snapshot = self.snapshot().unwrap();
                     let t = std::mem::take(&mut self.preedit);
                     out.push(composition(
                         KeyEventType::CommitComposition,
                         &t,
                         "",
                         None,
-                        None,
+                        Some((
+                            byte_at_utf16(&snapshot.text, snapshot.sel_end as u32) as i32,
+                            byte_at_utf16(&snapshot.text, snapshot.sel_start as u32) as i32,
+                        )),
                     ));
                 }
             }
@@ -359,15 +370,31 @@ impl ImeState {
                 }
             }
             ImeOp::SetSelection { start, end } => {
-                let (full, _) = self.commit_into(&text, cursor, &mut out);
+                let full = format!("{}{}{}", &text[..cursor], self.preedit, &text[cursor..]);
                 let (s, e) = (byte_at_utf16(&full, start), byte_at_utf16(&full, end));
-                out.push(composition(
-                    KeyEventType::UpdateComposition,
-                    "",
-                    "",
-                    None,
-                    Some((e as i32, s as i32)),
-                ));
+                if self.preedit.is_empty() {
+                    out.push(composition(
+                        KeyEventType::UpdateComposition,
+                        "",
+                        "",
+                        None,
+                        Some((e as i32, s as i32)),
+                    ));
+                } else {
+                    let c16 = utf16_len(&text[..cursor]) as i32;
+                    self.preedit_selection = Some((
+                        self.preedit.clone(),
+                        utf16_len(&full[..s]) as i32 - c16..utf16_len(&full[..e]) as i32 - c16,
+                    ));
+                    // Slint renders selection inside preedit; Android also needs positions outside it.
+                    let caret = |b: usize| b.saturating_sub(cursor).min(self.preedit.len()) as i32;
+                    out.push(composition_with_caret(
+                        KeyEventType::UpdateComposition,
+                        &self.preedit,
+                        None,
+                        Some(caret(s)..caret(e)),
+                    ));
+                }
             }
             ImeOp::SetComposingRegion { start, end } => {
                 let (full, cur) = self.commit_into(&text, cursor, &mut out);
@@ -407,6 +434,7 @@ impl ImeState {
             return (text.to_string(), cursor);
         }
         let pre = std::mem::take(&mut self.preedit);
+        self.preedit_selection = None;
         out.push(composition(
             KeyEventType::CommitComposition,
             &pre,
@@ -668,6 +696,31 @@ mod tests {
         st.translate(ImeOp::Compose("word".into(), 1), 2);
         let (_, snap, _) = st.take_pending().unwrap();
         assert_eq!((snap.sel_start, snap.sel_end), (7, 7), "back to the end once the IME asks for it");
+    }
+
+    #[test]
+    fn selection_preserves_composition() {
+        for (start, end) in [(0, 0), (2, 2), (4, 2), (5, 5)] {
+            let mut st = focused("ab", 1);
+            st.translate(ImeOp::Compose("hel".into(), 1), 1);
+            let events = st.translate(ImeOp::SetSelection { start, end }, 2);
+            assert_eq!(events.len(), 1, "selection must not commit preedit");
+            assert_eq!(key(&events[0]).preedit_text, "hel");
+            let (_, snap, _) = st.take_pending().unwrap();
+            assert_eq!(snap.text, "ahelb");
+            assert_eq!((snap.comp_start, snap.comp_end), (1, 4));
+            assert_eq!((snap.sel_start, snap.sel_end), (start as i32, end as i32));
+            let events = st.translate(ImeOp::Commit("hello".into(), 1), 3);
+            assert_eq!(events.len(), 1);
+            assert_eq!(key(&events[0]).key_event.text, "hello");
+            assert_eq!(key(&events[0]).replacement_range, Some(0..0));
+        }
+        let mut st = focused("ab", 1);
+        st.translate(ImeOp::Compose("hel".into(), 1), 1);
+        st.translate(ImeOp::SetSelection { start: 2, end: 2 }, 2);
+        let events = st.translate(ImeOp::FinishComposing, 3);
+        assert_eq!(key(&events[0]).key_event.text, "hel");
+        assert_eq!((key(&events[0]).cursor_position, key(&events[0]).anchor_position), (Some(2), Some(2)));
     }
 
     #[test]

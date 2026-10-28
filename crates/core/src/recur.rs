@@ -16,8 +16,13 @@ pub struct Occurrence {
 const MAX_OCCURRENCES: u32 = 800;
 
 /// The `k`-th occurrence start for a repeat rule anchored at `base`.
-fn nth(base: NaiveDateTime, repeat: Repeat, k: u32) -> Option<NaiveDateTime> {
+fn nth(base: NaiveDateTime, repeat: Repeat, k: u32, anchor: Option<NaiveDateTime>) -> Option<NaiveDateTime> {
     let k64 = k as i64;
+    let calendar = |months| {
+        let anchor = anchor.unwrap_or(base);
+        let offset = (base.year() - anchor.year()) * 12 + base.month() as i32 - anchor.month() as i32;
+        add_months(anchor.date(), offset + months).and_time(base.time())
+    };
     Some(match repeat {
         Repeat::None => {
             if k == 0 {
@@ -28,15 +33,15 @@ fn nth(base: NaiveDateTime, repeat: Repeat, k: u32) -> Option<NaiveDateTime> {
         }
         Repeat::Daily => base + Duration::days(k64),
         Repeat::Weekly => base + Duration::weeks(k64),
-        Repeat::Monthly => add_months(base.date(), k as i32).and_time(base.time()),
-        Repeat::Yearly => add_months(base.date(), 12 * k as i32).and_time(base.time()),
+        Repeat::Monthly => calendar(k as i32),
+        Repeat::Yearly => calendar(12 * k as i32),
         Repeat::Every(n, unit) => {
             let steps = n as i64 * k64;
             match unit {
                 Unit::Day => base + Duration::days(steps),
                 Unit::Week => base + Duration::weeks(steps),
-                Unit::Month => add_months(base.date(), steps as i32).and_time(base.time()),
-                Unit::Year => add_months(base.date(), 12 * steps as i32).and_time(base.time()),
+                Unit::Month => calendar(steps as i32),
+                Unit::Year => calendar(12 * steps as i32),
             }
         }
         Repeat::Weekdays => {
@@ -94,7 +99,7 @@ pub fn occurrences(task: &Task, from: NaiveDateTime, to: NaiveDateTime) -> Vec<O
 
     let mut produced = 0;
     while produced < MAX_OCCURRENCES {
-        let Some(s) = nth(base, task.repeat, k) else { break };
+        let Some(s) = nth(base, task.repeat, k, task.repeat_anchor) else { break };
         if s >= to {
             break;
         }
@@ -111,7 +116,7 @@ pub fn occurrences(task: &Task, from: NaiveDateTime, to: NaiveDateTime) -> Vec<O
 /// Start of the next occurrence after the task's current one.
 pub fn next_start(task: &Task) -> Option<NaiveDateTime> {
     let start = task.start?;
-    nth(start, task.repeat, 1)
+    nth(start, task.repeat, 1, task.repeat_anchor)
 }
 
 #[cfg(test)]
@@ -125,6 +130,15 @@ mod tests {
         t.end = end.and_then(parse_dt);
         t.repeat = repeat;
         t
+    }
+
+    #[test]
+    fn occurrences_keep_anchor_after_clamped_completion() {
+        let mut task = task("2026-02-28T10:00", None, Repeat::Monthly);
+        task.repeat_anchor = parse_dt("2026-01-31T10:00");
+        let occ = occurrences(&task, parse_dt("2026-02-01").unwrap(), parse_dt("2026-05-01").unwrap());
+        let starts: Vec<_> = occ.iter().map(|o| Some(o.start)).collect();
+        assert_eq!(starts, vec![parse_dt("2026-02-28T10:00"), parse_dt("2026-03-31T10:00"), parse_dt("2026-04-30T10:00")]);
     }
 
     #[test]

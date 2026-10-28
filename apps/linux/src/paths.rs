@@ -68,7 +68,8 @@ impl Paths {
     /// different `XDG_DATA_HOME`) runs side by side instead of talking to the
     /// first one.
     pub fn socket(&self) -> PathBuf {
-        let name = format!("patch-{:016x}.sock", fnv1a(self.data.as_os_str().as_encoded_bytes()));
+        let data = self.data.canonicalize().unwrap_or_else(|_| self.data.clone());
+        let name = format!("patch-{:016x}.sock", fnv1a(data.as_os_str().as_encoded_bytes()));
         let path = self.runtime.join(&name);
         if path.as_os_str().len() < SUN_PATH_MAX {
             path
@@ -150,5 +151,17 @@ mod tests {
     fn fnv_is_stable() {
         assert_eq!(fnv1a(b""), 0xcbf2_9ce4_8422_2325);
         assert_eq!(fnv1a(b"a"), 0xaf63_dc4c_8601_ec8c);
+    }
+
+    #[test]
+    fn socket_is_shared_by_data_dir_aliases() {
+        let root = std::env::temp_dir().join(format!("patch-paths-test-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("data")).unwrap();
+        std::os::unix::fs::symlink(root.join("data"), root.join("alias")).unwrap();
+        let paths = Paths::from_env(Some(root.join("data")));
+        for alias in [root.join("alias"), root.join("data/../data"), root.join("data/.")] {
+            assert_eq!(paths.socket(), Paths::from_env(Some(alias)).socket());
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

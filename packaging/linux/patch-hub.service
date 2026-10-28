@@ -16,7 +16,7 @@ Documentation=https://github.com/MDHaarith/Patch
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/patch-hub
+ExecStart=/usr/bin/patch-hub
 Restart=on-failure
 RestartSec=5
 

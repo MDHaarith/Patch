@@ -189,6 +189,8 @@ fn seed(dir: &Path) {
         t.priority = 3;
     });
     add("Plan trip to Kyoto", DEFAULT_LIST, COL_TODO, &|_| {});
+    let deleted = d.add_task(Task::blank("reminders-check-deleted", DEFAULT_LIST, COL_TODO));
+    d.delete_task(&deleted);
     d.save(&dir.join("doc.json")).unwrap();
 }
 
@@ -269,6 +271,7 @@ impl Harness {
 
 #[test]
 fn renders_and_drives_both_windows() {
+    assert_eq!(patch_ui::App::current_task_open("missing"), None, "unavailable document fails open");
     let dir = std::env::temp_dir().join(format!("patch-android-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -277,6 +280,8 @@ fn renders_and_drives_both_windows() {
     let (tx, rx) = channel();
     let rec = Rc::new(Recorder::default());
     let rt = Runtime::new(dir.clone(), SCALE, rec.clone(), tx.clone()).unwrap();
+    assert_eq!(patch_ui::App::current_task_open("missing"), Some(false));
+    assert_eq!(patch_ui::App::current_task_open("reminders-check-deleted"), Some(false), "deleted task is not open without an activity");
     let mut h = Harness {
         rt,
         rx,
@@ -612,6 +617,43 @@ fn renders_and_drives_both_windows() {
     });
     h.settle();
 
+    let mut seq = 20;
+    for (preedit, committed, start, end) in [
+        ("hel", "hello", 1, 1),
+        ("h😀l", "h😀llo", 3, 1),
+    ] {
+        for op in [
+            ImeOp::Compose(preedit.into(), 1),
+            ImeOp::SetSelection { start, end },
+        ] {
+            h.send(Msg::Ime { kind: Kind::Overlay, op, seq });
+            seq += 1;
+            h.settle();
+        }
+        let (_, _, selected, _) = h.last_ime().unwrap();
+        assert_eq!(selected.text, preedit, "selection leaves preedit intact");
+        assert_eq!((selected.comp_start, selected.comp_end), (0, preedit.encode_utf16().count() as i32));
+        assert_eq!((selected.sel_start, selected.sel_end), (start as i32, end as i32));
+        h.send(Msg::Ime {
+            kind: Kind::Overlay,
+            op: ImeOp::Commit(committed.into(), 1),
+            seq,
+        });
+        seq += 1;
+        h.settle();
+        let (_, _, snapshot, _) = h.last_ime().unwrap();
+        assert_eq!(snapshot.text, committed, "commit replaces the whole composition after selection");
+        assert_eq!(snapshot.comp_start, -1);
+        for op in [
+            ImeOp::SetSelection { start: 0, end: committed.encode_utf16().count() as u32 },
+            ImeOp::Commit(String::new(), 1),
+        ] {
+            h.send(Msg::Ime { kind: Kind::Overlay, op, seq });
+            seq += 1;
+        }
+        h.settle();
+    }
+
     // ---- Collapse keeps painting the exit animation on the full-size surface.
     h.rt.overlay_window()
         .unwrap()
@@ -767,11 +809,23 @@ fn renders_and_drives_both_windows() {
     h.rt.app().save_now();
     let before = Doc::load_or_new(&h.dir.join("doc.json"));
     let id = before.tasks().iter().find(|t| !t.done && t.repeat == patch_core::Repeat::None).unwrap().id.clone();
+    assert_eq!(patch_ui::App::current_task_open(&id), Some(true));
     let (done, saved) = std::sync::mpsc::sync_channel(1);
     h.send(Msg::CompleteTask(id.clone(), Some(done)));
     h.settle();
     assert_eq!(saved.try_recv(), Ok(()));
     assert!(Doc::load_or_new(&h.dir.join("doc.json")).task(&id).unwrap().done);
+    let (reply, checked) = std::sync::mpsc::sync_channel(1);
+    h.send(Msg::Invoke(Box::new(move || {
+        reply.send(patch_ui::App::current_task_open(&id)).unwrap();
+    })));
+    h.settle();
+    assert_eq!(checked.try_recv(), Ok(Some(false)), "completed task is rejected through the alarm's UI-thread query");
+
+    std::fs::write(h.dir.join("doc.json"), "{invalid").unwrap();
+    assert_eq!(patch_ui::App::current_task_open("missing"), None, "unreadable document fails open");
+    std::fs::remove_file(h.dir.join("doc.json")).unwrap();
+    assert_eq!(patch_ui::App::current_task_open("missing"), None, "missing document fails open");
 
     let _ = std::fs::remove_dir_all(&h.dir);
 }
