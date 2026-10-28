@@ -72,7 +72,7 @@ pub trait Bridge {
     /// A frame requested with [`Msg::RedrawNeeded`] has been posted.
     fn frame_done(&self, kind: Kind);
     fn back_result(&self, consumed: bool);
-    /// The app's look changed (0 matte, 1 glass, 2 light): system bar icons
+    /// The app's look changed (0 matte, 2 light): system bar icons
     /// and the window background follow it.
     fn set_look(&self, look: i32);
     /// The home-screen widget's state changed (JSON, see
@@ -81,6 +81,9 @@ pub trait Bridge {
     fn publish_snapshot(&self, json: &str);
     /// Opens the camera QR scanner; the result comes back as [`Msg::Scanned`].
     fn scan_qr(&self);
+    fn scan_preview(&self, _rect: [f32; 4]) {}
+    fn stop_scan(&self) {}
+    fn device_name(&self) -> String { "Android device".into() }
     fn check_update(&self);
     fn open_battery_settings(&self);
     fn battery_unrestricted(&self) -> bool;
@@ -100,7 +103,7 @@ pub enum Msg {
         kind: Kind,
         done: SyncSender<()>,
     },
-    /// Java waits for a frame at the current size (`surfaceRedrawNeededAsync`).
+    /// Java waits for a frame at the current size (surface redraw or texture resize).
     RedrawNeeded(Kind),
     /// The view is gone for good (activity destroyed, overlay removed).
     ViewGone(Kind),
@@ -149,6 +152,7 @@ pub enum Msg {
     SyncNow,
     /// Text of a scanned QR code.
     Scanned(String),
+    ScanStopped,
     Invoke(Box<dyn FnOnce() + Send>),
 }
 
@@ -212,7 +216,9 @@ impl Slot {
                 }
             }
         }
-        self.ack_frames(bridge);
+        if !self.present_all {
+            self.ack_frames(bridge);
+        }
     }
 
     fn ack_frames(&mut self, bridge: &dyn Bridge) {
@@ -364,7 +370,9 @@ impl Runtime {
             if let Some(t) = slot.sync_until {
                 timeout = timeout.min(t.saturating_duration_since(now));
             }
-            if slot.surface.is_some() && slot.window.window().has_active_animations() {
+            if slot.surface.is_some()
+                && (slot.present_all || slot.window.window().has_active_animations())
+            {
                 timeout = timeout.min((self.last_frame + FRAME).saturating_duration_since(now));
             }
         }
@@ -481,6 +489,7 @@ impl Runtime {
             }
             Msg::SyncNow => self.app.sync_now(),
             Msg::Scanned(text) => self.app.pair_from_link(&text),
+            Msg::ScanStopped => self.app.scan_stopped(),
             Msg::Invoke(f) => f(),
         }
     }
@@ -516,8 +525,6 @@ impl Runtime {
         let theme = main.global::<Theme>();
         let look = if theme.get_light() {
             2
-        } else if theme.get_glass() {
-            1
         } else {
             0
         };

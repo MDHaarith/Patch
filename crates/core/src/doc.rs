@@ -580,7 +580,13 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     let tmp = path.with_extension("tmp");
-    let mut file = std::fs::File::create(&tmp)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)] {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&tmp)?;
     file.write_all(bytes)?;
     file.sync_all()?;
     std::fs::rename(&tmp, path)?;

@@ -7,20 +7,10 @@ import { TaskRow } from "rows.slint";
 // Todo list grouped into Overdue / Today / Tomorrow / Upcoming / Someday.
 export component ListView inherits Rectangle {
     VerticalLayout {
-        padding-left: Store.mobile ? 8px : 24px;
-        padding-right: Store.mobile ? 8px : 24px;
+        padding-left: 8px;
+        padding-right: 8px;
         padding-top: 8px;
         spacing: 8px;
-        if !Store.mobile: qa := Field {
-            icon: "plus";
-            placeholder: "New task — try “Pay rent 1st oct #personal !!” or “Standup every weekday 9:30”";
-            accepted(t) => {
-                if (t != "") {
-                    Actions.quick-add(t);
-                }
-                self.text = "";
-            }
-        }
         scroll := Scroll {
             vertical-stretch: 1;
             content-height: body.preferred-height;

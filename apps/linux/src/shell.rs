@@ -805,6 +805,19 @@ impl Host for Shell {
         }))
     }
 
+    fn devices(&self) -> Vec<patch_sync::Device> {
+        self.hub.borrow().as_ref().map(Hub::devices).unwrap_or_default()
+    }
+
+    fn revoke_device(&self, id: &str) -> Result<(), String> {
+        self.hub.borrow().as_ref().ok_or("Hub is not running")?.revoke_device(id).map_err(|e| e.to_string())
+    }
+
+    fn regenerate_code(&self) -> Result<Option<HostedHub>, String> {
+        self.hub.borrow().as_ref().ok_or("Hub is not running")?.regenerate_code().map_err(|e| e.to_string())?;
+        self.set_hosting(true)
+    }
+
     fn set_autostart(&self, on: bool) -> Result<(), String> {
         let file = self.paths.autostart_file();
         let result = if on {

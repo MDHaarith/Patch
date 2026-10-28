@@ -4,13 +4,19 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Environment {
+    pub url: String,
+    pub credential: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prefs {
-    /// Index into the theme list (0 Matte Black, 1 Black Glass, 2 Light, 3 Light Glass).
+    /// Index into the theme list (0 Matte Black, 1 Light).
     pub look: i32,
     #[serde(default)]
     pub theme_version: u8,
-    pub glass_opacity: f32,
     /// Index into `pet::SKINS`.
     pub pet_skin: i32,
     pub week_monday: bool,
@@ -21,6 +27,9 @@ pub struct Prefs {
     pub hub_url: String,
     pub hub_token: String,
     pub hosting: bool,
+    pub environments: Vec<Environment>,
+    pub sync_enabled: bool,
+    pub host_credential: String,
     pub autostart: bool,
     pub widget: bool,
     /// The widget floats above other apps instead of sitting on the desktop.
@@ -43,8 +52,7 @@ impl Default for Prefs {
     fn default() -> Self {
         Prefs {
             look: 0,
-            theme_version: 1,
-            glass_opacity: 0.85,
+            theme_version: 2,
             pet_skin: 0,
             week_monday: true,
             time_24h: true,
@@ -53,6 +61,9 @@ impl Default for Prefs {
             hub_url: String::new(),
             hub_token: String::new(),
             hosting: false,
+            environments: vec![],
+            sync_enabled: true,
+            host_credential: String::new(),
             autostart: false,
             widget: false,
             widget_float: false,
@@ -74,22 +85,35 @@ impl Prefs {
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        if !(0..4).contains(&prefs.look) || (prefs.theme_version == 0 && prefs.look >= 3) {
+        if prefs.theme_version < 2 {
+            prefs.look = match prefs.look {
+                2 => 1,
+                3 if prefs.theme_version == 1 => 1,
+                _ => 0,
+            };
+        } else if !(0..2).contains(&prefs.look) {
             prefs.look = 0;
         }
-        prefs.theme_version = 1;
-        prefs.glass_opacity = glass_opacity(prefs.glass_opacity);
+        if prefs.environments.is_empty() && !prefs.hub_url.is_empty() {
+            prefs.environments.push(Environment { url: prefs.hub_url.clone(), credential: prefs.hub_token.clone(), name: prefs.hub_url.clone() });
+        }
+        prefs.theme_version = 2;
         prefs
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        patch_core::doc::write_atomic(path, serde_json::to_string_pretty(self).unwrap_or_default().as_bytes())
+        patch_core::doc::write_atomic(
+            path,
+            serde_json::to_string_pretty(self)
+                .unwrap_or_default()
+                .as_bytes(),
+        )?;
+        #[cfg(unix)] {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(())
     }
-}
-
-/// Keep imported preferences and live slider values in the readable range.
-pub fn glass_opacity(value: f32) -> f32 {
-    if value.is_finite() { value.clamp(0.25, 0.95) } else { 0.85 }
 }
 
 #[cfg(test)]
@@ -97,22 +121,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn theme_migration_and_opacity() {
-        let path = std::env::temp_dir().join(format!("patch-theme-prefs-{}.json", std::process::id()));
-        for look in 0..=10 {
-            std::fs::write(&path, format!(r#"{{"look":{look}}}"#)).unwrap();
-            let prefs = Prefs::load(&path);
-            assert_eq!(prefs.look, if look < 3 { look } else { 0 });
-            assert_eq!(prefs.theme_version, 1);
-            assert_eq!(prefs.glass_opacity, 0.85);
-        }
-        let prefs = Prefs { look: 3, glass_opacity: 0.4, ..Prefs::default() };
+    fn legacy_hub_becomes_a_saved_environment_and_credentials_stay_local() {
+        let path = std::env::temp_dir().join(format!("patch-environment-prefs-{}.json", std::process::id()));
+        std::fs::write(&path, r#"{"hub_url":"http://laptop:4747","hub_token":"old-code"}"#).unwrap();
+        let mut prefs = Prefs::load(&path);
+        assert_eq!(prefs.environments.len(), 1);
+        assert!(prefs.sync_enabled);
+        prefs.environments[0].credential = "device-private".into();
+        prefs.hub_token = "device-private".into();
+        prefs.sync_enabled = false;
         prefs.save(&path).unwrap();
-        assert_eq!(Prefs::load(&path).look, 3);
-        assert_eq!(Prefs::load(&path).glass_opacity, 0.4);
-        assert_eq!(glass_opacity(-1.0), 0.25);
-        assert_eq!(glass_opacity(2.0), 0.95);
-        assert_eq!(glass_opacity(f32::NAN), 0.85);
+        let loaded = Prefs::load(&path);
+        assert_eq!(loaded.environments[0].credential, "device-private");
+        assert_eq!(loaded.hub_token, "device-private");
+        assert!(!loaded.sync_enabled);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn retired_theme_migration() {
+        let path =
+            std::env::temp_dir().join(format!("patch-theme-prefs-{}.json", std::process::id()));
+        // Version 1: Matte Black, Black Glass, Light, Light Glass.
+        for (old, expected) in [(0, 0), (1, 0), (2, 1), (3, 1), (9, 0)] {
+            std::fs::write(&path, format!(r#"{{"look":{old},"theme_version":1}}"#)).unwrap();
+            let prefs = Prefs::load(&path);
+            assert_eq!(prefs.look, expected);
+            prefs.save(&path).unwrap();
+            assert_eq!(Prefs::load(&path).look, expected);
+        }
         std::fs::remove_file(path).unwrap();
     }
 }

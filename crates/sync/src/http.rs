@@ -82,6 +82,9 @@ impl Base {
         let (host, port) = if let Some(rest) = hostport.strip_prefix('[') {
             // [v6]:port
             let (h, after) = rest.split_once(']').ok_or("Bad IPv6 address")?;
+            if h.parse::<std::net::Ipv6Addr>().is_err() || (!after.is_empty() && !after.starts_with(':')) {
+                return Err("Bad IPv6 address".into());
+            }
             let port = after.strip_prefix(':').map(|p| p.parse::<u16>()).transpose().map_err(|_| "Bad port")?;
             (h.to_string(), port)
         } else {
@@ -90,8 +93,12 @@ impl Base {
                 _ => (hostport.to_string(), None),
             }
         };
-        if host.is_empty() || host.contains(char::is_whitespace) {
+        if host.is_empty() || (!host.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+            && host.parse::<std::net::Ipv6Addr>().is_err()) {
             return Err("Bad host name".into());
+        }
+        if port == Some(0) || prefix.chars().any(|c| c.is_whitespace() || c.is_control() || matches!(c, '?' | '#' | '\\')) {
+            return Err("Bad hub address".into());
         }
         Ok(Base { host, port: port.unwrap_or(crate::DEFAULT_PORT), prefix })
     }
@@ -166,6 +173,9 @@ pub fn request(
     body: Option<&[u8]>,
     timeout: Duration,
 ) -> Result<Response, HttpError> {
+    if !token.is_ascii() || token.bytes().any(|b| b.is_ascii_control()) {
+        return Err(HttpError::Protocol("bad pairing token".into()));
+    }
     let deadline = Instant::now() + timeout;
     let mut stream = DeadlineStream { stream: connect(base, deadline)?, deadline };
     let _ = stream.stream.set_nodelay(true);
@@ -242,16 +252,46 @@ fn dechunk(mut data: &[u8]) -> Result<Vec<u8>, HttpError> {
             .map_err(|_| HttpError::Protocol("bad chunk size".into()))?;
         data = &data[line_end + 2..];
         if size == 0 {
-            return Ok(out);
+            if data == b"\r\n" || data.ends_with(b"\r\n\r\n") {
+                return Ok(out);
+            }
+            return Err(HttpError::Protocol("truncated chunk terminator".into()));
+        }
+        if size > MAX_BODY - out.len() {
+            return Err(HttpError::Protocol("response too large".into()));
         }
         out.extend_from_slice(data.get(..size).ok_or_else(|| HttpError::Protocol("short chunk".into()))?);
-        data = data.get(size + 2..).unwrap_or_default();
+        if data.get(size..size + 2) != Some(b"\r\n") {
+            return Err(HttpError::Protocol("bad chunk terminator".into()));
+        }
+        data = &data[size + 2..];
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn malformed_hub_addresses_are_rejected() {
+        for address in ["[::1]ignored", "[not-ipv6]:4747", "host:0", "host?token=secret", "user@host",
+            "host/path?query", "host/path#fragment", "host/\r\nX: injected", "ftp://host"] {
+            assert!(Base::parse(address).is_err(), "accepted {address:?}");
+        }
+        for address in ["http://[fd7a:115c:a1e0::1]:4747/", "fd7a:115c:a1e0::1", "laptop.tail.ts.net:4747/prefix"] {
+            let parsed = Base::parse(address).unwrap();
+            assert_eq!(Base::parse(&parsed.url()).unwrap(), parsed);
+        }
+    }
+
+    #[test]
+    fn partial_chunk_framing_is_rejected() {
+        assert_eq!(dechunk(b"2\r\nok\r\n0\r\n\r\n").unwrap(), b"ok");
+        assert_eq!(dechunk(b"2\r\nok\r\n0\r\nX: trailer\r\n\r\n").unwrap(), b"ok");
+        for data in [&b"2\r\nokXX0\r\n\r\n"[..], &b"2\r\nok\r\n0\r\n"[..], &b"2\r\nok"[..]] {
+            assert!(dechunk(data).is_err());
+        }
+    }
 
     #[test]
     fn content_length_bounds_the_read() {

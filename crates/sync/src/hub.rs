@@ -47,13 +47,13 @@ impl HubConfig {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Stored {
     seq: u64,
     rec: Record,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct State {
     hub: String,
     seq: u64,
@@ -64,12 +64,13 @@ struct Shared {
     state: Mutex<State>,
     changed: Condvar,
     file: PathBuf,
-    token: String,
+    registry: Mutex<crate::devices::Registry>,
     allow_lan: bool,
     name: String,
     port: u16,
     stopping: AtomicBool,
     active_requests: AtomicUsize,
+    revocations: AtomicUsize,
 }
 
 pub struct Hub {
@@ -85,10 +86,11 @@ fn load_token(cfg: &HubConfig) -> io::Result<String> {
         }
     }
     let path = cfg.data_dir.join("token");
-    if let Ok(t) = std::fs::read_to_string(&path) {
-        if !t.trim().is_empty() {
-            return Ok(t.trim().to_string());
-        }
+    match std::fs::read_to_string(&path) {
+        Ok(t) if !t.trim().is_empty() => return Ok(t.trim().to_string()),
+        Ok(_) => {},
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {},
+        Err(e) => return Err(e),
     }
     let token = pairing_token();
     write_atomic(&path, token.as_bytes())?;
@@ -120,10 +122,6 @@ fn json_response(status: u16, body: String) -> Response<io::Cursor<Vec<u8>>> {
 
 fn error(status: u16, msg: &str) -> Response<io::Cursor<Vec<u8>>> {
     json_response(status, serde_json::json!({ "error": msg }).to_string())
-}
-
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 fn query_param<'a>(url: &'a str, key: &str) -> Option<&'a str> {
@@ -159,18 +157,19 @@ impl Hub {
             state: Mutex::new(state),
             changed: Condvar::new(),
             file,
-            token,
+            registry: Mutex::new(crate::devices::Registry::load(&cfg.data_dir, token)?),
             allow_lan: cfg.allow_lan,
             name: cfg.name,
             port,
             stopping: AtomicBool::new(false),
             active_requests: AtomicUsize::new(0),
+            revocations: AtomicUsize::new(0),
         });
         {
             // Persist a freshly generated hub id right away so it is stable.
             let st = shared.state.lock().unwrap_or_else(|e| e.into_inner());
             if !shared.file.exists() {
-                let _ = save_state(&shared.file, serde_json::to_string(&*st).unwrap_or_default().as_bytes());
+                save_state(&shared.file, &serde_json::to_vec(&*st)?)?;
             }
         }
         let thread = {
@@ -202,8 +201,24 @@ impl Hub {
         self.shared.port
     }
 
-    pub fn token(&self) -> &str {
-        &self.shared.token
+    pub fn token(&self) -> String {
+        self.shared.registry.lock().unwrap().code.clone()
+    }
+
+    pub fn devices(&self) -> Vec<crate::Device> {
+        self.shared.registry.lock().unwrap().devices()
+    }
+
+    pub fn revoke_device(&self, id: &str) -> io::Result<()> {
+        self.shared.registry.lock().unwrap().revoke(id)?;
+        let _state = self.shared.state.lock().unwrap();
+        self.shared.revocations.fetch_add(1, Ordering::SeqCst);
+        self.shared.changed.notify_all();
+        Ok(())
+    }
+
+    pub fn regenerate_code(&self) -> io::Result<String> {
+        self.shared.registry.lock().unwrap().rotate()
     }
 
     pub fn hub_id(&self) -> String {
@@ -231,6 +246,11 @@ impl Hub {
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
+        // Handler threads are detached; wait for them so none writes to data_dir after stop returns.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while self.shared.active_requests.load(Ordering::SeqCst) > 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 }
 
@@ -249,10 +269,11 @@ impl Drop for ActiveRequest {
 }
 
 fn handle(shared: &Shared, stream: TcpStream) {
+    let peer_address = stream.peer_addr().map(|a| a.ip().to_string()).unwrap_or_default();
     let peer_ok = stream.peer_addr().is_ok_and(|a| net::peer_allowed(a.ip(), shared.allow_lan));
     let mut stream = DeadlineStream { stream, deadline: Instant::now() + READ_TIMEOUT };
     let response = if peer_ok {
-        handle_request(shared, &mut BufReader::new(&mut stream))
+        handle_request_from(shared, &mut BufReader::new(&mut stream), &peer_address)
     } else {
         error(403, "Patch only syncs over Tailscale")
     };
@@ -260,7 +281,12 @@ fn handle(shared: &Shared, stream: TcpStream) {
     let _ = response.raw_print(&mut stream, HTTPVersion(1, 1), &[], false, None);
 }
 
+#[cfg(test)]
 fn handle_request(shared: &Shared, reader: &mut impl Read) -> Response<io::Cursor<Vec<u8>>> {
+    handle_request_from(shared, reader, "127.0.0.1")
+}
+
+fn handle_request_from(shared: &Shared, reader: &mut impl Read, address: &str) -> Response<io::Cursor<Vec<u8>>> {
     let head = match read_head(reader) {
         Ok(head) => head,
         Err(e) => return error(400, &e.to_string()),
@@ -284,14 +310,20 @@ fn handle_request(shared: &Shared, reader: &mut impl Read) -> Response<io::Curso
         return json_response(200, serde_json::json!({ "ok": true, "hub": hub, "name": shared.name }).to_string());
     }
 
+    let revocations = shared.revocations.load(Ordering::SeqCst);
     let token = headers.iter()
         .find(|h| h.field.equiv("Authorization"))
         .and_then(|h| h.value.as_str().trim().strip_prefix("Bearer "))
         .unwrap_or_default().trim();
-    if token.is_empty() || !constant_time_eq(token.as_bytes(), shared.token.as_bytes()) {
+    if !shared.registry.lock().unwrap().known_token(token) {
         return error(401, "Wrong pairing token");
     }
 
+    if (method, path) != ("POST", "/api/sync") {
+        if let Err((code, msg)) = shared.registry.lock().unwrap().authorize(token, None, None, address, false) {
+            return error(code, &msg);
+        }
+    }
     match (method, path) {
         ("POST", "/api/sync") => {
             let mut length = None;
@@ -316,10 +348,14 @@ fn handle_request(shared: &Shared, reader: &mut impl Read) -> Response<io::Curso
             match reader.take(length as u64).read_to_end(&mut body) {
                 Ok(_) if body.len() != length => error(400, "Truncated body"),
                 Ok(_) => match serde_json::from_slice::<SyncRequest>(&body) {
-                    Ok(sync) => match apply(shared, sync) {
-                        Ok(response) => json_response(200, serde_json::to_string(&response).unwrap_or_default()),
+                    Ok(sync) => {
+                        let sync: SyncRequest = sync;
+                        let auth = shared.registry.lock().unwrap().authorize(token, sync.node.as_deref(), sync.device.as_ref(), address, true);
+                        let credential = match auth { Ok(c) => c, Err((code, msg)) => return error(code, &msg) };
+                        match apply(shared, sync) {
+                        Ok(mut response) => { response.credential = credential; json_response(200, serde_json::to_string(&response).unwrap_or_default()) },
                         Err((code, message)) => error(code, &message),
-                    },
+                    }},
                     Err(e) => error(400, &format!("bad sync request: {e}")),
                 },
                 Err(e) => error(400, &e.to_string()),
@@ -327,7 +363,9 @@ fn handle_request(shared: &Shared, reader: &mut impl Read) -> Response<io::Curso
         }
         ("GET", "/api/wait") => {
             let since = query_param(url, "since").and_then(|s| s.parse().ok()).unwrap_or(0);
-            json_response(200, serde_json::to_string(&wait(shared, since)).unwrap_or_default())
+            let response = wait_for(shared, since, revocations);
+            if let Err((code, msg)) = shared.registry.lock().unwrap().authorize(token, None, None, address, false) { return error(code, &msg); }
+            json_response(200, serde_json::to_string(&response).unwrap_or_default())
         }
         ("GET", "/api/info") => {
             let st = shared.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -346,18 +384,15 @@ fn handle_request(shared: &Shared, reader: &mut impl Read) -> Response<io::Curso
 }
 
 fn apply(shared: &Shared, sync: SyncRequest) -> Result<SyncResponse, (u16, String)> {
-    let mut st = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+    let mut committed = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+    let reset = sync.since > committed.seq;
+    let mut st = committed.clone();
     let mut changed = false;
     let max_wall = now_ms().saturating_add(MAX_FUTURE_SKEW_MS);
     for field in sync.changes.iter().flat_map(|rec| rec.f.values()) {
-        let Some((wall, counter)) = field.t.parts() else {
+        let Some(wall) = crate::proto::stamp_wall(&field.t) else {
             return Err((400, "Invalid change stamp".into()));
         };
-        // Ordering uses the encoded string, so require the clock's fixed-width format.
-        let node = field.t.0.splitn(3, '-').nth(2).unwrap_or_default();
-        if counter > 9999 || node.is_empty() || patch_core::Stamp::new(wall, counter, node) != field.t {
-            return Err((400, "Invalid change stamp".into()));
-        }
         if wall > max_wall {
             return Err((409, "This device's clock is ahead of the hub; fix the date and time to sync".into()));
         }
@@ -379,25 +414,37 @@ fn apply(shared: &Shared, sync: SyncRequest) -> Result<SyncResponse, (u16, Strin
             }
         }
     }
-    // Retry persistence even when a previous failed save already merged these records.
-    save_state(&shared.file, serde_json::to_vec(&*st).map_err(|e| (500, e.to_string()))?.as_slice())
-        .map_err(|e| (500, format!("Failed to save hub state: {e}")))?;
     if changed {
-        shared.changed.notify_all();
+        save_state(&shared.file, &serde_json::to_vec(&st).map_err(|e| (500, e.to_string()))?)
+            .map_err(|e| (500, format!("Failed to save hub state: {e}")))?;
     }
-    let since = if sync.since > st.seq { 0 } else { sync.since };
-    Ok(SyncResponse {
+    let since = if reset { 0 } else { sync.since };
+    let response = SyncResponse {
+        name: Some(shared.name.clone()),        credential: None,
         hub: st.hub.clone(),
         seq: st.seq,
+        reset,
         changes: st.records.values().filter(|s| s.seq > since).map(|s| s.rec.clone()).collect(),
-    })
+    };
+    if changed {
+        // Readers and long polls may only see changes after durable persistence.
+        *committed = st;
+        shared.changed.notify_all();
+    }
+    Ok(response)
 }
 
 /// Long poll: returns as soon as the hub has something newer than `since`.
+#[cfg(test)]
 fn wait(shared: &Shared, since: u64) -> WaitResponse {
+    wait_for(shared, since, shared.revocations.load(Ordering::SeqCst))
+}
+
+fn wait_for(shared: &Shared, since: u64, revocations: usize) -> WaitResponse {
     let deadline = Instant::now() + MAX_WAIT;
     let mut st = shared.state.lock().unwrap_or_else(|e| e.into_inner());
-    while st.seq <= since && !shared.stopping.load(Ordering::SeqCst) {
+    while st.seq == since && !shared.stopping.load(Ordering::SeqCst) {
+        if shared.revocations.load(Ordering::SeqCst) != revocations { break; }
         let now = Instant::now();
         if now >= deadline {
             break;
@@ -421,7 +468,7 @@ mod tests {
         let hub = Hub::start(cfg).unwrap();
         let mut good = Record::new("task", "task");
         good.put("notes", json!("original"), &Stamp::seed());
-        apply(&hub.shared, SyncRequest { since: 0, changes: vec![good.clone()], node: None }).unwrap();
+        apply(&hub.shared, SyncRequest { device: None, since: 0, changes: vec![good.clone()], node: None }).unwrap();
         let seq = hub.shared.state.lock().unwrap().seq;
         for stamp in [
             "z".to_string(), "1-0000-node".into(), "000000000000001-0000".into(),
@@ -433,7 +480,7 @@ mod tests {
             for id in ["new", "task"] {
                 let mut bad = Record::new(id, "task");
                 bad.put("notes", json!("poison"), &Stamp(stamp.clone()));
-                let result = apply(&hub.shared, SyncRequest { since: 0, changes: vec![bad], node: None });
+                let result = apply(&hub.shared, SyncRequest { device: None, since: 0, changes: vec![bad], node: None });
                 assert_eq!(result.unwrap_err().0, 400, "accepted {stamp}");
             }
         }
@@ -564,12 +611,79 @@ mod tests {
         let mut rec = Record::new("task", "task");
         rec.put("title", json!("saved later"), &Stamp::seed());
         for _ in 0..2 {
-            let result = apply(&hub.shared, SyncRequest { since: 0, changes: vec![rec.clone()], node: None });
+            let result = apply(&hub.shared, SyncRequest { device: None, since: 0, changes: vec![rec.clone()], node: None });
             assert_eq!(result.unwrap_err().0, 500);
+            let state = hub.shared.state.lock().unwrap();
+            assert_eq!(state.seq, 0, "failed save published a cursor");
+            assert!(state.records.is_empty(), "failed save published records");
         }
+        let pulled = apply(&hub.shared, SyncRequest { device: None, since: 0, changes: vec![], node: None }).unwrap();
+        assert_eq!(pulled.seq, 0);
+        assert!(pulled.changes.is_empty());
+        let shared = hub.shared.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn(move || { tx.send(wait(&shared, 0)).unwrap(); });
         std::fs::remove_dir(&hub.shared.file).unwrap();
-        assert!(apply(&hub.shared, SyncRequest { since: 0, changes: vec![rec], node: None }).is_ok());
+        assert!(apply(&hub.shared, SyncRequest { device: None, since: 0, changes: vec![rec], node: None }).is_ok());
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap().seq, 1);
+        waiter.join().unwrap();
         hub.stop();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn startup_requires_persisting_a_stable_hub_identity() {
+        let dir = std::env::temp_dir().join(format!("patch-hub-startup-{}", random_string(10)));
+        std::fs::create_dir_all(dir.join("hub.tmp")).unwrap();
+        let mut cfg = HubConfig::new(&dir);
+        cfg.bind = "127.0.0.1:0".into();
+        assert!(Hub::start(cfg).is_err());
+        assert!(!dir.join("hub.json").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn unreadable_token_is_never_replaced() {
+        let dir = std::env::temp_dir().join(format!("patch-hub-unreadable-token-{}", random_string(10)));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("token"), [0xff]).unwrap();
+        assert!(load_token(&HubConfig::new(&dir)).is_err());
+        assert_eq!(std::fs::read(dir.join("token")).unwrap(), [0xff]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn rollback_is_detected_before_upload_advances_the_sequence() {
+        let dir = std::env::temp_dir().join(format!("patch-hub-upload-rollback-{}", random_string(10)));
+        let mut cfg = HubConfig::new(&dir);
+        cfg.bind = "127.0.0.1:0".into();
+        let hub = Hub::start(cfg).unwrap();
+        let changes = ["a", "b"].into_iter().map(|id| {
+            let mut rec = Record::new(id, "task");
+            rec.put("title", json!(id), &Stamp::seed());
+            rec
+        }).collect();
+        let response = apply(&hub.shared, SyncRequest { device: None, since: 1, changes, node: None }).unwrap();
+        assert_eq!(response.seq, 2);
+        assert!(response.reset);
+        assert_eq!(response.changes.len(), 2, "the full state must be returned after rollback");
+        hub.stop();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn long_poll_reports_a_restored_cursor_immediately() {
+        let dir = std::env::temp_dir().join(format!("patch-hub-rollback-{}", random_string(10)));
+        let mut cfg = HubConfig::new(&dir);
+        cfg.bind = "127.0.0.1:0".into();
+        let hub = Hub::start(cfg).unwrap();
+        let shared = hub.shared.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn(move || { let _ = tx.send(wait(&shared, 99)); });
+        let result = rx.recv_timeout(Duration::from_secs(1));
+        hub.stop();
+        waiter.join().unwrap();
+        assert_eq!(result.unwrap().seq, 0);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -582,7 +696,7 @@ mod tests {
         let mut rec = Record::new("task", "task");
         let future = Stamp::new(now_ms() + MAX_FUTURE_SKEW_MS + 60_000, 0, "remote");
         rec.put("title", json!("future"), &future);
-        let send = |rec| apply(&hub.shared, SyncRequest { since: 0, changes: vec![rec], node: None });
+        let send = |rec| apply(&hub.shared, SyncRequest { device: None, since: 0, changes: vec![rec], node: None });
         assert_eq!(send(rec.clone()).unwrap_err().0, 409);
         rec.put("notes", json!("seed"), &Stamp::seed());
         assert_eq!(send(rec.clone()).unwrap_err().0, 409);

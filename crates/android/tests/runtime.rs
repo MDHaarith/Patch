@@ -97,6 +97,7 @@ struct MemSurface {
     height: u32,
     pixels: Arc<Mutex<Vec<u8>>>,
     presents: Arc<Mutex<u32>>,
+    fail_next_present: Arc<Mutex<bool>>,
 }
 
 impl MemSurface {
@@ -106,6 +107,7 @@ impl MemSurface {
             height,
             pixels: Arc::new(Mutex::new(vec![0; (width * height * 4) as usize])),
             presents: Arc::default(),
+            fail_next_present: Arc::default(),
         }
     }
 
@@ -147,6 +149,9 @@ impl MemSurface {
 
 impl Surface for MemSurface {
     fn present(&mut self, frame: &BackBuffer, rect: Rect) -> Result<(), String> {
+        if std::mem::take(&mut *self.fail_next_present.lock().unwrap()) {
+            return Err("surface is resizing".into());
+        }
         let mut p = self.pixels.lock().unwrap();
         // SAFETY: the buffer is width*height RGBA pixels with stride = width.
         unsafe { frame.copy_to(rect, p.as_mut_ptr(), self.width, self.height, self.width) };
@@ -686,6 +691,18 @@ fn renders_and_drives_both_windows() {
         "the shrunk surface waits for the frame synced with the window move"
     );
     h.send(Msg::RedrawNeeded(Kind::Overlay));
+    let acknowledged = h.rec.frames.borrow().len();
+    *bubble.fail_next_present.lock().unwrap() = true;
+    h.rt.step(&h.rx, Some(Duration::ZERO));
+    assert_eq!(bubble.presents(), 0);
+    assert_eq!(
+        h.rec.frames.borrow().len(), acknowledged,
+        "a failed resize frame must keep the window's draw gate closed"
+    );
+    assert!(h.rt.next_timeout().unwrap() <= Duration::from_millis(16), "retry the pending frame promptly");
+    h.rt.frame();
+    assert_eq!(bubble.presents(), 1);
+    assert_eq!(h.rec.frames.borrow().len(), acknowledged + 1);
     h.settle();
     assert!(bubble.presents() >= 1);
     assert_eq!(bubble.pixel(0, 0)[3], 0, "transparent around the bubble");

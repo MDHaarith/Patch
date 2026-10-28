@@ -2,18 +2,18 @@ import { Theme } from "theme.slint";
 import { Icon, IconBox } from "icons.slint";
 import { Store, Actions } from "store.slint";
 
-// A glass surface: translucent fill, hairline edge, specular sheen and a
-// soft shadow. Matte mode uses an opaque near-black fill instead.
-export component Glass inherits Rectangle {
+// Shared panel surface.
+export component Surface inherits Rectangle {
     in property <length> radius: Theme.r-l;
     in property <color> fill: Theme.panel;
     in property <bool> elevated: false;
     in property <bool> sheen: true;
     border-radius: radius;
     background: fill;
+    animate background { duration: Theme.motion-panel; easing: ease-out; }
     border-width: 1px;
     // Gradient borders need the GPU renderer, like the sheen below.
-    border-color: Store.mobile ? Theme.hairline : Theme.rim;
+    border-color: Theme.hairline;
     drop-shadow-blur: elevated ? 28px : 0px;
     drop-shadow-offset-y: elevated ? 10px : 0px;
     drop-shadow-color: elevated ? Theme.shadow : transparent;
@@ -58,7 +58,7 @@ export component IconButton inherits Rectangle {
     height: size;
     border-radius: round ? size / 2 : Theme.r-s + 1px;
     background: active ? Theme.accent-soft : ta.pressed ? Theme.press : ta.has-hover ? Theme.hover : transparent;
-    animate background { duration: 120ms; }
+    animate background { duration: Theme.motion-fast; easing: ease-out; }
     Icon {
         name: root.icon;
         size: root.icon-size;
@@ -77,10 +77,10 @@ export component Button inherits Rectangle {
     in property <bool> enabled: true;
     in property <length> pad: 14px;
     callback clicked();
-    height: Store.mobile ? 40px : 30px;
+    height: 40px;
     min-width: lay.preferred-width;
     horizontal-stretch: 0;
-    border-radius: Store.mobile ? 12px : 8px;
+    border-radius: 12px;
     opacity: enabled ? 1 : 0.45;
     background: kind == 1
         ? (ta.pressed ? Theme.accent.darker(0.15) : Theme.accent)
@@ -89,7 +89,7 @@ export component Button inherits Rectangle {
             : kind == 3
                 ? (ta.pressed ? Theme.press : ta.has-hover ? Theme.hover : transparent)
                 : (ta.pressed ? Theme.press : Theme.chip);
-    animate background { duration: 120ms; }
+    animate background { duration: Theme.motion-fast; easing: ease-out; }
     lay := HorizontalLayout {
         padding-left: root.pad;
         padding-right: root.pad;
@@ -103,7 +103,7 @@ export component Button inherits Rectangle {
         Text {
             text: root.text;
             vertical-alignment: center;
-            font-size: Store.mobile ? Theme.fs-l : Theme.fs-m;
+            font-size: Theme.fs-l;
             font-weight: 500;
             color: root.kind == 1 ? Theme.on-accent : root.kind == 2 ? Theme.danger : Theme.text;
         }
@@ -119,11 +119,11 @@ export component Segmented inherits Rectangle {
     in property <[string]> items;
     in property <[string]> icons;
     in-out property <int> current;
-    in property <length> seg-height: Store.mobile ? 34px : 28px;
+    in property <length> seg-height: 34px;
     in property <bool> stretch: false;
     callback picked(int);
     height: seg-height;
-    border-radius: Store.mobile ? 10px : 8px;
+    border-radius: 10px;
     background: Theme.well;
     border-width: Theme.light ? 0px : 1px;
     border-color: Theme.hairline;
@@ -132,13 +132,13 @@ export component Segmented inherits Rectangle {
         spacing: 2px;
         for item[i] in root.items: Rectangle {
             horizontal-stretch: root.stretch ? 1 : 0;
-            min-width: inner.preferred-width + (Store.mobile ? 20px : 22px);
-            border-radius: Store.mobile ? 8px : 6px;
+            min-width: inner.preferred-width + (20px);
+            border-radius: 8px;
             background: i == root.current ? (Theme.light ? #ffffff : Theme.range) : sta.has-hover ? Theme.hover : transparent;
             drop-shadow-blur: i == root.current ? 3px : 0px;
             drop-shadow-offset-y: i == root.current ? 1px : 0px;
             drop-shadow-color: i == root.current ? #0000002e : transparent;
-            animate background { duration: 140ms; }
+            animate background { duration: Theme.motion-fast; easing: ease-out; }
             inner := HorizontalLayout {
                 alignment: center;
                 spacing: 5px;
@@ -150,7 +150,7 @@ export component Segmented inherits Rectangle {
                 Text {
                     text: item;
                     vertical-alignment: center;
-                    font-size: Store.mobile ? Theme.fs-m : Theme.fs-s;
+                    font-size: Theme.fs-m;
                     font-weight: i == root.current ? 600 : 500;
                     color: i == root.current ? Theme.text : Theme.text-2;
                 }
@@ -174,7 +174,7 @@ export component Scroll inherits Flickable {
 export component Field inherits Rectangle {
     in-out property <string> text <=> input.text;
     in property <string> placeholder;
-    in property <length> font-size: Store.mobile ? Theme.fs-l : Theme.fs-m;
+    in property <length> font-size: Theme.fs-l;
     in property <int> font-weight: 400;
     in property <bool> multiline: false;
     in property <bool> boxed: true;
@@ -185,14 +185,14 @@ export component Field inherits Rectangle {
     callback edited(string);
     callback escaped();
     min-width: 0px;
-    min-height: multiline ? 72px : (Store.mobile ? 40px : 30px);
+    min-height: multiline ? 72px : (40px);
     preferred-height: Math.max(self.min-height, multiline ? input.preferred-height + 16px : Math.min(160px, input.preferred-height + 16px));
     vertical-stretch: 0;
-    border-radius: Store.mobile ? 12px : 8px;
+    border-radius: 12px;
     background: boxed ? Theme.well : transparent;
     border-width: boxed ? 1px : 0px;
     border-color: input.has-focus ? Theme.accent.with-alpha(0.7) : (boxed ? Theme.hairline : transparent);
-    animate border-color { duration: 120ms; }
+    animate border-color { duration: Theme.motion-fast; easing: ease-out; }
 
     // Last focus state sent to Actions.text-focus, so each change counts once.
     property <bool> reported;
@@ -327,7 +327,7 @@ export component Toggle inherits Rectangle {
     height: 22px;
     border-radius: 11px;
     background: checked ? Theme.success : Theme.chip;
-    animate background { duration: 160ms; }
+    animate background { duration: Theme.motion-fast; easing: ease-out; }
     knob := Rectangle {
         x: root.checked ? root.width - self.width - 2px : 2px;
         y: 2px;
@@ -338,7 +338,7 @@ export component Toggle inherits Rectangle {
         drop-shadow-blur: 3px;
         drop-shadow-offset-y: 1px;
         drop-shadow-color: #00000040;
-        animate x { duration: 160ms; easing: ease-out; }
+        animate x { duration: Theme.motion-fast; easing: ease-out; }
     }
     TouchArea {
         clicked => {
@@ -352,15 +352,16 @@ export component Toggle inherits Rectangle {
 export component Check inherits Rectangle {
     in property <bool> checked;
     in property <color> tint: Theme.accent;
-    in property <length> size: Store.mobile ? 22px : 18px;
+    in property <length> size: 22px;
     callback toggled();
     width: size;
     height: size;
     border-radius: size / 2;
     border-width: checked ? 0px : 1.5px;
     border-color: ta.has-hover ? tint : tint.with-alpha(0.75);
+    animate border-color { duration: Theme.motion-fast; easing: ease-out; }
     background: checked ? tint : (ta.pressed ? tint.with-alpha(0.2) : transparent);
-    animate background { duration: 140ms; }
+    animate background { duration: Theme.motion-fast; easing: ease-out; }
     if root.checked: Icon {
         name: "check";
         size: root.size * 0.62;
@@ -378,14 +379,14 @@ export component Chip inherits Rectangle {
     in property <color> dot: transparent;
     in property <string> icon;
     callback clicked();
-    height: Store.mobile ? 32px : 26px;
+    height: 32px;
     min-width: lay.preferred-width;
     horizontal-stretch: 0;
     border-radius: self.height / 2;
     background: selected ? Theme.accent-soft : ta.has-hover ? Theme.hover : Theme.well;
     border-width: 1px;
     border-color: selected ? Theme.accent.with-alpha(0.65) : Theme.hairline;
-    animate background { duration: 120ms; }
+    animate background { duration: Theme.motion-fast; easing: ease-out; }
     lay := HorizontalLayout {
         padding-left: 10px;
         padding-right: 11px;
@@ -408,7 +409,7 @@ export component Chip inherits Rectangle {
         Text {
             text: root.text;
             vertical-alignment: center;
-            font-size: Store.mobile ? Theme.fs-m : Theme.fs-s;
+            font-size: Theme.fs-m;
             font-weight: 500;
             color: root.selected ? Theme.accent : Theme.text;
         }

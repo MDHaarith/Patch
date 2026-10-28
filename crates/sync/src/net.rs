@@ -52,12 +52,15 @@ pub fn peer_allowed(ip: IpAddr, allow_lan: bool) -> bool {
 /// address it would use to reach Tailscale's MagicDNS resolver. No packet
 /// is sent.
 pub fn tailscale_ipv4() -> Option<Ipv4Addr> {
-    let sock = UdpSocket::bind("0.0.0.0:0").ok()?;
-    sock.connect("100.100.100.100:53").ok()?;
-    match sock.local_addr().ok()?.ip() {
-        IpAddr::V4(v4) if is_tailscale_v4(v4) => Some(v4),
-        _ => None,
-    }
+    let routed = (|| {
+        let sock = UdpSocket::bind("0.0.0.0:0").ok()?;
+        sock.connect("100.100.100.100:53").ok()?;
+        match sock.local_addr().ok()?.ip() {
+            IpAddr::V4(v4) if is_tailscale_v4(v4) => Some(v4),
+            _ => None,
+        }
+    })();
+    routed.or_else(|| tailscale_ipv4_from_status(&tailscale_status()?))
 }
 
 /// This machine's address on the local network (same Wi-Fi), from the
@@ -74,13 +77,22 @@ pub fn lan_ipv4() -> Option<Ipv4Addr> {
 /// MagicDNS name of this machine (e.g. `laptop.tail1234.ts.net`) when the
 /// `tailscale` CLI is available.
 pub fn tailscale_dns_name() -> Option<String> {
+    let v = tailscale_status()?;
+    let name = v.get("Self")?.get("DNSName")?.as_str()?.trim_end_matches('.');
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+fn tailscale_status() -> Option<serde_json::Value> {
     let out = Command::new("tailscale").args(["status", "--json"]).output().ok()?;
     if !out.status.success() {
         return None;
     }
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
-    let name = v.get("Self")?.get("DNSName")?.as_str()?.trim_end_matches('.');
-    (!name.is_empty()).then(|| name.to_string())
+    serde_json::from_slice(&out.stdout).ok()
+}
+
+fn tailscale_ipv4_from_status(status: &serde_json::Value) -> Option<Ipv4Addr> {
+    status.get("Self")?.get("TailscaleIPs")?.as_array()?.iter()
+        .filter_map(|ip| ip.as_str()?.parse().ok()).find(|ip| is_tailscale_v4(*ip))
 }
 
 /// Addresses other devices can use to reach a hub on `port`: Tailscale
@@ -106,6 +118,16 @@ pub fn hub_urls(port: u16, lan: bool) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_fallback_uses_this_devices_tailnet_ipv4() {
+        let status = serde_json::json!({
+            "Self": {"TailscaleIPs": ["fd7a:115c:a1e0::1", "192.168.1.1", "100.64.1.2"]},
+            "Peer": {"other": {"TailscaleIPs": ["100.64.9.9"]}}
+        });
+        assert_eq!(tailscale_ipv4_from_status(&status), Some("100.64.1.2".parse().unwrap()));
+        assert_eq!(tailscale_ipv4_from_status(&serde_json::json!({"Self": {"TailscaleIPs": ["8.8.8.8"]}})), None);
+    }
 
     #[test]
     fn allow_list() {

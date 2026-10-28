@@ -10,6 +10,8 @@
 //! token, so other apps on a shared tailnet can't read your board.
 
 pub mod client;
+pub mod devices;
+pub use devices::{Device, DeviceIdentity};
 pub mod http;
 pub mod hub;
 pub mod net;

@@ -9,7 +9,7 @@ export component Pet inherits Rectangle {
     in property <bool> show-count: true;
     property <length> hop: 0px;
     // The image's y is rounded to physical pixels, so animating hop stays crisp.
-    animate hop { duration: 180ms; easing: ease-out; }
+    animate hop { duration: Theme.motion-panel; easing: ease-out; }
     accessible-role: image;
     accessible-label: "Patch: " + Store.pet-line;
     width: size;

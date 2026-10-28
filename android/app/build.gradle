@@ -79,8 +79,11 @@ android {
 }
 
 dependencies {
-    // Pairing QR scanner (Play services UI, no camera permission needed).
-    implementation "com.google.android.gms:play-services-code-scanner:16.1.0"
+    implementation "androidx.camera:camera-camera2:1.4.2"
+    implementation "androidx.camera:camera-lifecycle:1.4.2"
+    implementation "androidx.camera:camera-view:1.4.2"
+    // Bundle the barcode model so scanning works without a Play services download.
+    implementation "com.google.mlkit:barcode-scanning:17.3.0"
 }
 
 // The Rust library is built by cargo-ndk before packaging. It is an optimised

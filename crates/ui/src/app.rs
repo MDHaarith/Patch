@@ -224,11 +224,11 @@ fn qr_image(text: &str) -> slint::Image {
     let w = code.width();
     let n = w + 2 * QUIET;
     let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(n as u32, n as u32);
-    let white = slint::Rgba8Pixel { r: 255, g: 255, b: 255, a: 255 };
+    let white = slint::Rgba8Pixel { r: 20, g: 21, b: 24, a: 255 };
     buf.make_mut_slice().fill(white);
     for (i, c) in code.to_colors().iter().enumerate() {
         if *c == qrcode::Color::Dark {
-            buf.make_mut_slice()[(i / w + QUIET) * n + i % w + QUIET] = slint::Rgba8Pixel { r: 0, g: 0, b: 0, a: 255 };
+            buf.make_mut_slice()[(i / w + QUIET) * n + i % w + QUIET] = slint::Rgba8Pixel { r: 255, g: 255, b: 255, a: 255 };
         }
     }
     slint::Image::from_rgba8(buf)
@@ -238,6 +238,7 @@ fn qr_image(text: &str) -> slint::Image {
 fn show_hosted(s: &Store, h: &HostedHub) {
     s.set_host_urls(h.urls.join("\n").into());
     s.set_host_token(h.token.clone().into());
+    s.set_host_address(hosted_pair_url(&h.urls).unwrap_or_default().into());
     s.set_host_qr(hosted_pair_url(&h.urls).map(|u| qr_image(&SyncConfig::pair_link(u, &h.token))).unwrap_or_default());
 }
 
@@ -248,6 +249,7 @@ fn hosted_pair_url(urls: &[String]) -> Option<&str> {
 }
 
 fn client_pairing(url: &str, token: &str) -> Option<SyncConfig> {
+    if token.starts_with("device-") { return None; }
     SyncConfig::new(url, token).ok().filter(|c| {
         !c.base.host.eq_ignore_ascii_case("localhost")
             && !c.base.host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
@@ -352,6 +354,7 @@ impl App {
         });
         CURRENT.with(|c| *c.borrow_mut() = Rc::downgrade(&app));
         app.saved_rev.set(app.doc.lock().unwrap().rev());
+        app.sync.set_identity(app.host.device_name(), std::env::consts::OS.into());
         app.configure_sync();
         {
             let p = app.prefs.borrow();
@@ -373,7 +376,7 @@ impl App {
         if prefs.hosting && self.host.can_host_hub() {
             match self.host.set_hosting(true) {
                 Ok(Some(hub)) => {
-                    self.sync.set_config(SyncConfig::new(&hub.local_url, &hub.token).ok());
+                    self.sync.set_config(SyncConfig::new(&hub.local_url, if prefs.host_credential.is_empty() { &hub.token } else { &prefs.host_credential }).ok());
                     *self.hosted.borrow_mut() = Some(hub);
                     return;
                 }
@@ -381,7 +384,7 @@ impl App {
                 Err(e) => self.toast(&format!("Couldn't start the hub: {e}")),
             }
         }
-        let cfg = if prefs.hub_url.is_empty() { None } else { SyncConfig::new(&prefs.hub_url, &prefs.hub_token).ok() };
+        let cfg = if prefs.hub_url.is_empty() || !prefs.sync_enabled { None } else { SyncConfig::new(&prefs.hub_url, &prefs.hub_token).ok() };
         self.sync.set_config(cfg);
     }
 
@@ -501,8 +504,7 @@ impl App {
 
     fn apply_prefs_to(&self, s: &Store, theme: &Theme) {
         let p = self.prefs.borrow();
-        themes::apply(theme, p.look, p.glass_opacity);
-        s.set_glass_opacity(p.glass_opacity);
+        themes::apply(theme, p.look);
         s.set_theme(p.look);
         s.set_pet_skin(p.pet_skin);
         s.set_pet_image(crate::pet::image(
@@ -607,7 +609,10 @@ impl App {
         if let Some(w) = self.main.borrow().as_ref().and_then(|w| w.upgrade()) {
             let s = w.global::<Store>();
             if s.get_settings_open() {
-                s.set_settings_open(false);
+                self.host.stop_scan();
+                s.set_scan_active(false);
+                if s.get_environment_page() > 0 { s.set_environment_page(s.get_environment_page() - 1); }
+                else { s.set_settings_open(false); }
                 consumed = true;
             } else if s.get_search_open() {
                 s.set_search_open(false);
@@ -842,20 +847,12 @@ impl App {
             app.refresh();
         });
         on!(on_set_look, |app, look| {
-            let look = if (0..4).contains(&look) { look } else { 0 };
+            let look = if (0..2).contains(&look) { look } else { 0 };
             app.prefs.borrow_mut().look = look;
             app.save_prefs();
-            app.each_theme(|t| themes::apply(t, look, app.prefs.borrow().glass_opacity));
+            app.each_theme(|t| themes::apply(t, look));
             app.each_store(|s| s.set_theme(look));
             app.refresh();
-        });
-        on!(on_set_glass_opacity, |app, value| {
-            let value = crate::prefs::glass_opacity(value);
-            app.prefs.borrow_mut().glass_opacity = value;
-            app.save_prefs();
-            let look = app.prefs.borrow().look;
-            app.each_theme(|t| themes::apply(t, look, value));
-            app.each_store(|s| s.set_glass_opacity(value));
         });
         on!(on_set_pet_skin, |app, i| {
             app.prefs.borrow_mut().pet_skin = i;
@@ -877,6 +874,35 @@ impl App {
         });
         on!(on_connect_hub, |app, url, token| app.connect_hub(&url, &token));
         on!(on_scan_pair, |app| app.host.scan_qr());
+        on!(on_scan_preview, |app, x, y, w, h| app.host.scan_preview([x, y, w, h]));
+        on!(on_stop_scan, |app| app.host.stop_scan());
+        on!(on_refresh_devices, |app| app.refresh_devices());
+        on!(on_revoke_device, |app, id| {
+            match app.host.revoke_device(&id) { Ok(()) => app.refresh_devices(), Err(e) => app.toast(&e) }
+        });
+        on!(on_regenerate_code, |app| {
+            match app.host.regenerate_code() {
+                Ok(Some(hub)) => {
+                    *app.hosted.borrow_mut() = Some(hub.clone());
+                    app.each_store(|s| show_hosted(s, &hub));
+                }
+                Ok(None) => {},
+                Err(e) => app.toast(&e),
+            }
+        });
+        on!(on_enable_environment, |app, url, on| {
+            let saved = app.prefs.borrow().environments.iter().find(|e| e.url == url.as_str()).cloned();
+            if let Some(env) = saved {
+                let mut p = app.prefs.borrow_mut();
+                p.hub_url = env.url;
+                p.hub_token = env.credential;
+                p.sync_enabled = on;
+                drop(p);
+                app.save_prefs();
+                app.configure_sync();
+                app.each_store(|s| app.apply_status_to(s));
+            }
+        });
         on!(on_check_update, |app| app.host.check_update());
         on!(on_refresh_background, |app| {
             let battery = match app.host.battery_unrestricted() {
@@ -893,6 +919,8 @@ impl App {
         on!(on_disconnect_hub, |app| {
             {
                 let mut p = app.prefs.borrow_mut();
+                let url = p.hub_url.clone();
+                p.environments.retain(|e| e.url != url);
                 p.hub_url.clear();
                 p.hub_token.clear();
             }
@@ -1191,7 +1219,11 @@ impl App {
     }
 
     /// A scanned pairing QR code (see [`SyncConfig::pair_link`]).
+    pub fn scan_stopped(&self) { self.each_store(|s| s.set_scan_active(false)); }
+
     pub fn pair_from_link(&self, link: &str) {
+        self.host.stop_scan();
+        self.each_store(|s| s.set_scan_active(false));
         match SyncConfig::from_pair_link(link) {
             Ok(cfg) => self.connect_hub(&cfg.base.url(), &cfg.token),
             Err(e) => self.toast(&e),
@@ -1200,7 +1232,8 @@ impl App {
 
     fn connect_hub(&self, url: &str, token: &str) {
         match SyncConfig::new(url, token) {
-            Ok(cfg) => {
+            Ok(mut cfg) => {
+                cfg.pairing = true;
                 if self.hosted.borrow().is_some() {
                     let _ = self.host.set_hosting(false);
                     *self.hosted.borrow_mut() = None;
@@ -1210,6 +1243,7 @@ impl App {
                     let mut p = self.prefs.borrow_mut();
                     p.hub_url = cfg.base.url();
                     p.hub_token = cfg.token.clone();
+                    p.sync_enabled = true;
                 }
                 self.save_prefs();
                 self.sync.set_config(Some(cfg.clone()));
@@ -1217,8 +1251,10 @@ impl App {
                     s.set_hub_url(cfg.base.url().into());
                     s.set_hub_token(cfg.token.clone().into());
                     s.set_hosting(false);
+                    s.set_pairing(true);
                 });
-                self.toast("Connecting over Tailscale…");
+                self.host.stop_scan();
+                self.toast("Connecting…");
             }
             Err(e) => self.toast(&e),
         }
@@ -1232,7 +1268,8 @@ impl App {
                 self.save_prefs();
                 match hub {
                     Some(h) => {
-                        self.sync.set_config(SyncConfig::new(&h.local_url, &h.token).ok());
+                        let credential = self.prefs.borrow().host_credential.clone();
+                        self.sync.set_config(SyncConfig::new(&h.local_url, if credential.is_empty() { &h.token } else { &credential }).ok());
                         self.each_store(|s| {
                             s.set_hosting(true);
                             show_hosted(s, &h);
@@ -1251,8 +1288,40 @@ impl App {
         }
     }
 
+    fn refresh_devices(&self) {
+        let node = self.doc.lock().unwrap().node().to_string();
+        let now = patch_core::hlc::now_ms();
+        let rows: Vec<crate::DeviceRow> = self.host.devices().into_iter().map(|d| {
+            let this_device = d.id == node;
+            let age = now.saturating_sub(d.last_seen) / 1000;
+            let connected = !d.revoked && age < 60;
+            let status = if d.revoked { "Access revoked".into() } else if connected { "Connected".into() }
+                else if age < 3600 { format!("Last seen {} min ago", age / 60) }
+                else if age < 86400 { format!("Last seen {} hours ago", age / 3600) }
+                else { format!("Last seen {} days ago", age / 86400) };
+            crate::DeviceRow { id: d.id.into(), name: if this_device { "This device".into() } else { d.name.into() }, platform: d.platform.into(), status: status.into(), connected, this_device, revoked: d.revoked }
+        }).collect();
+        self.each_store(|s| s.set_devices(Rc::new(VecModel::from(rows.clone())).into()));
+    }
+
     fn on_sync(&self, ev: SyncEvent) {
         match ev {
+            SyncEvent::Registered(cfg, name) => {
+                if self.sync.config().as_ref() != Some(&cfg) { return; }
+                let mut p = self.prefs.borrow_mut();
+                if self.hosted.borrow().as_ref().is_some_and(|h| h.local_url == cfg.base.url()) {
+                    p.host_credential = cfg.token;
+                } else if p.hub_url == cfg.base.url() {
+                    p.hub_token = cfg.token.clone();
+                    let env = crate::prefs::Environment { url: cfg.base.url(), credential: cfg.token.clone(), name };
+                    if let Some(saved) = p.environments.iter_mut().find(|e| e.url == env.url) { *saved = env; }
+                    else { p.environments.push(env); }
+                    self.each_store(|s| { s.set_hub_token(cfg.token.clone().into()); s.set_pairing(false); s.set_environment_page(1); s.set_scan_active(false); });
+                }
+                drop(p);
+                self.save_prefs();
+                self.refresh_devices();
+            }
             SyncEvent::Status(s) => {
                 if matches!(s, SyncStatus::Offline(_) | SyncStatus::ClockAhead | SyncStatus::Unauthorized) {
                     if self.offline_since.get().is_none() {
@@ -1288,7 +1357,7 @@ impl App {
             }
             SyncStatus::ClockAhead => (3, status.label()),
             SyncStatus::Offline(e) => (3, format!("Offline — {e}")),
-            SyncStatus::Unauthorized => (4, "The hub rejected the pairing token".to_string()),
+            SyncStatus::Unauthorized => (4, "Access revoked, pair again".to_string()),
         };
         let p = self.prefs.borrow();
         let pair = if self.host.can_host_hub() && self.hosted.borrow().is_none() {
@@ -1298,6 +1367,13 @@ impl App {
         };
         s.set_client_pairing(pair.is_some());
         s.set_client_qr(pair.map(|c| qr_image(&SyncConfig::pair_link(&c.base.url(), &c.token))).unwrap_or_default());
+        let environments = p.environments.iter().map(|env| {
+            let enabled = p.sync_enabled && env.url == p.hub_url;
+            crate::EnvironmentRow { url: env.url.clone().into(), name: env.name.clone().into(), enabled,
+                connected: enabled && state == 2, status: if enabled { if state == 2 { "Connected".into() } else { label.clone().into() } } else { "Sync off".into() } }
+        }).collect::<Vec<_>>();
+        s.set_environments(Rc::new(VecModel::from(environments)).into());
+        if state == 3 || state == 4 { s.set_pairing(false); }
         s.set_sync_state(state);
         s.set_sync_label(label.into());
     }
@@ -1882,7 +1958,16 @@ impl App {
         update(&self.models.blocks, grid.blocks);
         update(&self.models.bars, grid.bars);
 
-        let board = models::board(&ctx, &columns);
+        let mut board = models::board(&ctx, &columns);
+        for (i, col) in board.iter_mut().enumerate() {
+            if let Some(old) = self.models.board.row_data(i) {
+                if old.id == col.id && old.cards.row_count() == col.cards.row_count()
+                    && old.cards.iter().eq(col.cards.iter())
+                {
+                    col.cards = old.cards;
+                }
+            }
+        }
         let tallest = board.iter().map(|c| c.count).max().unwrap_or(0);
         let open_cards: i32 = board.iter().filter(|c| !c.done).map(|c| c.count).sum();
         update(&self.models.board, board);
@@ -2065,7 +2150,9 @@ mod pairing_tests {
         app.refresh();
         let key = app.upcoming_reminders()[0].key.clone();
         let schedules = host.alarms.borrow().len();
+        let cards = app.models.board.row_data(0).unwrap().cards;
         app.refresh();
+        assert_eq!(cards, app.models.board.row_data(0).unwrap().cards);
         assert_eq!(host.alarms.borrow().len(), schedules);
         app.fire_reminders();
         assert_eq!(host.notifications.get(), 0);

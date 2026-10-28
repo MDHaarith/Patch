@@ -5,15 +5,12 @@ export global Theme {
     in-out property <bool> compact: false;
     // Flavour flags some components use for subtle structural choices.
     in-out property <bool> light: false;
-    in-out property <bool> glass: false;
-    out property <bool> matte: !light && !glass;
+    out property <bool> matte: !light;
 
-    // Backdrop and the soft light blooms behind glass themes.
+    // Backdrop colours.
     in-out property <color> backdrop-top: #0b0b0c;
     in-out property <color> backdrop-bottom: #060607;
     out property <brush> backdrop: @linear-gradient(165deg, backdrop-top 0%, backdrop-bottom 100%);
-    in-out property <color> bloom-a: transparent;
-    in-out property <color> bloom-b: transparent;
     // Opaque base colour for full-screen sheets on phones.
     in-out property <color> solid: #0b0b0c;
 
@@ -33,9 +30,6 @@ export global Theme {
     in-out property <color> well: #ffffff0a;
     in-out property <color> hairline: #ffffff12;
     in-out property <color> edge: #ffffff1f;
-    // Liquid Glass specular rim: bright where light enters (top) and exits (bottom).
-    in-out property <color> glint: transparent;
-    out property <brush> rim: glass ? @linear-gradient(170deg, glint 0%, hairline 30%, hairline.transparentize(0.6) 65%, glint.transparentize(0.55) 100%) : hairline;
     in-out property <color> sheen-color: #ffffff12;
     in-out property <float> sheen-reach: 0.45;
     out property <brush> sheen: @linear-gradient(180deg, sheen-color 0%, sheen-color.with-alpha(0) sheen-reach * 100%);
@@ -61,6 +55,9 @@ export global Theme {
     in-out property <color> weekend: #ffffff04;
     in-out property <color> toast: #f5f5f7e6;
     in-out property <color> toast-text: #111113;
+
+    out property <duration> motion-fast: 120ms;
+    out property <duration> motion-panel: 200ms;
 
     out property <length> r-s: 6px;
     out property <length> r-m: 10px;

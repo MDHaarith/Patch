@@ -105,17 +105,17 @@ fn independent_pet_and_desk_share_updates_and_open_tasks() {
         click(&dw, x, 230.0);
         assert_eq!(host.0.borrow_mut().pop(), Some(Some(id.to_string())));
     }
-    actions.invoke_set_look(3);
-    assert_eq!(desk.global::<Store>().get_theme(), 3);
+    actions.invoke_set_look(1);
+    assert_eq!(desk.global::<Store>().get_theme(), 1);
     assert_eq!(desk.global::<Theme>().get_accent(), pet.global::<Theme>().get_accent());
     assert_eq!(desk.global::<Store>().get_today_label(), main.global::<Store>().get_today_label());
     assert_eq!(desk.global::<Store>().get_today_day(), chrono::Local::now().day() as i32);
     app.detach_desk();
-    actions.invoke_set_look(2);
-    assert_eq!(desk.global::<Store>().get_theme(), 3);
-    assert_eq!(pet.global::<Store>().get_theme(), 2);
+    actions.invoke_set_look(0);
+    assert_eq!(desk.global::<Store>().get_theme(), 1);
+    assert_eq!(pet.global::<Store>().get_theme(), 0);
     app.attach_desk(&desk);
-    assert_eq!(desk.global::<Store>().get_theme(), 2);
+    assert_eq!(desk.global::<Store>().get_theme(), 0);
     app.save_now();
     let _ = std::fs::remove_dir_all(dir);
 }

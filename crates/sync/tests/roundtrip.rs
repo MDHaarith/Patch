@@ -126,13 +126,24 @@ fn clock_rejection_keeps_pending_edits() {
     d.save_task(&task);
     let doc = Arc::new(Mutex::new(d));
     let url = format!("http://127.0.0.1:{}", hub.port());
-    let client = SyncClient::start(doc.clone(), Some(SyncConfig::new(&url, hub.token()).unwrap()), |_| {});
+    let client = SyncClient::start(doc.clone(), Some(SyncConfig::new(&url, &hub.token()).unwrap()), |_| {});
     wait_until("visible clock error", || client.status() == SyncStatus::ClockAhead);
     assert!(doc.lock().unwrap().has_pending());
     assert_eq!(doc.lock().unwrap().last_seq, 0);
     drop(client);
     hub.stop();
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+// Other local processes (dev tools) probe loopback ports, so ignore non-API strays (answered 404).
+fn api_request(server: &tiny_http::Server, wait: Duration) -> Option<tiny_http::Request> {
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        let left = deadline.checked_duration_since(std::time::Instant::now())?;
+        let req = server.recv_timeout(left).unwrap()?;
+        if req.url().starts_with("/api/") { return Some(req); }
+        req.respond(tiny_http::Response::from_string("").with_status_code(404)).unwrap();
+    }
 }
 
 #[test]
@@ -145,7 +156,7 @@ fn config_changes_stop_in_flight_rounds_to_the_old_hub() {
         let doc = Arc::new(Mutex::new(Doc::with_node("changing-hubs")));
         let cfg = |server: &Server| SyncConfig::new(&server.server_addr().to_string(), "TOKEN").unwrap();
         let client = SyncClient::start(doc.clone(), Some(cfg(&old)), |_| {});
-        let mut req = old.recv_timeout(Duration::from_secs(3)).unwrap().unwrap();
+        let mut req = api_request(&old, Duration::from_secs(3)).unwrap();
         assert_eq!(req.url(), "/api/sync");
         req.as_reader().read_to_end(&mut Vec::new()).unwrap();
         client.set_config(if disconnect { None } else { Some(cfg(&new)) });
@@ -153,15 +164,66 @@ fn config_changes_stop_in_flight_rounds_to_the_old_hub() {
         if disconnect {
             assert_eq!(client.status(), SyncStatus::Disabled);
         } else {
-            let mut req = new.recv_timeout(Duration::from_secs(3)).unwrap().unwrap();
+            let mut req = api_request(&new, Duration::from_secs(3)).unwrap();
             req.as_reader().read_to_end(&mut Vec::new()).unwrap();
             // Keep the new round in flight while checking the old hub.
             assert_eq!(doc.lock().unwrap().hub_id, None);
             client.set_config(None);
             req.respond(Response::from_string(r#"{"hub":"new","seq":0,"changes":[]}"#)).unwrap();
         }
-        assert!(old.recv_timeout(Duration::from_millis(700)).unwrap().is_none(), "old hub received another request");
+        assert!(api_request(&old, Duration::from_millis(700)).is_none(), "old hub received another request");
         assert_eq!(doc.lock().unwrap().hub_id, None, "stale response was applied");
         assert_eq!(doc.lock().unwrap().last_seq, 0);
     }
+}
+
+#[test]
+fn concurrent_fields_and_tombstones_converge_without_overwriting_other_edits() {
+    let dir = temp_dir("concurrent");
+    let mut cfg = HubConfig::new(&dir);
+    cfg.bind = "127.0.0.1:0".into();
+    let hub = Hub::start(cfg).unwrap();
+    let mut base = Doc::with_node("base");
+    let mut task = Task::blank("", DEFAULT_LIST, COL_TODO);
+    task.title = "Base".into();
+    let id = base.add_task(task);
+    let mut left = Doc::with_node("left");
+    let mut right = Doc::with_node("right");
+    left.apply_remote(&base.pending());
+    right.apply_remote(&base.pending());
+    let mut task = left.task(&id).unwrap();
+    task.title = "Left title".into();
+    left.save_task(&task);
+    let mut task = right.task(&id).unwrap();
+    task.notes = "Right notes".into();
+    right.save_task(&task);
+    let left = Arc::new(Mutex::new(left));
+    let right = Arc::new(Mutex::new(right));
+    let cfg = SyncConfig::new(&format!("http://127.0.0.1:{}", hub.port()), &hub.token()).unwrap();
+    let a = SyncClient::start(left.clone(), Some(cfg.clone()), |_| {});
+    let b = SyncClient::start(right.clone(), Some(cfg), |_| {});
+    wait_until("both concurrent fields", || {
+        [left.clone(), right.clone()].iter().all(|doc| {
+            let d = doc.lock().unwrap();
+            d.task(&id).is_some_and(|t| t.title == "Left title" && t.notes == "Right notes") && !d.has_pending()
+        })
+    });
+    // A concurrent edit must not resurrect a deleted record.
+    left.lock().unwrap().delete_task(&id);
+    let mut task = right.lock().unwrap().task(&id).unwrap();
+    task.notes = "Notes while deleted elsewhere".into();
+    right.lock().unwrap().save_task(&task);
+    a.notify_local_change();
+    b.notify_local_change();
+    wait_until("deletion and notes converge", || {
+        [left.clone(), right.clone()].iter().all(|doc| {
+            let d = doc.lock().unwrap();
+            let record = d.record(&id).unwrap();
+            record.is_deleted() && record.str("notes") == Some("Notes while deleted elsewhere") && !d.has_pending()
+        })
+    });
+    drop(a);
+    drop(b);
+    hub.stop();
+    std::fs::remove_dir_all(dir).unwrap();
 }

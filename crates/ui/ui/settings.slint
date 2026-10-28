@@ -1,8 +1,8 @@
-import { Slider } from "std-widgets.slint";
+import { EnvironmentsPanel } from "environments.slint";
 import { Theme } from "theme.slint";
 import { Icon, IconBox } from "icons.slint";
 import { Store, Actions, ThemeCard } from "store.slint";
-import { Glass, Field, Toggle, IconButton, Button, Scroll, SectionLabel, Divider, Segmented } from "widgets.slint";
+import { Surface, Field, Toggle, IconButton, Button, Scroll, SectionLabel, Divider, Segmented } from "widgets.slint";
 
 // A miniature of the range picker drawn in a theme's own colours.
 component ThemePreview inherits Rectangle {
@@ -11,7 +11,7 @@ component ThemePreview inherits Rectangle {
     callback picked();
     border-radius: 16px;
     // Phones use the software renderer, which can't round gradient corners.
-    background: Store.mobile ? theme.mid : @linear-gradient(165deg, theme.top 0%, theme.bottom 100%);
+    background: theme.mid;
     border-width: selected ? 2px : 1px;
     border-color: selected ? Theme.accent : Theme.hairline;
     clip: true;
@@ -71,7 +71,7 @@ component ThemePreview inherits Rectangle {
 component Preset inherits Rectangle {
     in property <string> text;
     callback removed();
-    height: Store.mobile ? 32px : 28px;
+    height: 32px;
     width: lbl.preferred-width + 40px;
     border-radius: self.height / 2;
     background: Theme.well;
@@ -92,7 +92,7 @@ component Row inherits HorizontalLayout {
     in property <string> label;
     in property <string> hint;
     spacing: 12px;
-    min-height: Store.mobile ? 48px : 36px;
+    min-height: 48px;
     VerticalLayout {
         horizontal-stretch: 1;
         alignment: center;
@@ -103,7 +103,7 @@ component Row inherits HorizontalLayout {
     @children
 }
 
-component Card inherits Glass {
+component Card inherits Surface {
     in property <string> title;
     in property <string> icon;
     fill: Theme.panel-strong;
@@ -124,12 +124,14 @@ component Card inherits Glass {
 
 export component SettingsPanel inherits Rectangle {
     property <string> url-input: Store.hub-url;
-    property <string> token-input: Store.hub-token;
-    VerticalLayout {
+    property <string> token-input;
+    property <string> revoke-confirm;
+    if Store.mobile && Store.environment-page > 0: EnvironmentsPanel { width: parent.width; height: parent.height; }
+    if !Store.mobile || Store.environment-page == 0: VerticalLayout {
         HorizontalLayout {
             padding: 12px;
             padding-left: 18px;
-            height: Store.mobile ? 60px : 52px;
+            height: 60px;
             Text {
                 horizontal-stretch: 1;
                 text: "Settings";
@@ -159,7 +161,7 @@ export component SettingsPanel inherits Rectangle {
                     title: "Appearance";
                     icon: "layers";
                     themes := Rectangle {
-                        property <int> cols: Store.mobile ? 2 : 4;
+                        property <int> cols: 2;
                         property <length> gap: 10px;
                         property <length> cw: (self.width - (self.cols - 1) * self.gap) / self.cols;
                         property <length> ch: 112px;
@@ -172,17 +174,6 @@ export component SettingsPanel inherits Rectangle {
                             theme: t;
                             selected: Store.theme == i;
                             picked => { Actions.set-look(i); }
-                        }
-                    }
-                    if Theme.glass: Row {
-                        label: "Glass opacity";
-                        hint: round(Store.glass-opacity * 100) + "%";
-                        Slider {
-                            width: 140px;
-                            minimum: 0.25;
-                            maximum: 0.95;
-                            value: Store.glass-opacity;
-                            changed(v) => { Actions.set-glass-opacity(v); }
                         }
                     }
                     Row {
@@ -286,98 +277,87 @@ export component SettingsPanel inherits Rectangle {
                 }
 
                 Card {
-                    title: "Sync";
-                    icon: "sync";
-                    HorizontalLayout {
-                        spacing: 8px;
-                        Rectangle {
-                            y: (parent.height - self.height) / 2;
-                            width: 8px;
-                            height: 8px;
-                            border-radius: 4px;
-                            background: Store.sync-state == 2 ? Theme.success : Store.sync-state == 1 ? Theme.warning : Store.sync-state == 0 ? Theme.text-3 : Theme.danger;
-                        }
-                        Text { horizontal-stretch: 1; text: Store.sync-label; color: Theme.text-2; font-size: Theme.fs-s; wrap: word-wrap; }
-                    }
-
+                    title: Store.mobile ? "Environments" : "Sync";
+                    icon: "laptop";
+                    Text { text: Store.sync-label; color: Theme.text-2; font-size: Theme.fs-s; wrap: word-wrap; }
+                    if Store.mobile: Button { text: "Manage environments"; kind: 3; clicked => { Store.environment-page = 1; } }
                     if Store.can-host: Row {
-                        label: "Host the sync hub on this computer";
-                        hint: "Turn on to show a pairing QR code for your phone. Devices on your tailnet or the same Wi-Fi connect here; keep Patch running (it lives in the tray).";
-                        Toggle { y: (parent.height - self.height) / 2; checked: Store.hosting; toggled(v) => { Actions.set-hosting(v); } }
+                        label: "Host on this computer";
+                        hint: "Pair your phone over Tailscale or the same Wi-Fi. Keep Patch running in the tray.";
+                        Toggle { checked: Store.hosting; toggled(v) => { Actions.set-hosting(v); } }
                     }
                     if Store.can-host && Store.hosting: Rectangle {
-                        border-radius: 12px;
-                        background: Theme.well;
+                        border-radius: 20px;
+                        background: #141518;
                         height: pair.preferred-height;
                         pair := VerticalLayout {
-                            padding: 12px;
-                            spacing: 6px;
-                            SectionLabel { text: "PAIR YOUR PHONE"; }
-                            Text { text: Store.host-urls == "" ? "No network yet: connect to Wi-Fi or start Tailscale." : Store.host-urls; color: Theme.text; font-size: Theme.fs-m; wrap: word-wrap; }
+                            padding: 20px;
+                            spacing: 12px;
+                            Text { text: "Add an environment"; color: #ffffff; font-size: 19px; font-weight: 600; }
+                            Text { text: "Scan this code from Patch on your phone"; color: #a6a7af; font-size: 13px; wrap: word-wrap; }
+                            HorizontalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 224px; height: 224px; border-radius: 18px; clip: true;
+                                    background: #141518;
+                                    Image { source: Store.host-qr; width: parent.width; height: parent.height; image-rendering: pixelated; accessible-role: image; accessible-label: "Pairing QR code"; }
+                                }
+                            }
+                            Text { text: Store.host-address == "" ? "Connect to Wi-Fi or start Tailscale" : Store.host-address; color: #ffffff; font-size: 13px; wrap: word-wrap; }
+                            Button { text: "Copy address"; kind: 3; clicked => { Actions.copy-text(Store.host-address); } }
+                            Text { text: Store.host-token; color: #ffffff; font-size: 20px; font-weight: 600; letter-spacing: 1px; horizontal-alignment: center; }
                             HorizontalLayout {
                                 spacing: 8px;
-                                Text { text: "Token"; color: Theme.text-2; font-size: Theme.fs-m; vertical-alignment: center; }
-                                Text { horizontal-stretch: 1; text: Store.host-token; color: Theme.text; font-size: Theme.fs-l; font-weight: 700; letter-spacing: 1px; vertical-alignment: center; }
-                                Button { text: "Copy"; kind: 3; clicked => { Actions.copy-text(Store.host-token); } }
-                            }
-                            if Store.host-urls != "": HorizontalLayout {
-                                spacing: 12px;
-                                Image {
-                                    width: 148px;
-                                    height: 148px;
-                                    source: Store.host-qr;
-                                    image-rendering: pixelated;
-                                    accessible-role: image;
-                                    accessible-label: "Pairing QR code";
-                                }
-                                Text {
-                                    horizontal-stretch: 1;
-                                    text: "On your phone: Patch → Settings → Scan pairing QR code. Without Tailscale, keep both on the same Wi-Fi (unencrypted there, so use a network you trust).";
-                                    color: Theme.text-2;
-                                    font-size: Theme.fs-s;
-                                    wrap: word-wrap;
-                                    vertical-alignment: center;
-                                }
+                                Button { text: "Copy code"; kind: 3; clicked => { Actions.copy-text(Store.host-token); } }
+                                Button { text: "Regenerate code"; kind: 3; clicked => { Actions.regenerate-code(); } }
                             }
                         }
                     }
-
-                    if Store.can-host && !Store.hosting && Store.client-pairing: VerticalLayout {
+                    if !Store.mobile: VerticalLayout {
                         spacing: 8px;
-                        SectionLabel { text: "PAIR ANOTHER DEVICE"; }
-                        Image {
-                            width: 148px; height: 148px;
-                            source: Store.client-qr;
-                            image-rendering: pixelated;
-                            accessible-role: image;
-                            accessible-label: "Pair another device with your sync hub";
+                        SectionLabel { text: "CONNECT TO ANOTHER HUB"; }
+                        Field { text <=> root.url-input; placeholder: "Address"; }
+                        Field { text <=> root.token-input; placeholder: "Pairing code"; }
+                        HorizontalLayout {
+                            alignment: end;
+                            spacing: 8px;
+                            if Store.hub-url != "": Button { text: "Disconnect"; kind: 3; clicked => { Actions.disconnect-hub(); } }
+                            Button { text: "Connect"; kind: 1; enabled: root.url-input != "" && root.token-input != ""; clicked => { Actions.connect-hub(root.url-input, root.token-input); } }
                         }
                     }
-                    SectionLabel { text: Store.can-host ? "OR CONNECT TO ANOTHER HUB" : "HUB"; }
-                    if Store.can-scan: Button {
-                        text: "Scan pairing QR code";
-                        kind: 1;
-                        clicked => { Actions.scan-pair(); }
-                    }
-                    Field {
-                        text <=> root.url-input;
-                        placeholder: "Hub address, e.g. my-laptop or 100.101.102.103";
-                        input-type: InputType.text;
-                    }
-                    Field {
-                        text <=> root.token-input;
-                        placeholder: "Pairing token (XXXX-XXXX-XXXX-XXXX)";
-                    }
-                    HorizontalLayout {
+                }
+                if Store.can-host && Store.hosting: Card {
+                    title: "Devices";
+                    icon: "laptop";
+                    init => { Actions.refresh-devices(); }
+                    Timer { interval: 5s; running: true; triggered => { Actions.refresh-devices(); } }
+                    for device in Store.devices: VerticalLayout {
                         spacing: 8px;
-                        alignment: end;
-                        if Store.hub-url != "": Button { text: "Disconnect"; kind: 3; clicked => { Actions.disconnect-hub(); } }
-                        Button {
-                            text: "Connect";
-                            kind: 1;
-                            enabled: root.url-input != "" && root.token-input != "";
-                            clicked => { Actions.connect-hub(root.url-input, root.token-input); }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            IconBox { name: device.platform == "android" ? "phone" : "laptop"; size: 22px; }
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 4px;
+                                Text { text: device.name; color: Theme.text; font-size: Theme.fs-m; font-weight: 600; overflow: elide; }
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    Rectangle { width: 6px; height: 6px; border-radius: 3px; background: device.connected ? #43d78b : Theme.text-3; y: (parent.height - self.height) / 2; }
+                                    Text { text: device.status; color: Theme.text-2; font-size: Theme.fs-s; }
+                                }
+                            }
                         }
+                        if !device.this-device && !device.revoked && root.revoke-confirm != device.id: Button { text: "Revoke access"; kind: 3; clicked => { root.revoke-confirm = device.id; } }
+                        if root.revoke-confirm == device.id: VerticalLayout {
+                            spacing: 6px;
+                            Text { text: "Revoke access for " + device.name + "? Its local data will be kept."; color: Theme.text-2; wrap: word-wrap; font-size: Theme.fs-s; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Button { text: "Cancel"; kind: 3; clicked => { root.revoke-confirm = ""; } }
+                                Button { text: "Revoke access"; kind: 1; clicked => { Actions.revoke-device(device.id); root.revoke-confirm = ""; } }
+                            }
+                        }
+                        Divider {}
                     }
                 }
 

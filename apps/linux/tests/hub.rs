@@ -62,8 +62,8 @@ fn devices_sync_through_the_hosted_hub() {
 
     let desktop = Arc::new(Mutex::new(Doc::with_node("desktop")));
     let phone = Arc::new(Mutex::new(Doc::with_node("phone")));
-    let a = SyncClient::start(desktop.clone(), Some(SyncConfig::new(&local_url, hub.token()).unwrap()), |_| {});
-    let b = SyncClient::start(phone.clone(), Some(SyncConfig::new(&local_url, hub.token()).unwrap()), |_| {});
+    let a = SyncClient::start(desktop.clone(), Some(SyncConfig::new(&local_url, &hub.token()).unwrap()), |_| {});
+    let b = SyncClient::start(phone.clone(), Some(SyncConfig::new(&local_url, &hub.token()).unwrap()), |_| {});
 
     let id = desktop.lock().unwrap().add_task(task("Written on the desktop"));
     a.notify_local_change();

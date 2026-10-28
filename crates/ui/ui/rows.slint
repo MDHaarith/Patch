@@ -8,10 +8,10 @@ export component TaskRow inherits Rectangle {
     in property <TaskItem> item;
     in property <bool> dense: false;
     callback opened(string);
-    height: dense ? (Store.mobile ? 48px : 38px) : (Store.mobile ? 58px : 46px);
+    height: dense ? (48px) : (58px);
     border-radius: Theme.r-m;
     background: ta.pressed ? Theme.press : ta.has-hover ? Theme.hover : transparent;
-    animate background { duration: 100ms; }
+    animate background { duration: Theme.motion-fast; easing: ease-out; }
     ta := TouchArea {
         clicked => { root.opened(root.item.id); }
     }
@@ -33,7 +33,7 @@ export component TaskRow inherits Rectangle {
                 Text {
                     horizontal-stretch: 1;
                     text: root.item.title;
-                    font-size: Store.mobile ? Theme.fs-l : Theme.fs-m;
+                    font-size: Theme.fs-l;
                     font-weight: 500;
                     color: root.item.done ? Theme.text-3 : Theme.text;
                     overflow: elide;

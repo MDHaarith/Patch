@@ -6,10 +6,10 @@ import { Scroll } from "widgets.slint";
 // blocks, an all-day lane and the red "now" line.
 export component TimeGrid inherits Rectangle {
     property <int> days: Math.max(1, Store.grid-days.length);
-    property <length> gutter: Store.mobile ? 46px : 56px;
-    property <length> hour-h: Store.mobile ? 54px : 46px;
+    property <length> gutter: 46px;
+    property <length> hour-h: 54px;
     property <length> col-w: (self.width - gutter) / days;
-    property <length> head-h: Store.mobile && days == 1 ? 0px : 44px;
+    property <length> head-h: days == 1 ? 0px : 44px;
     property <length> bar-h: 20px;
     property <length> allday-h: Math.max(1, Store.grid-lanes) * (bar-h + 2px) + 8px;
     property <length> body-y: head-h + allday-h + 1px;
@@ -37,27 +37,28 @@ export component TimeGrid inherits Rectangle {
         for d[i] in Store.grid-days: Rectangle {
             x: root.gutter + i * root.col-w;
             width: root.col-w;
-            HorizontalLayout {
-                alignment: center;
-                spacing: 5px;
+            Text {
+                y: 2px;
+                width: parent.width;
+                height: 18px;
+                text: d.weekday;
+                horizontal-alignment: center;
+                font-size: Theme.fs-xs;
+                color: d.weekend ? Theme.text-3 : Theme.text-2;
+                overflow: elide;
+            }
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: 20px;
+                width: 24px;
+                height: 24px;
+                border-radius: 12px;
+                background: d.today ? Theme.today : transparent;
                 Text {
-                    text: d.weekday;
+                    text: d.day;
                     font-size: Theme.fs-m;
-                    color: d.weekend ? Theme.text-3 : Theme.text-2;
-                    vertical-alignment: center;
-                }
-                Rectangle {
-                    y: (parent.height - self.height) / 2;
-                    width: Math.max(26px, dn.preferred-width + 10px);
-                    height: 26px;
-                    border-radius: 13px;
-                    background: d.today ? Theme.today : transparent;
-                    dn := Text {
-                        text: d.day;
-                        font-size: Theme.fs-l;
-                        font-weight: d.today ? 700 : 600;
-                        color: d.today ? #ffffff : Theme.text;
-                    }
+                    font-weight: d.today ? 700 : 600;
+                    color: d.today ? #ffffff : Theme.text;
                 }
             }
             TouchArea { clicked => { Actions.select-date(d.key); } double-clicked => { Actions.select-date(d.key); Actions.set-view(0); } }
@@ -91,8 +92,10 @@ export component TimeGrid inherits Rectangle {
             background: bar.color.with-alpha(Theme.light ? 0.22 : 0.34);
             opacity: bar.done ? 0.5 : 1;
             Text {
-                x: 10px;
-                width: parent.width - 12px;
+                x: 6px;
+                width: Math.max(0px, parent.width - 12px);
+                height: parent.height;
+                vertical-alignment: center;
                 text: bar.title;
                 font-size: Theme.fs-s;
                 font-weight: 600;
@@ -171,9 +174,9 @@ export component TimeGrid inherits Rectangle {
 
         for b in Store.grid-blocks: blk := Rectangle {
             property <bool> active: root.drag-id == b.id && (root.dragging || root.resizing);
-            x: root.gutter + b.day * root.col-w + b.lane-x * (root.col-w - 4px) + 2px;
+            x: root.gutter + b.day * root.col-w + Math.min(b.lane-x * (root.col-w - 4px), root.col-w - self.width - 2px) + 2px;
             y: 10px + b.top / 60 * root.hour-h + 1px;
-            width: b.lane-w * (root.col-w - 4px) - 2px;
+            width: Math.min(root.col-w - 4px, Math.max(12px, b.lane-w * (root.col-w - 4px) - 2px));
             height: Math.max(b.span / 60 * root.hour-h - 2px, 18px);
             z: active ? 10 : 1;
 
@@ -183,14 +186,14 @@ export component TimeGrid inherits Rectangle {
                 width: parent.width;
                 height: parent.active && root.resizing ? Math.max(parent.height + root.snap-min / 60 * root.hour-h, root.hour-h / 4) : parent.height;
                 border-radius: 8px;
-                background: Theme.light ? b.color.with-alpha(0.18) : Theme.glass ? b.color.with-alpha(0.38) : b.color.with-alpha(0.26);
+                background: Theme.light ? b.color.with-alpha(0.18) : b.color.with-alpha(0.26);
                 border-width: parent.active ? 1px : 0px;
                 border-color: b.color;
                 opacity: b.done ? 0.5 : 1;
                 drop-shadow-blur: parent.active ? 16px : 0px;
                 drop-shadow-color: #00000066;
                 Rectangle { x: 3px; y: 4px; width: 3px; height: parent.height - 8px; border-radius: 1.5px; background: b.color; }
-                VerticalLayout {
+                if visual.width >= 42px: VerticalLayout {
                     padding-left: 10px;
                     padding-right: 4px;
                     padding-top: 3px;
@@ -202,7 +205,7 @@ export component TimeGrid inherits Rectangle {
                         font-weight: 600;
                         color: Theme.light ? b.color.darker(0.45) : b.color.brighter(0.55);
                         overflow: elide;
-                        wrap: b.span >= 60 ? word-wrap : no-wrap;
+                        wrap: no-wrap;
                         max-height: visual.height - 18px;
                     }
                     if b.span >= 45 || (blk.active && root.dragging): Text {

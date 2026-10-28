@@ -49,19 +49,9 @@ fn settings_do_not_paint_covered_mobile_layers() {
     window.set_size(PhysicalSize::new(412, 915));
     let store = main.global::<Store>();
     let actions = main.global::<Actions>();
-    assert_eq!(store.get_themes().row_count(), 4);
-    for look in [1, 3] {
-        actions.invoke_set_look(look);
-        let theme = main.global::<Theme>();
-        assert!(theme.get_glass());
-        assert_eq!(theme.get_light(), look == 3);
-        actions.invoke_set_glass_opacity(0.25);
-        let faint = theme.get_panel().alpha();
-        actions.invoke_set_glass_opacity(2.0);
-        assert_eq!(store.get_glass_opacity(), 0.95);
-        assert!(theme.get_panel().alpha() > faint);
-        assert_eq!(patch_ui::prefs::Prefs::load(&dir.join("prefs.json")).glass_opacity, 0.95);
-    }
+    assert_eq!(store.get_themes().row_count(), 2);
+    actions.invoke_set_look(1);
+    assert!(main.global::<Theme>().get_light());
     actions.invoke_set_look(0);
     let mut pixels = vec![PremultipliedRgbaColor::default(); 412 * 915];
     let draw = |pixels: &mut [PremultipliedRgbaColor]| {
@@ -151,6 +141,17 @@ fn settings_do_not_paint_covered_mobile_layers() {
     main.global::<Actions>().invoke_undo_delete();
     app.save_now();
     assert!(patch_core::Doc::load_or_new(&dir.join("doc.json")).task(&id).is_none());
+    store.set_settings_open(true);
+    store.set_environment_page(2);
+    store.set_scan_active(true);
+    assert!(app.back());
+    assert_eq!(store.get_environment_page(), 1);
+    assert!(store.get_settings_open());
+    assert!(!store.get_scan_active());
+    assert!(app.back());
+    assert_eq!(store.get_environment_page(), 0);
+    assert!(app.back());
+    assert!(!store.get_settings_open());
     drop(main);
     drop(app);
     std::fs::remove_dir_all(dir).unwrap();

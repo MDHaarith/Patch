@@ -29,6 +29,13 @@ fn usage() -> ! {
     std::process::exit(2)
 }
 
+fn listen_address(bind: &str, port: u16) -> String {
+    match bind.parse::<std::net::IpAddr>() {
+        Ok(ip) => std::net::SocketAddr::new(ip, port).to_string(),
+        Err(_) => format!("{bind}:{port}"),
+    }
+}
+
 fn main() {
     let mut port = DEFAULT_PORT;
     let mut bind = "0.0.0.0".to_string();
@@ -48,7 +55,7 @@ fn main() {
             _ => usage(),
         }
     }
-    cfg.bind = format!("{bind}:{port}");
+    cfg.bind = listen_address(&bind, port);
     let hub = match Hub::start(cfg.clone()) {
         Ok(h) => h,
         Err(e) => {
@@ -68,5 +75,14 @@ fn main() {
     }
     loop {
         std::thread::park();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn ipv6_bind_is_bracketed() {
+        assert_eq!(super::listen_address("fd7a:115c:a1e0::1", 4747), "[fd7a:115c:a1e0::1]:4747");
+        assert_eq!(super::listen_address("0.0.0.0", 4747), "0.0.0.0:4747");
     }
 }

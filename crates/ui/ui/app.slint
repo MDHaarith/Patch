@@ -5,9 +5,8 @@ import "../../../assets/fonts/Inter-Bold.otf";
 
 import { Theme } from "theme.slint";
 import { Icon } from "icons.slint";
-import { Store, Editor, Actions, TaskItem } from "store.slint";
-import { Glass, Divider, VDivider, IconButton, Button, Segmented, Field, Scroll, SectionLabel, Toast } from "widgets.slint";
-import { MiniCalendar } from "calendar-bits.slint";
+import { Store, Editor, Actions } from "store.slint";
+import { Surface, IconButton, Button, Segmented, Field, Scroll, Toast } from "widgets.slint";
 import { MonthView } from "month.slint";
 import { TimeGrid } from "timegrid.slint";
 import { BoardView } from "board.slint";
@@ -15,152 +14,18 @@ import { ListView } from "listview.slint";
 import { EditorPanel } from "editor.slint";
 import { SettingsPanel } from "settings.slint";
 import { TaskRow } from "rows.slint";
-import { OverlayWindow, OverlayPanel } from "overlay.slint";
-import { Pet } from "pet.slint";
+import { OverlayWindow } from "overlay.slint";
 
 export { Store, Editor, Actions, Theme, OverlayWindow }
 
 component Backdrop inherits Rectangle {
     background: Theme.backdrop;
-    if Theme.glass: Rectangle {
-        // Soft light blooms behind the glass.
-        x: -parent.width * 0.2;
-        y: -parent.height * 0.3;
-        width: parent.width * 0.9;
-        height: parent.height * 0.9;
-        border-radius: self.width / 2;
-        background: @radial-gradient(circle, Theme.bloom-a 0%, Theme.bloom-a.with-alpha(0) 70%);
-    }
-    if Theme.glass: Rectangle {
-        x: parent.width * 0.55;
-        y: parent.height * 0.45;
-        width: parent.width * 0.8;
-        height: parent.height * 0.8;
-        border-radius: self.width / 2;
-        background: @radial-gradient(circle, Theme.bloom-b 0%, Theme.bloom-b.with-alpha(0) 70%);
-    }
     if Theme.matte: Image {
         width: parent.width;
         height: parent.height;
         source: Store.grain;
         horizontal-tiling: repeat;
         vertical-tiling: repeat;
-    }
-}
-
-component SyncDot inherits Rectangle {
-    width: 8px;
-    height: 8px;
-    border-radius: 4px;
-    background: Store.sync-state == 2 ? Theme.success : Store.sync-state == 1 ? Theme.warning : Store.sync-state == 0 ? Theme.text-3 : Theme.danger;
-}
-
-// A list in the sidebar. Clicking toggles its visibility; the "⋯" button
-// (always shown, so nothing appears or vanishes under the pointer) opens
-// colour, rename and delete in place.
-component ListRow inherits VerticalLayout {
-    in property <string> id;
-    in property <string> name;
-    in property <color> tint;
-    in property <bool> visible-list;
-    in property <int> count;
-    in-out property <bool> menu-open;
-    property <bool> renaming;
-    spacing: 2px;
-    Rectangle {
-        min-height: Store.mobile ? 40px : 30px;
-        vertical-stretch: 0;
-        border-radius: 8px;
-        background: root.menu-open ? Theme.hover : ta.has-hover ? Theme.hover : transparent;
-        ta := TouchArea {
-            clicked => { Actions.toggle-list(root.id); }
-            double-clicked => { root.renaming = true; }
-        }
-        HorizontalLayout {
-            padding-left: 8px;
-            padding-right: 2px;
-            spacing: 9px;
-            Rectangle {
-                width: 14px;
-                Rectangle {
-                    width: 14px;
-                    height: 14px;
-                    border-radius: 4px;
-                    background: root.visible-list ? root.tint : transparent;
-                    border-width: 1.5px;
-                    border-color: root.tint;
-                    if root.visible-list: Icon { name: "check"; size: 10px; tint: #ffffff; stroke-width: 3.5px; }
-                }
-            }
-            if !root.renaming: Text {
-                horizontal-stretch: 1;
-                text: root.name;
-                color: root.visible-list ? Theme.text : Theme.text-3;
-                font-size: Theme.fs-m;
-                vertical-alignment: center;
-                overflow: elide;
-            }
-            if root.renaming: Field {
-                y: (parent.height - self.height) / 2;
-                horizontal-stretch: 1;
-                text: root.name;
-                init => { self.focus-input(); }
-                accepted(t) => {
-                    Actions.rename-list(root.id, t);
-                    root.renaming = false;
-                }
-                escaped => { root.renaming = false; }
-            }
-            Text {
-                text: root.count > 0 ? root.count : "";
-                color: Theme.text-3;
-                font-size: Theme.fs-s;
-                vertical-alignment: center;
-            }
-            IconButton {
-                y: (parent.height - self.height) / 2;
-                icon: "more";
-                size: 24px;
-                icon-size: 14px;
-                active: root.menu-open;
-                tint: Theme.text-3;
-                clicked => { root.menu-open = !root.menu-open; }
-            }
-        }
-    }
-    if root.menu-open: Rectangle {
-        height: menu.preferred-height;
-        border-radius: 12px;
-        background: Theme.float;
-        border-width: 1px;
-        border-color: Theme.hairline;
-        menu := VerticalLayout {
-            padding: 8px;
-            spacing: 8px;
-            swatches := Rectangle {
-                property <length> d: 22px;
-                property <length> gap: (self.width - 5 * self.d) / 4;
-                height: 2 * self.d + 8px;
-                for c[i] in Store.palette: Rectangle {
-                    x: Math.mod(i, 5) * (swatches.d + swatches.gap);
-                    y: Math.floor(i / 5) * (swatches.d + 8px);
-                    width: swatches.d;
-                    height: swatches.d;
-                    border-radius: self.width / 2;
-                    background: c;
-                    border-width: c == root.tint ? 2px : 0px;
-                    border-color: Theme.text;
-                    if c == root.tint: Icon { name: "check"; size: 12px; tint: #ffffff; stroke-width: 3px; }
-                    TouchArea { clicked => { Actions.set-list-color(root.id, i); } }
-                }
-            }
-            HorizontalLayout {
-                spacing: 6px;
-                Button { text: "Rename"; kind: 0; pad: 10px; clicked => { root.renaming = true; root.menu-open = false; } }
-                Rectangle { horizontal-stretch: 1; }
-                if Store.lists.length > 1: Button { text: "Delete"; icon: "trash"; kind: 2; pad: 10px; clicked => { root.menu-open = false; Actions.delete-list(root.id); } }
-            }
-        }
     }
 }
 
@@ -175,7 +40,7 @@ component WindowControls inherits HorizontalLayout {
         border-radius: 6.5px;
         property <color> hue: i == 0 ? #ff5f57 : i == 1 ? #febc2e : #28c840;
         background: wta.has-hover ? self.hue : Theme.text-3.with-alpha(0.55);
-        animate background { duration: 120ms; }
+        animate background { duration: Theme.motion-fast; easing: ease-out; }
         if wta.has-hover: Icon {
             size: 9px;
             name: i == 0 ? "close" : i == 1 ? "minus" : (Store.maximized ? "restore" : "maximize");
@@ -188,223 +53,6 @@ component WindowControls inherits HorizontalLayout {
     }
 }
 
-component Sidebar inherits Glass {
-    property <bool> adding;
-    property <string> menu;
-    fill: Theme.panel;
-    radius: 18px;
-    sheen: !Theme.matte;
-    VerticalLayout {
-        padding: 12px;
-        padding-top: 12px;
-        spacing: 12px;
-        if Store.custom-chrome: Rectangle {
-            height: 16px;
-            TouchArea {
-                pointer-event(e) => {
-                    if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
-                        Actions.window-action(0, 0);
-                    }
-                }
-                double-clicked => { Actions.window-action(4, 0); }
-            }
-            WindowControls { x: 6px; height: parent.height; }
-        }
-        HorizontalLayout {
-            spacing: 10px;
-            padding-left: 2px;
-            pet := Pet {
-                y: (parent.height - self.height) / 2;
-                size: 40px;
-                count: 0;
-                show-count: false;
-                TouchArea { clicked => { pet.hop-once(); } }
-            }
-            VerticalLayout {
-                alignment: center;
-                spacing: 1px;
-                HorizontalLayout {
-                    spacing: 6px;
-                    Text { text: "Patch"; font-size: Theme.fs-l; font-weight: 700; color: Theme.text; vertical-alignment: center; }
-                    SyncDot { y: (parent.height - self.height) / 2; }
-                    Rectangle { horizontal-stretch: 1; }
-                }
-                Text { text: Store.pet-line; font-size: Theme.fs-s; color: Theme.text-2; overflow: elide; }
-            }
-        }
-        MiniCalendar {}
-        Divider {}
-        HorizontalLayout {
-            padding-left: 6px;
-            SectionLabel { text: "LISTS"; vertical-alignment: center; horizontal-stretch: 1; }
-            IconButton { icon: "plus"; size: 22px; icon-size: 12px; clicked => { root.adding = true; } }
-        }
-        VerticalLayout {
-            spacing: 1px;
-            for l in Store.lists: ListRow {
-                id: l.id;
-                name: l.name;
-                tint: l.color;
-                visible-list: l.visible;
-                count: l.count;
-                menu-open: root.menu == l.id;
-                changed menu-open => {
-                    if (self.menu-open) {
-                        root.menu = l.id;
-                    } else if (root.menu == l.id) {
-                        root.menu = "";
-                    }
-                }
-            }
-            if root.adding: Field {
-                placeholder: "List name";
-                init => { self.focus-input(); }
-                accepted(t) => {
-                    if (t != "") {
-                        Actions.add-list(t);
-                    }
-                    root.adding = false;
-                }
-                escaped => { root.adding = false; }
-            }
-        }
-        Divider {}
-        HorizontalLayout {
-            padding-left: 6px;
-            SectionLabel { text: "UP NEXT"; }
-        }
-        next-scroll := Scroll {
-            vertical-stretch: 1;
-            content-height: next.preferred-height;
-            next := VerticalLayout {
-                width: next-scroll.width;
-                alignment: start;
-                spacing: 2px;
-                for it in Store.up-next: Rectangle {
-                    height: 42px;
-                    border-radius: 8px;
-                    background: nta.has-hover ? Theme.hover : transparent;
-                    nta := TouchArea { clicked => { Actions.open-task(it.id); } }
-                    Rectangle { x: 6px; y: 7px; width: 3px; height: parent.height - 14px; border-radius: 1.5px; background: it.color; }
-                    VerticalLayout {
-                        padding-left: 16px;
-                        padding-right: 6px;
-                        alignment: center;
-                        Text { text: it.title; color: Theme.text; font-size: Theme.fs-m; font-weight: 500; overflow: elide; }
-                        Text { text: it.when; color: it.overdue ? Theme.danger : Theme.text-2; font-size: Theme.fs-s; overflow: elide; }
-                    }
-                }
-                if Store.up-next.length == 0: Text {
-                    x: 8px;
-                    text: "Nothing coming up";
-                    color: Theme.text-3;
-                    font-size: Theme.fs-s;
-                }
-            }
-        }
-        HorizontalLayout {
-            spacing: 4px;
-            IconButton { icon: "layers"; active: Store.widget-on; clicked => { Actions.set-widget(!Store.widget-on); } }
-            IconButton { icon: "pin"; active: Store.pinned; clicked => { Actions.set-pinned(!Store.pinned); } }
-            Rectangle { horizontal-stretch: 1; }
-            IconButton { icon: "palette"; clicked => { Store.settings-open = true; } }
-            IconButton { icon: "gear"; clicked => { Store.settings-open = true; } }
-        }
-    }
-}
-
-component SearchBox inherits Rectangle {
-    horizontal-stretch: 1;
-    min-width: 130px;
-    max-width: 220px;
-    height: Math.max(30px, sf.preferred-height);
-    sf := Field {
-        width: parent.width;
-        icon: "search";
-        placeholder: "Search";
-        edited(t) => {
-            Actions.search(t);
-            Store.search-open = t != "";
-        }
-        escaped => {
-            self.text = "";
-            Actions.search("");
-            Store.search-open = false;
-        }
-    }
-    public function focus-box() {
-        sf.focus-input();
-    }
-}
-
-component Toolbar inherits HorizontalLayout {
-    in property <bool> show-controls;
-    min-height: 50px;
-    vertical-stretch: 0;
-    padding-left: 12px;
-    padding-right: 12px;
-    spacing: 6px;
-    if root.show-controls: WindowControls { padding-right: 8px; }
-    IconButton { y: (parent.height - self.height) / 2; icon: "sidebar"; active: Store.sidebar-open; clicked => { Store.sidebar-open = !Store.sidebar-open; } }
-    IconButton { y: (parent.height - self.height) / 2; icon: "plus"; clicked => { Actions.new-task(Store.selected, -2); } }
-    Rectangle { width: 6px; }
-    if root.width > 900px: Field {
-        y: (parent.height - self.height) / 2;
-        horizontal-stretch: 1;
-        min-width: 160px;
-        max-width: 300px;
-        icon: "plus";
-        placeholder: "Quick add — “Lunch with Sam fri 1pm #work”";
-        accepted(t) => {
-            if (t != "") {
-                Actions.quick-add(t);
-            }
-            self.text = "";
-        }
-    }
-    Rectangle { horizontal-stretch: 1; }
-    Segmented {
-        y: (parent.height - self.height) / 2;
-        items: ["Day", "Week", "Month", "Board", "List"];
-        current: Store.view;
-        picked(i) => { Actions.set-view(i); }
-    }
-    Rectangle { horizontal-stretch: 1; }
-    search := SearchBox { y: (parent.height - self.height) / 2; }
-    IconButton { y: (parent.height - self.height) / 2; icon: "pin"; active: Store.pinned; clicked => { Actions.set-pinned(!Store.pinned); } }
-    IconButton { y: (parent.height - self.height) / 2; icon: "gear"; clicked => { Store.settings-open = true; } }
-    public function focus-search-box() {
-        search.focus-box();
-    }
-}
-
-component Header inherits HorizontalLayout {
-    height: Store.mobile ? 54px : 58px;
-    padding-left: Store.mobile ? 18px : 22px;
-    padding-right: Store.mobile ? 12px : 18px;
-    spacing: 8px;
-    HorizontalLayout {
-        spacing: 8px;
-        Text { text: Store.title-main; font-size: Theme.fs-title; font-weight: 700; color: Theme.text; vertical-alignment: center; }
-        Text { text: Store.title-sub; font-size: Theme.fs-title; font-weight: 400; color: Theme.text-2; vertical-alignment: center; }
-    }
-    if Store.caption != "" && !Store.mobile: Text {
-        text: Store.caption;
-        font-size: Theme.fs-m;
-        color: Theme.text-3;
-        vertical-alignment: center;
-    }
-    Rectangle { horizontal-stretch: 1; }
-    if Store.view <= 2: HorizontalLayout {
-        horizontal-stretch: 0;
-        alignment: end;
-        spacing: 2px;
-        IconButton { y: (parent.height - self.height) / 2; icon: "chevron-left"; clicked => { Actions.nav(-1); } }
-        Button { y: (parent.height - self.height) / 2; text: "Today"; kind: 0; pad: 12px; clicked => { Actions.go-today(); } }
-        IconButton { y: (parent.height - self.height) / 2; icon: "chevron-right"; clicked => { Actions.nav(1); } }
-    }
-}
-
 component Content inherits Rectangle {
     if Store.view == 0 || Store.view == 1: TimeGrid { width: parent.width; height: parent.height; }
     if Store.view == 2: MonthView { width: parent.width; height: parent.height; }
@@ -412,128 +60,9 @@ component Content inherits Rectangle {
     if Store.view == 4: ListView { width: parent.width; height: parent.height; }
 }
 
-component SearchResults inherits Glass {
-    fill: Theme.float;
-    elevated: true;
-    radius: 14px;
-    height: Math.min(360px, list.preferred-height + 16px);
-    results-scroll := Scroll {
-        y: 8px;
-        height: parent.height - 16px;
-        content-height: list.preferred-height;
-        list := VerticalLayout {
-            width: results-scroll.width;
-            alignment: start;
-            padding-left: 6px;
-            padding-right: 6px;
-            for it in Store.results: TaskRow {
-                item: it;
-                opened(id) => {
-                    Store.search-open = false;
-                    Actions.open-task(id);
-                }
-            }
-            if Store.results.length == 0: Text {
-                height: 40px;
-                text: "No matches";
-                color: Theme.text-3;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-        }
-    }
-}
-
-component DesktopShell inherits Rectangle {
-    callback focus-search();
-    property <length> gap: 10px;
-    property <length> side-w: Store.sidebar-open && self.width > 760px ? 248px : 0px;
-    // 0..1 so the inspector slides in and the main pane reflows smoothly.
-    property <float> inspector-t: Store.editor-open ? 1 : 0;
-    animate inspector-t { duration: 220ms; easing: ease-out; }
-    property <length> inspector-w: 360px * root.inspector-t;
-
-    // With the custom frame, empty space moves the window.
-    if Store.custom-chrome: TouchArea {
-        pointer-event(e) => {
-            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
-                Actions.window-action(0, 0);
-            }
-        }
-        double-clicked => { Actions.window-action(4, 0); }
-    }
-    if root.side-w > 0: Sidebar {
-        x: root.gap;
-        y: root.gap;
-        width: root.side-w;
-        height: parent.height - 2 * root.gap;
-    }
-    main := Glass {
-        x: root.side-w > 0 ? root.side-w + 2 * root.gap : root.gap;
-        y: root.gap;
-        width: parent.width - self.x - root.gap - (root.inspector-w + root.gap * root.inspector-t);
-        height: parent.height - 2 * root.gap;
-        radius: 18px;
-        fill: Theme.content;
-        sheen: !Theme.matte;
-        clip: true;
-        VerticalLayout {
-            Rectangle {
-                height: Math.max(50px, tb.preferred-height);
-                if Store.custom-chrome: TouchArea {
-                    pointer-event(e) => {
-                        if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
-                            Actions.window-action(0, 0);
-                        }
-                    }
-                    double-clicked => { Actions.window-action(4, 0); }
-                }
-                tb := Toolbar { show-controls: Store.custom-chrome && root.side-w == 0; }
-            }
-            Divider {}
-            Header {}
-            Content { vertical-stretch: 1; }
-        }
-        if Store.search-open: SearchResults {
-            x: parent.width - self.width - 48px;
-            y: 46px;
-            width: 340px;
-        }
-    }
-    if root.inspector-t > 0: Glass {
-        x: parent.width - root.inspector-w - root.gap * root.inspector-t;
-        y: root.gap;
-        width: 360px;
-        opacity: root.inspector-t;
-        height: parent.height - 2 * root.gap;
-        radius: 18px;
-        fill: Theme.float;
-        elevated: true;
-        clip: true;
-        EditorPanel {}
-    }
-    // A hidden desktop panel still creates its controls and background timer on phones.
-    if !Store.mobile && Store.settings-open: Rectangle {
-        background: #00000066;
-        TouchArea { clicked => { Store.settings-open = false; } }
-        Glass {
-            width: Math.min(620px, parent.width - 40px);
-            height: Math.min(760px, parent.height - 40px);
-            radius: 22px;
-            fill: Theme.modal;
-            elevated: true;
-            clip: true;
-            TouchArea {}
-            SettingsPanel {}
-        }
-    }
-    public function focus-search-box() {
-        tb.focus-search-box();
-    }
-}
-
 component MobileShell inherits Rectangle {
-    property <bool> searching;
+    property <bool> searching <=> Store.search-open;
+    public function focus-search-box() { root.searching = true; }
     VerticalLayout {
         visible: !Store.settings-open;
         Rectangle { height: Store.safe-top; }
@@ -542,6 +71,18 @@ component MobileShell inherits Rectangle {
             padding-left: 18px;
             padding-right: 10px;
             spacing: 4px;
+            if Store.custom-chrome: Rectangle {
+                width: 16px;
+                TouchArea {
+                    pointer-event(e) => {
+                        if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                            Actions.window-action(0, 0);
+                        }
+                    }
+                    double-clicked => { Actions.window-action(4, 0); }
+                }
+            }
+            if Store.custom-chrome: WindowControls { height: parent.height; }
             HorizontalLayout {
                 spacing: 7px;
                 Text { text: Store.title-main; font-size: 26px; font-weight: 700; color: Theme.text; vertical-alignment: center; }
@@ -586,13 +127,13 @@ component MobileShell inherits Rectangle {
         }
         if !root.searching: Rectangle {
             vertical-stretch: 1;
-            Content { width: parent.width; height: parent.height; }
+            Content { y: 0; width: parent.width; height: Math.max(0px, parent.height - dock.height - 24px - Store.safe-bottom); }
             // Week/month swipe
         }
     }
 
     // Bottom quick-add dock
-    dock := Glass {
+    dock := Surface {
         visible: !Store.settings-open;
         x: 12px;
         y: parent.height - self.height - 12px - Store.safe-bottom;
@@ -628,7 +169,7 @@ component MobileShell inherits Rectangle {
     }
 
     property <float> editor-t: Store.editor-open ? 1 : 0;
-    animate editor-t { duration: 220ms; easing: ease-out; }
+    animate editor-t { duration: Theme.motion-panel; easing: ease-out; }
     if root.editor-t > 0: Rectangle {
         visible: !Store.settings-open;
         y: parent.height * (1 - root.editor-t) * 0.25;
@@ -688,7 +229,7 @@ export component MainWindow inherits Window {
             }
             if (e.modifiers.control || e.modifiers.meta) {
                 if (e.text == "f") {
-                    desktop.focus-search-box();
+                    mobile.focus-search-box();
                     return accept;
                 }
                 if (e.text == ",") {
@@ -713,27 +254,17 @@ export component MainWindow inherits Window {
             if (e.text == "m" || e.text == "3") { Actions.set-view(2); return accept; }
             if (e.text == "b" || e.text == "4") { Actions.set-view(3); return accept; }
             if (e.text == "l" || e.text == "5") { Actions.set-view(4); return accept; }
-            if (e.text == "/") { desktop.focus-search-box(); return accept; }
+            if (e.text == "/") { mobile.focus-search-box(); return accept; }
             reject
         }
 
         frame := Rectangle {
-            // The phone's opaque Settings sheet covers this entire backdrop.
-            visible: !Store.mobile || !Store.settings-open;
             border-radius: root.corner;
             clip: true;
             border-width: root.framed ? 1px : 0px;
             border-color: Theme.edge;
-            Backdrop { width: parent.width; height: parent.height; }
-            desktop := DesktopShell {
-                visible: !Store.mobile;
-                width: parent.width;
-                height: parent.height;
-            }
-        }
-        if Store.mobile: MobileShell {
-            width: parent.width;
-            height: parent.height;
+            Backdrop { visible: !Store.settings-open; width: parent.width; height: parent.height; }
+            mobile := MobileShell { width: parent.width; height: parent.height; }
         }
         // Resize handles along the frameless window's edges and corners.
         if root.framed: Rectangle {
