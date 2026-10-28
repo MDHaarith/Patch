@@ -40,7 +40,7 @@ export component Card inherits Rectangle {
             Text {
                 horizontal-stretch: 1;
                 text: root.item.title;
-                font-size: Theme.fs-l;
+                font-size: Store.mobile ? Theme.fs-l : Theme.fs-m;
                 font-weight: 600;
                 color: root.item.done ? Theme.text-3 : Theme.text;
                 wrap: word-wrap;
@@ -88,11 +88,11 @@ export component Card inherits Rectangle {
 }
 
 export component BoardView inherits Rectangle {
-    property <length> pad: 12px;
-    property <length> col-w: Math.min(self.width - 56px, 330px);
+    property <length> pad: Store.mobile ? 12px : 16px;
+    property <length> col-w: Store.mobile ? Math.min(self.width - 56px, 330px) : 286px;
     property <length> gap: 12px;
     property <length> head-h: 44px;
-    property <length> card-h: 86px;
+    property <length> card-h: Store.mobile ? 86px : 78px;
     property <length> card-gap: 8px;
     property <length> content-h: Math.max(self.height, head-h + pad * 2 + Math.max(Store.board-tallest, 1) * (card-h + card-gap) + 64px);
 
