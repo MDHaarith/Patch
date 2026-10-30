@@ -58,12 +58,12 @@ component WindowControls inherits HorizontalLayout {
 component Content inherits Rectangle {
     clip: true;
     property <float> vpos: Store.view;
-    animate vpos { duration: Theme.motion-panel; easing: ease-out; }
+    animate vpos { duration: 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
     Rectangle {
         width: root.width;
         height: root.height;
-        x: (Store.view - root.vpos) * root.width * 0.6;
-        opacity: 1 - 0.8 * min(1, abs(Store.view - root.vpos));
+        x: clamp(Store.view - root.vpos, -1, 1) * root.width * 0.1;
+        opacity: 1 - 0.5 * min(1, abs(Store.view - root.vpos));
         if Store.view == 0 || Store.view == 1: SwipeNav {
             width: parent.width; height: parent.height;
             blocked: grid.interacting;
@@ -452,7 +452,10 @@ component DesktopShell inherits Rectangle {
     property <length> side-w: Store.sidebar-open && self.width > 760px ? 248px : 0px;
     // 0..1 so the inspector slides in and the main pane reflows smoothly.
     property <float> inspector-t: Store.editor-open ? 1 : 0;
-    animate inspector-t { duration: Theme.motion-panel; easing: ease-out; }
+    animate inspector-t {
+        duration: Store.editor-open ? Theme.motion-enter : Theme.motion-exit;
+        easing: Store.editor-open ? cubic-bezier(0.2, 0, 0, 1) : cubic-bezier(0.4, 0, 1, 1);
+    }
     property <length> inspector-w: 360px * root.inspector-t;
 
     // With the custom frame, empty space moves the window.
@@ -538,7 +541,7 @@ component MobileShell inherits Rectangle {
     property <bool> searching <=> Store.search-open;
     public function focus-search-box() { root.searching = true; }
     VerticalLayout {
-        visible: !Store.settings-open;
+        visible: root.settings-t < 1;
         Rectangle { height: Store.safe-top; }
         HorizontalLayout {
             height: 56px;
@@ -608,7 +611,7 @@ component MobileShell inherits Rectangle {
 
     // Bottom quick-add dock
     dock := Surface {
-        visible: !Store.settings-open;
+        visible: root.settings-t < 1;
         x: 12px;
         y: parent.height - self.height - 12px - Store.safe-bottom;
         width: parent.width - 24px;
@@ -643,10 +646,15 @@ component MobileShell inherits Rectangle {
     }
 
     property <float> editor-t: Store.editor-open ? 1 : 0;
-    animate editor-t { duration: Theme.motion-panel; easing: ease-out; }
+    animate editor-t {
+        duration: Store.editor-open ? Theme.motion-enter : Theme.motion-exit;
+        easing: Store.editor-open ? cubic-bezier(0.2, 0, 0, 1) : cubic-bezier(0.4, 0, 1, 1);
+    }
     if root.editor-t > 0: Rectangle {
-        visible: !Store.settings-open;
-        y: parent.height * (1 - root.editor-t) * 0.25;
+        visible: root.settings-t < 1;
+        width: parent.width;
+        height: parent.height;
+        y: parent.height * (1 - root.editor-t) * 0.06;
         opacity: root.editor-t;
         background: Theme.solid;
         TouchArea {}
@@ -656,7 +664,16 @@ component MobileShell inherits Rectangle {
             Rectangle { height: Store.safe-bottom; }
         }
     }
-    if Store.settings-open: Rectangle {
+    property <float> settings-t: Store.settings-open ? 1 : 0;
+    animate settings-t {
+        duration: Store.settings-open ? Theme.motion-enter : Theme.motion-exit;
+        easing: Store.settings-open ? cubic-bezier(0.2, 0, 0, 1) : cubic-bezier(0.4, 0, 1, 1);
+    }
+    if root.settings-t > 0: Rectangle {
+        width: parent.width;
+        height: parent.height;
+        y: parent.height * (1 - root.settings-t) * 0.06;
+        opacity: root.settings-t;
         background: Theme.solid;
         TouchArea {}
         VerticalLayout {

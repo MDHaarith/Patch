@@ -43,7 +43,7 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
     /** Window margin around the collapsed surface. */
     private static final int SHADOW_DP = 12;
     private static final int EDGE_GAP_DP = 4;
-    private static final int TRANSITION_MS = 240;
+    private static final int TRANSITION_MS = 340;
 
     private static OverlayService instance;
 
@@ -358,7 +358,8 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
         } else {
             view.imeState(PatchNative.IME_HIDE, 0, "", 0, 0, -1, -1, 0, 0);
         }
-        // Slint needs the full surface until its panel and backdrop have faded out.
+        // Keep the full surface through Slint's 300ms open / 220ms close, plus
+        // a frame margin. Opening is gated on the full-size surface in Slint.
         frame.postDelayed(finishTransition, TRANSITION_MS);
     }
 

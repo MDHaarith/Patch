@@ -62,18 +62,24 @@ fn settings_do_not_paint_covered_mobile_layers() {
     // Keep an editor draft underneath Settings, including its completed animation.
     main.global::<Actions>().invoke_new_task("".into(), -2);
     draw(&mut pixels);
-    now.set(Duration::from_millis(250));
+    now.set(Duration::from_millis(300));
     slint::platform::update_timers_and_animations();
     draw(&mut pixels);
     assert_eq!(host.0.get(), 0, "battery optimization is not checked with Settings closed");
 
     store.set_settings_open(true);
+    draw(&mut pixels); // Start the enter animation before advancing the mock clock.
+    now.set(Duration::from_millis(320));
+    slint::platform::update_timers_and_animations();
     assert_ne!(draw(&mut pixels), PhysicalSize::default());
     assert_eq!(
         host.0.get(),
         1,
         "only the mobile settings panel checks battery optimization"
     );
+    now.set(Duration::from_millis(580));
+    slint::platform::update_timers_and_animations();
+    draw(&mut pixels);
     assert_eq!(draw(&mut pixels), PhysicalSize::default());
 
     window.dispatch_event(WindowEvent::PointerScrolled {
@@ -92,7 +98,7 @@ fn settings_do_not_paint_covered_mobile_layers() {
         "painting and scrolling do not check battery optimization"
     );
 
-    now.set(Duration::from_millis(2250));
+    now.set(Duration::from_millis(2580));
     slint::platform::update_timers_and_animations();
     draw(&mut pixels);
     assert_eq!(host.0.get(), 2, "battery optimization refreshes once every two seconds");
@@ -110,10 +116,13 @@ fn settings_do_not_paint_covered_mobile_layers() {
     );
 
     assert!(app.back());
+    draw(&mut pixels); // Retain Settings while its exit animation runs.
+    now.set(Duration::from_millis(2680));
+    slint::platform::update_timers_and_animations();
     assert_ne!(
         draw(&mut pixels),
         PhysicalSize::default(),
-        "closing Settings must restore the layers"
+        "closing Settings animates over the restored layers"
     );
     assert_eq!(
         store.get_title_main(),
@@ -125,7 +134,10 @@ fn settings_do_not_paint_covered_mobile_layers() {
         "closing Settings retains the editor"
     );
     assert_eq!(main.global::<Editor>().get_title(), "Retained draft");
-    now.set(Duration::from_millis(4250));
+    now.set(Duration::from_millis(2780));
+    slint::platform::update_timers_and_animations();
+    draw(&mut pixels);
+    now.set(Duration::from_millis(4780));
     slint::platform::update_timers_and_animations();
     draw(&mut pixels);
     assert_eq!(host.0.get(), 2, "closing Settings stops its background timer");
@@ -135,7 +147,7 @@ fn settings_do_not_paint_covered_mobile_layers() {
         .find(|t| t.title == "Undo expiry").unwrap().id.clone();
     main.global::<Actions>().invoke_delete_task(id.clone().into());
     assert_eq!(store.get_toast_action(), "Undo");
-    now.set(Duration::from_millis(9251));
+    now.set(Duration::from_millis(9781));
     slint::platform::update_timers_and_animations();
     assert_eq!(store.get_toast_action(), "");
     main.global::<Actions>().invoke_undo_delete();
