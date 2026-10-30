@@ -57,7 +57,11 @@ export global Theme {
     in-out property <color> toast-text: #111113;
 
     out property <duration> motion-fast: 120ms;
-    out property <duration> motion-panel: 200ms;
+    out property <duration> motion-panel: 240ms;
+    out property <duration> motion-enter: 260ms;
+    out property <duration> motion-exit: 200ms;
+    // Slint cannot expose easing properties; panels use these curves inline:
+    // enter: cubic-bezier(0.2, 0, 0, 1), exit: cubic-bezier(0.4, 0, 1, 1).
 
     out property <length> r-s: 6px;
     out property <length> r-m: 10px;

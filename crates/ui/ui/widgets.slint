@@ -10,7 +10,7 @@ export component Surface inherits Rectangle {
     in property <bool> sheen: true;
     border-radius: radius;
     background: fill;
-    animate background { duration: Theme.motion-panel; easing: ease-out; }
+    animate background { duration: Theme.motion-panel; easing: cubic-bezier(0.2, 0, 0, 1); }
     border-width: 1px;
     // Gradient borders need the GPU renderer, like the sheen below.
     border-color: Theme.hairline;
@@ -127,17 +127,36 @@ export component Segmented inherits Rectangle {
     background: Theme.well;
     border-width: Theme.light ? 0px : 1px;
     border-color: Theme.hairline;
+    pill := Rectangle {
+        x: 2px;
+        y: 2px;
+        height: parent.height - 4px;
+        width: 0px;
+        border-radius: Store.mobile ? 8px : 6px;
+        background: Theme.light ? #ffffff : Theme.range;
+        drop-shadow-blur: 3px;
+        drop-shadow-offset-y: 1px;
+        drop-shadow-color: #0000002e;
+        animate x, width { duration: Theme.motion-panel; easing: cubic-bezier(0.2, 0, 0, 1); }
+    }
     HorizontalLayout {
         padding: 2px;
         spacing: 2px;
         for item[i] in root.items: Rectangle {
+            property <bool> selected: i == root.current;
+            function place-pill() {
+                if self.selected {
+                    pill.x = self.x;
+                    pill.width = self.width;
+                }
+            }
+            changed selected => { self.place-pill(); }
+            changed x => { self.place-pill(); }
+            changed width => { self.place-pill(); }
             horizontal-stretch: root.stretch ? 1 : 0;
             min-width: inner.preferred-width + (Store.mobile ? 20px : 22px);
             border-radius: Store.mobile ? 8px : 6px;
-            background: i == root.current ? (Theme.light ? #ffffff : Theme.range) : sta.has-hover ? Theme.hover : transparent;
-            drop-shadow-blur: i == root.current ? 3px : 0px;
-            drop-shadow-offset-y: i == root.current ? 1px : 0px;
-            drop-shadow-color: i == root.current ? #0000002e : transparent;
+            background: !self.selected && sta.has-hover ? Theme.hover : transparent;
             animate background { duration: Theme.motion-fast; easing: ease-out; }
             inner := HorizontalLayout {
                 alignment: center;
@@ -175,25 +194,49 @@ export component SwipeNav inherits Rectangle {
     clip: true;
     in property <bool> enabled: Store.mobile;
     in property <bool> blocked: false;
-    property <int> target;
-    property <float> pos: gesture.swiping ? target - (gesture.current-position.x - gesture.pressed-position.x) / root.width : target;
-    animate pos { duration: gesture.swiping ? 0ms : Theme.motion-panel; easing: ease-out; }
+    // Leave the old page mounted until it has travelled off screen. The incoming
+    // page is snapped into view before its enter animation starts.
+    property <int> phase: 0; // idle, outgoing, snap, incoming, spring back
+    property <int> direction: 0;
+    property <bool> snap: phase == 2;
+    property <float> offset: gesture.swiping ? clamp((gesture.current-position.x - gesture.pressed-position.x) / root.width, -1, 1)
+        : phase == 1 ? -direction : snap ? direction * 0.3 : 0;
+    animate offset {
+        duration: gesture.swiping || root.snap ? 0ms : root.phase == 1 ? 150ms : root.phase == 4 ? Theme.motion-exit : Theme.motion-panel;
+        easing: root.phase == 1 ? cubic-bezier(0.4, 0, 1, 1) : cubic-bezier(0.2, 0, 0, 1);
+    }
+    Timer {
+        interval: root.phase == 1 ? 150ms : root.snap ? 20ms : root.phase == 4 ? Theme.motion-exit : Theme.motion-panel;
+        running: root.phase != 0;
+        triggered => {
+            if root.phase == 1 {
+                root.phase = 2;
+                Actions.nav(root.direction);
+            } else if root.snap {
+                root.phase = 3;
+            } else {
+                root.phase = 0;
+            }
+        }
+    }
     gesture := SwipeGestureHandler {
-        enabled: root.enabled && !root.blocked;
+        enabled: root.enabled && !root.blocked && root.phase == 0;
         handle-swipe-left: true;
         handle-swipe-right: true;
         swiped => {
             let dx = self.current-position.x - self.pressed-position.x;
             if (Math.abs(dx) > root.width * 0.2) {
-                root.target += dx < 0 ? 1 : -1;
-                Actions.nav(dx < 0 ? 1 : -1);
+                root.direction = dx < 0 ? 1 : -1;
+                root.phase = 1;
+            } else {
+                root.phase = 4;
             }
         }
         body := Rectangle {
             width: root.width;
             height: root.height;
-            x: (root.target - root.pos) * root.width;
-            opacity: 1 - 0.6 * min(1, abs(root.target - root.pos));
+            x: root.offset * root.width;
+            opacity: root.snap || root.phase == 3 ? 1 - 0.7 * min(1, abs(root.offset) / 0.3) : 1 - 0.7 * min(1, abs(root.offset));
             @children
         }
     }
@@ -367,7 +410,7 @@ export component Toggle inherits Rectangle {
         drop-shadow-blur: 3px;
         drop-shadow-offset-y: 1px;
         drop-shadow-color: #00000040;
-        animate x { duration: Theme.motion-fast; easing: ease-out; }
+        animate x { duration: Theme.motion-panel; easing: cubic-bezier(0.2, 0, 0, 1); }
     }
     TouchArea {
         clicked => {

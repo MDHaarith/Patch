@@ -12,12 +12,13 @@ use patch_ui::{Actions, App, Host, MainWindow, OverlayWindow, Store};
 use slint::platform::software_renderer::{MinimalSoftwareWindow, PremultipliedRgbaColor, RepaintBufferType};
 use slint::platform::{Platform, WindowAdapter, WindowEvent};
 use slint::{ComponentHandle, PhysicalSize};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 struct ShotPlatform {
     windows: RefCell<Vec<Rc<MinimalSoftwareWindow>>>,
+    time: Cell<std::time::Duration>,
 }
 
 impl Platform for ShotPlatform {
@@ -25,6 +26,10 @@ impl Platform for ShotPlatform {
         let w = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
         self.windows.borrow_mut().push(w.clone());
         Ok(w)
+    }
+
+    fn duration_since_start(&self) -> std::time::Duration {
+        self.time.get()
     }
 }
 
@@ -137,26 +142,36 @@ fn d_list_ids() -> (&'static str, &'static str) {
     (DEFAULT_LIST, LIST_WORK)
 }
 
-fn render(platform: &ShotPlatform, index: usize, size: (u32, u32), scale: f32, out: &Path) {
+fn frame(platform: &ShotPlatform, index: usize, size: (u32, u32), scale: f32) -> Vec<PremultipliedRgbaColor> {
     let w = platform.windows.borrow()[index].clone();
     w.dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: scale });
     w.set_size(PhysicalSize::new(size.0, size.1));
-    // Run layout before settling animations and deferred initial scrolls.
     let mut buf = vec![PremultipliedRgbaColor::default(); (size.0 * size.1) as usize];
     w.request_redraw();
-    w.draw_if_needed(|r| {
-        r.render(&mut buf, size.0 as usize);
-    });
-    // Let property animations (theme cross-fades, toggles) settle.
-    for _ in 0..12 {
+    w.draw_if_needed(|r| { r.render(&mut buf, size.0 as usize); });
+    buf
+}
+
+// Advance in frames so timer-driven transitions also evaluate their bindings.
+fn advance(platform: &ShotPlatform, index: usize, size: (u32, u32), scale: f32, ms: u64) {
+    let mut remaining = ms;
+    while remaining > 0 {
+        let step = remaining.min(10);
+        platform.time.set(platform.time.get() + std::time::Duration::from_millis(step));
         slint::platform::update_timers_and_animations();
-        std::thread::sleep(std::time::Duration::from_millis(30));
+        frame(platform, index, size, scale);
+        remaining -= step;
     }
-    slint::platform::update_timers_and_animations();
-    w.request_redraw();
-    w.draw_if_needed(|r| {
-        r.render(&mut buf, size.0 as usize);
-    });
+}
+
+fn render(platform: &ShotPlatform, index: usize, size: (u32, u32), scale: f32, out: &Path) {
+    frame(platform, index, size, scale);
+    advance(platform, index, size, scale, 420);
+    capture(platform, index, size, scale, out);
+}
+
+fn capture(platform: &ShotPlatform, index: usize, size: (u32, u32), scale: f32, out: &Path) {
+    let buf = frame(platform, index, size, scale);
     let file = std::fs::File::create(out).unwrap();
     let mut enc = png::Encoder::new(std::io::BufWriter::new(file), size.0, size.1);
     enc.set_color(png::ColorType::Rgba);
@@ -176,15 +191,22 @@ fn render(platform: &ShotPlatform, index: usize, size: (u32, u32), scale: f32, o
 fn main() {
     let out = PathBuf::from(std::env::args().nth(1).unwrap_or_else(|| "screenshots".into()));
     std::fs::create_dir_all(&out).unwrap();
-    let platform = Rc::new(ShotPlatform { windows: RefCell::new(Vec::new()) });
+    let platform = Rc::new(ShotPlatform { windows: RefCell::new(Vec::new()), time: Cell::new(std::time::Duration::ZERO) });
     struct Shared(Rc<ShotPlatform>);
     impl Platform for Shared {
         fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
             self.0.create_window_adapter()
         }
+        fn duration_since_start(&self) -> std::time::Duration {
+            self.0.duration_since_start()
+        }
     }
     slint::platform::set_platform(Box::new(Shared(platform.clone()))).unwrap();
     let only = std::env::var("SHOTS").unwrap_or_default();
+    if only == "motion" {
+        motion(&platform, &out);
+        return;
+    }
     let want = |name: &str| only.is_empty() || only.split(',').any(|o| name.starts_with(o));
     let looks = ["matte", "light"];
 
@@ -344,6 +366,68 @@ fn main() {
     drop(app);
     drop(papp);
     println!("wrote screenshots to {}", out.display());
+}
+
+// SHOTS=motion cargo run -p patch-ui --example shots -- /tmp/anim
+fn motion(platform: &ShotPlatform, out: &Path) {
+    use slint::platform::PointerEventButton;
+    use slint::LogicalPosition;
+    let dir = std::env::temp_dir().join(format!("patch-motion-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    seed(&dir);
+    let app = App::new(dir.clone(), Rc::new(DemoHost { mobile: true }));
+    let overlay = OverlayWindow::new().unwrap();
+    app.attach_overlay(&overlay);
+    let oi = platform.windows.borrow().len() - 1;
+    overlay.set_pet_x(4.0);
+    overlay.set_pet_y(4.0);
+    overlay.global::<Store>().set_overlay_expanded(false);
+    overlay.show().unwrap();
+    let size = (412, 915);
+    render(platform, oi, size, 1.0, &out.join("overlay-collapsed.png"));
+    for (expanded, name, samples) in [
+        (true, "open", [0, 37, 60, 107, 300]),
+        (false, "close", [0, 89, 143, 186, 220]),
+    ] {
+        overlay.global::<Store>().set_overlay_expanded(expanded);
+        frame(platform, oi, size, 1.0);
+        let mut previous = 0;
+        for (i, ms) in samples.into_iter().enumerate() {
+            advance(platform, oi, size, 1.0, ms - previous);
+            capture(platform, oi, size, 1.0, &out.join(format!("overlay-{name}-{i}.png")));
+            previous = ms;
+        }
+        advance(platform, oi, size, 1.0, 100);
+    }
+    let phone = MainWindow::new().unwrap();
+    app.attach_main(&phone);
+    app.set_safe_area(24.0, 16.0);
+    let pi = platform.windows.borrow().len() - 1;
+    phone.show().unwrap();
+    phone.global::<Actions>().invoke_set_view(2);
+    render(platform, pi, size, 1.0, &out.join("month-idle.png"));
+    let window = platform.windows.borrow()[pi].clone();
+    let start = LogicalPosition::new(280.0, 450.0);
+    window.dispatch_event(WindowEvent::PointerPressed { position: start, button: PointerEventButton::Left });
+    for step in 1..=10 {
+        window.dispatch_event(WindowEvent::PointerMoved {
+            position: LogicalPosition::new(start.x - 16.0 * step as f32, start.y),
+        });
+        advance(platform, pi, size, 1.0, 16);
+        if step == 5 {
+            capture(platform, pi, size, 1.0, &out.join("month-mid-drag.png"));
+        }
+    }
+    window.dispatch_event(WindowEvent::PointerReleased {
+        position: LogicalPosition::new(120.0, start.y), button: PointerEventButton::Left,
+    });
+    frame(platform, pi, size, 1.0);
+    for (ms, name) in [(75, "mid-out"), (75, "snap"), (20, "enter-start"), (120, "mid-in"), (120, "settled")] {
+        advance(platform, pi, size, 1.0, ms);
+        capture(platform, pi, size, 1.0, &out.join(format!("month-{name}.png")));
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+    println!("wrote motion frames to {}", out.display());
 }
 
 fn app_task(dir: &Path, title: &str) -> String {

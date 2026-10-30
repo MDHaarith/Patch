@@ -36,8 +36,8 @@ fn calendar_swipes_navigate_only_after_a_horizontal_threshold() {
         let navigation = navigation.clone();
         move |direction| navigation.borrow_mut().push(direction)
     });
-    let render = || {
-        time.set(time.get() + Duration::from_millis(250));
+    let render = |ms| {
+        time.set(time.get() + Duration::from_millis(ms));
         slint::platform::update_timers_and_animations();
         let mut pixels = vec![PremultipliedRgbaColor::default(); 412 * 915];
         window.request_redraw();
@@ -50,23 +50,37 @@ fn calendar_swipes_navigate_only_after_a_horizontal_threshold() {
             window.dispatch_event(WindowEvent::PointerMoved {
                 position: LogicalPosition::new(start.x + dx * step as f32 / 10.0, start.y + dy * step as f32 / 10.0),
             });
-            render();
+            render(16);
         }
         window.dispatch_event(WindowEvent::PointerReleased {
             position: LogicalPosition::new(start.x + dx, start.y + dy), button: PointerEventButton::Left,
         });
-        render();
+        render(0);
     };
     for view in 0..=2 {
         store.set_view(view);
-        render();
-        render();
+        render(0);
+        render(300);
         navigation.borrow_mut().clear();
         drag(-130.0, 0.0);
+        assert!(navigation.borrow().is_empty(), "view {view}: wait for the outgoing page");
+        render(149);
+        assert!(navigation.borrow().is_empty(), "view {view}: no early navigation");
+        render(1);
+        assert_eq!(*navigation.borrow(), vec![1]);
+        drag(-130.0, 0.0);
+        assert_eq!(*navigation.borrow(), vec![1], "view {view}: ignore gestures while settling");
+        render(20);
+        render(240);
         drag(130.0, 0.0);
+        render(150);
+        render(20);
+        render(240);
         assert_eq!(*navigation.borrow(), vec![1, -1], "view {view}: both directions");
         drag(-40.0, 0.0);
+        render(200);
         drag(0.0, -130.0);
+        render(300);
         assert_eq!(*navigation.borrow(), vec![1, -1], "view {view}: short and vertical drags stay put");
     }
     store.set_mobile(false);
