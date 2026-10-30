@@ -6,7 +6,7 @@ import "../../../assets/fonts/Inter-Bold.otf";
 import { Theme } from "theme.slint";
 import { Icon } from "icons.slint";
 import { Store, Editor, Actions, TaskItem } from "store.slint";
-import { Surface, Divider, VDivider, IconButton, Button, Segmented, Field, Scroll, SectionLabel, Toast } from "widgets.slint";
+import { Surface, Divider, VDivider, IconButton, Button, Segmented, Field, Scroll, SectionLabel, Toast, SwipeNav } from "widgets.slint";
 import { MiniCalendar } from "calendar-bits.slint";
 import { MonthView } from "month.slint";
 import { TimeGrid } from "timegrid.slint";
@@ -56,10 +56,26 @@ component WindowControls inherits HorizontalLayout {
 }
 
 component Content inherits Rectangle {
-    if Store.view == 0 || Store.view == 1: TimeGrid { width: parent.width; height: parent.height; }
-    if Store.view == 2: MonthView { width: parent.width; height: parent.height; }
-    if Store.view == 3: BoardView { width: parent.width; height: parent.height; }
-    if Store.view == 4: ListView { width: parent.width; height: parent.height; }
+    clip: true;
+    property <float> vpos: Store.view;
+    animate vpos { duration: Theme.motion-panel; easing: ease-out; }
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        x: (Store.view - root.vpos) * root.width * 0.6;
+        opacity: 1 - 0.8 * min(1, abs(Store.view - root.vpos));
+        if Store.view == 0 || Store.view == 1: SwipeNav {
+            width: parent.width; height: parent.height;
+            blocked: grid.interacting;
+            grid := TimeGrid { width: parent.width; height: parent.height; }
+        }
+        if Store.view == 2: SwipeNav {
+            width: parent.width; height: parent.height;
+            MonthView { width: parent.width; height: parent.height; }
+        }
+        if Store.view == 3: BoardView { width: parent.width; height: parent.height; }
+        if Store.view == 4: ListView { width: parent.width; height: parent.height; }
+    }
 }
 
 component SyncDot inherits Rectangle {
@@ -547,7 +563,7 @@ component MobileShell inherits Rectangle {
                 Text { text: Store.title-sub; font-size: 26px; font-weight: 400; color: Theme.text-2; vertical-alignment: center; }
             }
             Rectangle { horizontal-stretch: 1; }
-            if Store.view <= 2: Button { y: (parent.height - self.height) / 2; text: "Today"; kind: 0; pad: 12px; clicked => { Actions.go-today(); } }
+            if Store.view <= 1: Button { y: (parent.height - self.height) / 2; text: "Today"; kind: 0; pad: 12px; clicked => { Actions.go-today(); } }
             IconButton { y: (parent.height - self.height) / 2; size: 38px; icon-size: 18px; icon: "search"; active: root.searching; clicked => { root.searching = !root.searching; } }
             IconButton { y: (parent.height - self.height) / 2; size: 38px; icon-size: 18px; icon: "gear"; clicked => { Store.settings-open = true; } }
         }

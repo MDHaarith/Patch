@@ -170,6 +170,35 @@ export component Scroll inherits Flickable {
     mouse-drag-pan-enabled: Store.mobile;
 }
 
+// Horizontal calendar navigation; vertical gestures stay with the scroll view.
+export component SwipeNav inherits Rectangle {
+    clip: true;
+    in property <bool> enabled: Store.mobile;
+    in property <bool> blocked: false;
+    property <int> target;
+    property <float> pos: gesture.swiping ? target - (gesture.current-position.x - gesture.pressed-position.x) / root.width : target;
+    animate pos { duration: gesture.swiping ? 0ms : Theme.motion-panel; easing: ease-out; }
+    gesture := SwipeGestureHandler {
+        enabled: root.enabled && !root.blocked;
+        handle-swipe-left: true;
+        handle-swipe-right: true;
+        swiped => {
+            let dx = self.current-position.x - self.pressed-position.x;
+            if (Math.abs(dx) > root.width * 0.2) {
+                root.target += dx < 0 ? 1 : -1;
+                Actions.nav(dx < 0 ? 1 : -1);
+            }
+        }
+        body := Rectangle {
+            width: root.width;
+            height: root.height;
+            x: (root.target - root.pos) * root.width;
+            opacity: 1 - 0.6 * min(1, abs(root.target - root.pos));
+            @children
+        }
+    }
+}
+
 // Wrapped text field. `multiline` makes Enter insert a newline instead of submit.
 export component Field inherits Rectangle {
     in-out property <string> text <=> input.text;

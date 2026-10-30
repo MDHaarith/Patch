@@ -186,10 +186,11 @@ fn desktop_interactions() {
     // --- Week: drag the block one hour later.
     main.global::<Actions>().invoke_select_date(new_day.to_string().into());
     main.global::<Actions>().invoke_set_view(1);
+    main.global::<Store>().set_now_minutes(540.0);
     ui.settle();
     let di = new_day.weekday().num_days_from_monday() as f32;
     let col_w = (MAIN_W - 56.0) / 7.0;
-    let body_y = CONTENT_Y + 44.0 + 30.0 + 1.0;
+    let body_y = CONTENT_Y + 50.0 + 30.0 + 1.0;
     let hour_h = 46.0;
     let block_y = body_y + 10.0 + 15.0 * hour_h - 7.5 * hour_h + 12.0;
     let block_x = MAIN_X + 56.0 + di * col_w + 30.0;
