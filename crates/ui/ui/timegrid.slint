@@ -9,7 +9,7 @@ export component TimeGrid inherits Rectangle {
     property <length> gutter: Store.mobile ? 46px : 56px;
     property <length> hour-h: Store.mobile ? 54px : 46px;
     property <length> col-w: (self.width - gutter) / days;
-    property <length> head-h: Store.mobile && days == 1 ? 0px : 44px;
+    property <length> head-h: Store.mobile && days == 1 ? 0px : 50px;
     property <length> bar-h: 20px;
     property <length> allday-h: Math.max(1, Store.grid-lanes) * (bar-h + 2px) + 8px;
     property <length> body-y: head-h + allday-h + 1px;
@@ -18,6 +18,8 @@ export component TimeGrid inherits Rectangle {
     property <string> drag-id;
     property <bool> dragging;
     property <bool> resizing;
+    out property <bool> interacting: dragging || resizing;
+    property <bool> initial-scroll: true;
     property <length> dx;
     property <length> dy;
     property <int> snap-min: Math.round(dy / hour-h * 4) * 15;
@@ -37,23 +39,27 @@ export component TimeGrid inherits Rectangle {
         for d[i] in Store.grid-days: Rectangle {
             x: root.gutter + i * root.col-w;
             width: root.col-w;
+            background: d.today ? Theme.accent-soft.with-alpha(0.09) : transparent;
             Text {
-                y: 2px;
+                y: 3px;
                 width: parent.width;
                 height: 18px;
                 text: d.weekday;
                 horizontal-alignment: center;
                 font-size: Theme.fs-xs;
-                color: d.weekend ? Theme.text-3 : Theme.text-2;
+                font-weight: 600;
+                color: d.today ? Theme.accent : d.weekend ? Theme.text-3 : Theme.text-2;
                 overflow: elide;
             }
             Rectangle {
                 x: (parent.width - self.width) / 2;
                 y: 20px;
-                width: 24px;
-                height: 24px;
-                border-radius: 12px;
+                width: 26px;
+                height: 26px;
+                border-radius: 13px;
                 background: d.today ? Theme.today : transparent;
+                border-width: Store.selected == d.key ? 1px : 0px;
+                border-color: Theme.accent;
                 Text {
                     text: d.day;
                     font-size: Theme.fs-m;
@@ -69,11 +75,13 @@ export component TimeGrid inherits Rectangle {
     Rectangle {
         y: root.head-h;
         height: root.allday-h;
+        clip: true;
         Text {
             x: 0;
-            width: root.gutter - 8px;
+            width: root.gutter - 4px;
             y: 6px;
             text: "all-day";
+            overflow: elide;
             horizontal-alignment: right;
             font-size: Theme.fs-xs;
             color: Theme.text-2;
@@ -86,7 +94,8 @@ export component TimeGrid inherits Rectangle {
         for bar in Store.grid-bars: Rectangle {
             x: root.gutter + bar.col * root.col-w + 3px;
             y: 4px + bar.lane * (root.bar-h + 2px);
-            width: bar.span * root.col-w - 6px;
+            width: max(0px, min(bar.span, root.days - bar.col) * root.col-w - 6px);
+            clip: true;
             height: root.bar-h;
             border-radius: root.bar-h / 2;
             background: bar.color.with-alpha(Theme.light ? 0.22 : 0.34);
@@ -111,7 +120,16 @@ export component TimeGrid inherits Rectangle {
         y: root.body-y;
         height: root.height - root.body-y;
         content-height: 24 * root.hour-h + 20px;
-        init => { self.content-y = -7.5 * root.hour-h; }
+        // Wait for layout before assigning Flickable's clamped content offset.
+        Timer {
+            interval: 1ms;
+            running: root.initial-scroll && scroll.height > 0px;
+            triggered => {
+                scroll.content-y = -min(max(0px, scroll.content-height - scroll.height),
+                    (Store.now-day >= 0 ? max(0, Store.now-minutes / 60 - 1.5) : 7.5) * root.hour-h);
+                root.initial-scroll = false;
+            }
+        }
 
         // Weekend shading and day separators
         for d[i] in Store.grid-days: Rectangle {
@@ -119,7 +137,7 @@ export component TimeGrid inherits Rectangle {
             y: 0;
             width: root.col-w;
             height: 24 * root.hour-h + 20px;
-            background: d.weekend ? Theme.weekend : transparent;
+            background: d.today ? Theme.accent-soft.with-alpha(0.07) : d.weekend ? Theme.weekend : transparent;
             Rectangle { x: 0; width: 1px; background: Theme.hairline; }
         }
         // Hour lines and labels
@@ -130,7 +148,7 @@ export component TimeGrid inherits Rectangle {
                 x: root.gutter;
                 y: 0;
                 height: 1px;
-                background: h == 0 ? transparent : Theme.hairline;
+                background: h == 0 ? transparent : Theme.hairline.with-alpha(Theme.hairline.alpha / 255 * 0.7);
             }
             Rectangle {
                 x: root.gutter;
@@ -140,11 +158,11 @@ export component TimeGrid inherits Rectangle {
             }
             if h > 0 && h < Store.hour-labels.length: Text {
                 x: 0;
-                y: -7px;
+                y: -8px;
                 width: root.gutter - 8px;
                 text: Store.hour-labels[h];
                 horizontal-alignment: right;
-                font-size: Theme.fs-xs;
+                font-size: Theme.fs-s;
                 color: Theme.text-2;
             }
         }
@@ -185,30 +203,31 @@ export component TimeGrid inherits Rectangle {
                 y: parent.active && root.dragging ? root.snap-min / 60 * root.hour-h : 0;
                 width: parent.width;
                 height: parent.active && root.resizing ? Math.max(parent.height + root.snap-min / 60 * root.hour-h, root.hour-h / 4) : parent.height;
-                border-radius: 8px;
+                clip: true;
+                border-radius: root.col-w < 60px ? 5px : 8px;
                 background: Theme.light ? b.color.with-alpha(0.18) : b.color.with-alpha(0.26);
                 border-width: parent.active ? 1px : 0px;
                 border-color: b.color;
                 opacity: b.done ? 0.5 : 1;
                 drop-shadow-blur: parent.active ? 16px : 0px;
                 drop-shadow-color: #00000066;
-                Rectangle { x: 3px; y: 4px; width: 3px; height: parent.height - 8px; border-radius: 1.5px; background: b.color; }
-                if visual.width >= 42px: VerticalLayout {
-                    padding-left: 10px;
-                    padding-right: 4px;
+                Rectangle { x: root.col-w < 60px ? 2px : 3px; y: 4px; width: root.col-w < 60px ? 2px : 3px; height: parent.height - 8px; border-radius: 1.5px; background: b.color; }
+                if visual.width >= 22px: VerticalLayout {
+                    padding-left: root.col-w < 60px ? 6px : 10px;
+                    padding-right: root.col-w < 60px ? 2px : 4px;
                     padding-top: 3px;
                     spacing: 0px;
                     alignment: start;
                     Text {
                         text: b.title;
-                        font-size: Theme.fs-s;
+                        font-size: root.col-w < 60px ? Theme.fs-xs : Theme.fs-s;
                         font-weight: 600;
                         color: Theme.light ? b.color.darker(0.45) : b.color.brighter(0.55);
                         overflow: elide;
-                        wrap: no-wrap;
-                        max-height: visual.height - 18px;
+                        wrap: word-wrap;
+                        max-height: max(0px, visual.height - (visual.width >= 60px && b.span >= 45 ? 18px : 4px));
                     }
-                    if b.span >= 45 || (blk.active && root.dragging): Text {
+                    if visual.width >= 60px && (b.span >= 45 || (blk.active && root.dragging)): Text {
                         text: blk.active && root.dragging ? root.minute-label(Math.mod(Math.round(b.top) + root.snap-min + 1440, 1440)) : b.time;
                         font-size: Theme.fs-xs;
                         color: Theme.light ? b.color.darker(0.25) : b.color.brighter(0.3);

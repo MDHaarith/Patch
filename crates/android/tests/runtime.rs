@@ -392,8 +392,8 @@ fn renders_and_drives_both_windows() {
         "Java's size already matches the app's state"
     );
     assert!(
-        (95..=110).contains(&panel.pixel(0, 0)[3]),
-        "the single backdrop dims behind the pet: {:?}",
+        panel.pixel(0, 0)[3] == 0,
+        "nothing dims behind the pet: {:?}",
         panel.pixel(0, 0)
     );
     assert!(

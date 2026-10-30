@@ -141,6 +141,12 @@ fn render(platform: &ShotPlatform, index: usize, size: (u32, u32), scale: f32, o
     let w = platform.windows.borrow()[index].clone();
     w.dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: scale });
     w.set_size(PhysicalSize::new(size.0, size.1));
+    // Run layout before settling animations and deferred initial scrolls.
+    let mut buf = vec![PremultipliedRgbaColor::default(); (size.0 * size.1) as usize];
+    w.request_redraw();
+    w.draw_if_needed(|r| {
+        r.render(&mut buf, size.0 as usize);
+    });
     // Let property animations (theme cross-fades, toggles) settle.
     for _ in 0..12 {
         slint::platform::update_timers_and_animations();
@@ -148,7 +154,6 @@ fn render(platform: &ShotPlatform, index: usize, size: (u32, u32), scale: f32, o
     }
     slint::platform::update_timers_and_animations();
     w.request_redraw();
-    let mut buf = vec![PremultipliedRgbaColor::default(); (size.0 * size.1) as usize];
     w.draw_if_needed(|r| {
         r.render(&mut buf, size.0 as usize);
     });
@@ -242,6 +247,13 @@ fn main() {
         let name = format!("overlay-{look}-panel");
         if want(&name) {
             overlay.global::<Store>().set_overlay_expanded(true);
+            overlay.global::<Store>().set_overlay_tab(0);
+            render(&platform, oidx, (340 * 2, 500 * 2), 2.0, &out.join(format!("{name}.png")));
+        }
+        let name = format!("overlay-{look}-panel-calendar");
+        if want(&name) {
+            overlay.global::<Store>().set_overlay_expanded(true);
+            overlay.global::<Store>().set_overlay_tab(3);
             render(&platform, oidx, (340 * 2, 500 * 2), 2.0, &out.join(format!("{name}.png")));
         }
         let name = format!("overlay-{look}-bubble");
@@ -318,14 +330,16 @@ fn main() {
             phone.global::<Store>().set_settings_open(false);
         }
     }
-    let name = "phone-overlay-popup";
-    if want(name) {
-        let pov = OverlayWindow::new().unwrap();
-        papp.attach_overlay(&pov);
-        let idx = platform.windows.borrow().len() - 1;
-        pov.show().unwrap();
-        pov.global::<Store>().set_overlay_expanded(true);
-        render(&platform, idx, psize, scale, &out.join(format!("{name}.png")));
+    for (tab, name) in [(0, "phone-overlay-popup"), (3, "phone-overlay-popup-calendar")] {
+        if want(name) {
+            let pov = OverlayWindow::new().unwrap();
+            papp.attach_overlay(&pov);
+            let idx = platform.windows.borrow().len() - 1;
+            pov.show().unwrap();
+            pov.global::<Store>().set_overlay_expanded(true);
+            pov.global::<Store>().set_overlay_tab(tab);
+            render(&platform, idx, psize, scale, &out.join(format!("{name}.png")));
+        }
     }
     drop(app);
     drop(papp);

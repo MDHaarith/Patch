@@ -1,8 +1,9 @@
 import { Theme } from "theme.slint";
 import { Icon } from "icons.slint";
 import { Store, Actions, TaskItem } from "store.slint";
-import { Surface, Field, IconButton, Segmented, Scroll, Check, Priority } from "widgets.slint";
+import { Surface, Field, IconButton, Segmented, Scroll, Check, Priority, Divider, SectionLabel } from "widgets.slint";
 import { TaskRow } from "rows.slint";
+import { MiniCalendar } from "calendar-bits.slint";
 import { Pet } from "pet.slint";
 
 // Collapsed overlay: Patch's pet, with today's open count.
@@ -18,7 +19,28 @@ export component Bubble inherits Rectangle {
     }
 }
 
-// Expanded overlay: Today / Upcoming / Board with quick add. The top 52px
+component OverlayPage inherits Rectangle {
+    in property <int> index;
+    in property <float> pos;
+    in property <length> page-w;
+    x: (index - pos) * page-w;
+    width: page-w;
+    visible: Math.abs(index - pos) < 1;
+    page-scroll := Scroll {
+        width: parent.width;
+        height: parent.height;
+        mouse-drag-pan-enabled: true;
+        content-height: column.preferred-height;
+        column := VerticalLayout {
+            width: page-scroll.width;
+            alignment: start;
+            spacing: 0px;
+            @children
+        }
+    }
+}
+
+// Expanded overlay: Today / Upcoming / Board / Calendar with quick add. The top 52px
 // are the drag handle on Android (the window is moved natively).
 export component OverlayPanel inherits Rectangle {
     in property <length> radius: 24px;
@@ -65,69 +87,85 @@ export component OverlayPanel inherits Rectangle {
                 }
             }
             Segmented {
-                items: ["Today", "Upcoming", "Board"];
+                items: ["Today", "Upcoming", "Board", "Calendar"];
                 current: Store.overlay-tab;
                 stretch: true;
                 seg-height: 30px;
                 picked(i) => { Store.overlay-tab = i; }
             }
-            if Store.overlay-tab == 2: Rectangle {
-                height: 30px;
-                Scroll {
-                    content-width: chips.preferred-width;
-                    mouse-drag-pan-enabled: true;
-                    chips := HorizontalLayout {
-                        spacing: 6px;
-                        for col[i] in Store.board: Rectangle {
-                            height: 28px;
-                            width: cl.preferred-width + 20px;
-                            border-radius: 14px;
-                            background: i == root.board-col ? Theme.accent-soft : Theme.well;
-                            border-width: 1px;
-                            border-color: i == root.board-col ? Theme.accent.with-alpha(0.7) : Theme.hairline;
-                            cl := Text {
-                                text: "\{col.name}  \{col.count}";
-                                font-size: Theme.fs-s;
-                                font-weight: 600;
-                                color: i == root.board-col ? Theme.accent : Theme.text;
-                            }
-                            TouchArea { clicked => { root.board-col = i; } }
-                        }
+            pages := Rectangle {
+                vertical-stretch: 1;
+                clip: true;
+                property <float> pos: Store.overlay-tab;
+                animate pos { duration: Theme.motion-panel; easing: ease-out; }
+                OverlayPage {
+                    index: 0; pos: pages.pos; page-w: pages.width; height: pages.height;
+                    for it in Store.today-items: TaskRow { item: it; dense: true; opened(id) => { Actions.open-app(id); } }
+                    if Store.today-items.length == 0: Text {
+                        height: 80px;
+                        text: "Nothing left today ✓";
+                        color: Theme.text-2;
+                        font-size: Theme.fs-m;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
                     }
                 }
-            }
-            items-scroll := Scroll {
-                vertical-stretch: 1;
-                mouse-drag-pan-enabled: true;
-                content-height: items.preferred-height;
-                items := VerticalLayout {
-                    width: items-scroll.width;
-                    alignment: start;
-                    spacing: 0px;
-                    if Store.overlay-tab == 0: VerticalLayout {
-                        for it in Store.today-items: TaskRow { item: it; dense: true; opened(id) => { Actions.open-app(id); } }
-                        if Store.today-items.length == 0: Text {
-                            height: 80px;
-                            text: "Nothing left today ✓";
-                            color: Theme.text-2;
-                            font-size: Theme.fs-m;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
+                OverlayPage {
+                    index: 1; pos: pages.pos; page-w: pages.width; height: pages.height;
+                    for it in Store.up-next: TaskRow { item: it; dense: true; opened(id) => { Actions.open-app(id); } }
+                    if Store.up-next.length == 0: Text {
+                        height: 80px;
+                        text: "Nothing scheduled";
+                        color: Theme.text-2;
+                        font-size: Theme.fs-m;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                OverlayPage {
+                    index: 2; pos: pages.pos; page-w: pages.width; height: pages.height;
+                    Rectangle {
+                        height: 30px;
+                        Scroll {
+                            content-width: chips.preferred-width;
+                            mouse-drag-pan-enabled: true;
+                            chips := HorizontalLayout {
+                                spacing: 6px;
+                                for col[i] in Store.board: Rectangle {
+                                    height: 28px;
+                                    width: cl.preferred-width + 20px;
+                                    border-radius: 14px;
+                                    background: i == root.board-col ? Theme.accent-soft : Theme.well;
+                                    border-width: 1px;
+                                    border-color: i == root.board-col ? Theme.accent.with-alpha(0.7) : Theme.hairline;
+                                    cl := Text {
+                                        text: "\{col.name}  \{col.count}";
+                                        font-size: Theme.fs-s;
+                                        font-weight: 600;
+                                        color: i == root.board-col ? Theme.accent : Theme.text;
+                                    }
+                                    TouchArea { clicked => { root.board-col = i; } }
+                                }
+                            }
                         }
                     }
-                    if Store.overlay-tab == 1: VerticalLayout {
-                        for it in Store.up-next: TaskRow { item: it; dense: true; opened(id) => { Actions.open-app(id); } }
-                        if Store.up-next.length == 0: Text {
-                            height: 80px;
-                            text: "Nothing scheduled";
-                            color: Theme.text-2;
-                            font-size: Theme.fs-m;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                    }
-                    if Store.overlay-tab == 2 && root.board-col < Store.board.length: VerticalLayout {
+                    if root.board-col < Store.board.length: VerticalLayout {
                         for it in Store.board[root.board-col].cards: TaskRow { item: it; dense: true; opened(id) => { Actions.open-app(id); } }
+                    }
+                }
+                OverlayPage {
+                    index: 3; pos: pages.pos; page-w: pages.width; height: pages.height;
+                    MiniCalendar { }
+                    Divider { }
+                    SectionLabel { text: Store.day-agenda-title; height: 32px; vertical-alignment: center; }
+                    for it in Store.day-agenda: TaskRow { item: it; dense: true; opened(id) => { Actions.open-app(id); } }
+                    if Store.day-agenda.length == 0: Text {
+                        height: 80px;
+                        text: "Nothing planned";
+                        color: Theme.text-2;
+                        font-size: Theme.fs-m;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
                     }
                 }
             }
@@ -345,7 +383,7 @@ export component OverlayWindow inherits Window {
         // Keep the panel mounted until Java shrinks the surface after the close animation.
         Rectangle {
             visible: root.panel-surface;
-            background: #000000.with-alpha(0.4 * root.reveal);
+            background: transparent;
             TouchArea { clicked => { root.toggle-mobile(); } }
         }
         pet := Bubble {

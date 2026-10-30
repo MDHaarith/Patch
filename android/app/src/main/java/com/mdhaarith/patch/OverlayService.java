@@ -7,7 +7,6 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
 import android.content.res.Configuration;
-import android.graphics.Outline;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.os.Build;
@@ -22,7 +21,6 @@ import android.view.MotionEvent;
 import android.view.VelocityTracker;
 import android.view.View;
 import android.view.ViewConfiguration;
-import android.view.ViewOutlineProvider;
 import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.view.WindowMetrics;
@@ -33,20 +31,17 @@ import android.widget.FrameLayout;
  * The "display over other apps" panel: a foreground service owning a
  * TYPE_APPLICATION_OVERLAY window with a {@link PatchSurfaceView} that Rust
  * renders the Slint OverlayWindow into. Java owns everything about the window
- * itself: size, dragging, placement, focusability for the keyboard, and
- * the shadow the software renderer can't draw. Collapsed it is the draggable
- * pet; expanded it fills the screen (dimmed behind) and Slint pops the panel
- * out under the pet, like a system bubble.
+ * itself: size, dragging, placement, and focusability for the keyboard.
+ * Collapsed it is the draggable pet; expanded it fills the screen with a
+ * transparent background and Slint pops the panel out under the pet, like
+ * a system bubble.
  */
 public final class OverlayService extends Service implements PatchSurfaceView.FocusHost {
     static final String ACTION_HIDE = "com.mdhaarith.patch.action.HIDE_OVERLAY";
 
     private static final int BUBBLE_DP = 60;
-    /** The Slint bubble is a 52px circle centred in its 60px window. */
-    private static final int BUBBLE_INSET_DP = 4;
-    /** Room around the surface for the elevation shadow. */
+    /** Window margin around the collapsed surface. */
     private static final int SHADOW_DP = 12;
-    private static final int ELEVATION_DP = 8;
     private static final int EDGE_GAP_DP = 4;
     private static final int TRANSITION_MS = 240;
 
@@ -192,18 +187,6 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
         view = new PatchSurfaceView(this, PatchNative.OVERLAY);
         view.setFocusHost(this);
         view.routedTouches = true;
-        view.setElevation(dp(ELEVATION_DP));
-        view.setOutlineProvider(new ViewOutlineProvider() {
-            @Override
-            public void getOutline(View v, Outline outline) {
-                if (expanded) {
-                    outline.setEmpty(); // The dim behind sets the panel apart.
-                } else {
-                    int inset = dp(BUBBLE_INSET_DP);
-                    outline.setOval(inset, inset, v.getWidth() - inset, v.getHeight() - inset);
-                }
-            }
-        });
         frame = new Frame(this);
         frame.setClipChildren(false);
         frame.setClipToPadding(false);
@@ -309,7 +292,6 @@ public final class OverlayService extends Service implements PatchSurfaceView.Fo
         vlp.leftMargin = m;
         vlp.topMargin = m;
         view.setLayoutParams(vlp);
-        view.invalidateOutline();
         view.setImportantForAccessibility(expanded ? View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
                 : View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         frame.setClickable(!expanded);
