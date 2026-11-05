@@ -9,6 +9,7 @@
 
 pub mod doc;
 pub mod hlc;
+pub mod ics;
 pub mod id;
 pub mod model;
 pub mod quick;

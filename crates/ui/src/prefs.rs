@@ -10,11 +10,28 @@ pub struct Environment {
     pub name: String,
 }
 
+/// A running focus timer; here so it outlives the process on Android.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FocusSession {
+    pub task: String,
+    pub ends_ms: i64,
+    pub minutes: i64,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prefs {
-    /// Index into the theme list (0 Matte Black, 1 Light).
+    /// Index into the theme list (0 Pitch Black, 1 Light).
     pub look: i32,
+    pub archive_days: u32,
+    pub daily_plan: bool,
+    /// The day the planning prompt last ran; empty until the first launch.
+    pub planned_on: String,
+    /// Index into `themes::ACCENTS`; 0 keeps the look's own colour.
+    pub accent: i32,
+    /// Index into `themes::TEXT_SCALES`.
+    pub text_size: i32,
+    pub focus: Option<FocusSession>,
     #[serde(default)]
     pub theme_version: u8,
     /// Index into `pet::SKINS`.
@@ -52,6 +69,12 @@ impl Default for Prefs {
     fn default() -> Self {
         Prefs {
             look: 0,
+            archive_days: 0,
+            daily_plan: true,
+            planned_on: String::new(),
+            accent: 0,
+            text_size: 0,
+            focus: None,
             theme_version: 2,
             pet_skin: 0,
             week_monday: true,

@@ -152,7 +152,7 @@ fn settings_do_not_paint_covered_mobile_layers() {
     assert_eq!(store.get_toast_action(), "");
     main.global::<Actions>().invoke_undo_delete();
     app.save_now();
-    assert!(patch_core::Doc::load_or_new(&dir.join("doc.json")).task(&id).is_none());
+    assert!(patch_core::Doc::load_or_new(&dir.join("doc.json")).task(&id).is_some(), "undo history outlives the toast");
     store.set_settings_open(true);
     store.set_environment_page(2);
     store.set_scan_active(true);

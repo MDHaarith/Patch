@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+pub const KIND_VIEW: &str = "smart-view";
+
 pub const KIND_TASK: &str = "task";
 pub const KIND_LIST: &str = "list";
 pub const KIND_COLUMN: &str = "column";

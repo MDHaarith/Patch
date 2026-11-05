@@ -123,7 +123,9 @@ public final class PatchWidget extends AppWidgetProvider {
         v.setOnClickPendingIntent(R.id.widget_add,
                 activity(context, ADD, new Intent().putExtra(MainActivity.EXTRA_NEW_TASK, true), false));
         // Rows fill in the task id; collection fill-ins need a mutable template.
-        v.setPendingIntentTemplate(R.id.widget_list, activity(context, ROW, new Intent(), true));
+        int rowFlags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0);
+        v.setPendingIntentTemplate(R.id.widget_list, PendingIntent.getActivity(context, ROW,
+                new Intent(context, WidgetRowActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), rowFlags));
         return v;
     }
 

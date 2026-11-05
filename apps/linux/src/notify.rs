@@ -67,7 +67,12 @@ impl Notifier {
                         "snooze" => {
                             // shortcut: snoozes last only while Patch runs; persist alarms to survive quitting.
                             std::thread::sleep(std::time::Duration::from_secs(600));
-                            this.send_with_task(task, &summary, &body);
+                            let notifier = this.clone();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if task.as_ref().is_some_and(|key| patch_ui::App::current_task_open(key) == Some(true)) {
+                                    notifier.send_with_task(task, &summary, &body);
+                                }
+                            });
                         }
                         _ => {}
                     }

@@ -11,7 +11,7 @@ use crate::{Bar, Block, BoardCol, DayHead, ListInfo, Section, TaskItem};
 use crate::{Host, Reminder};
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use patch_core::doc::{COL_TODO, DEFAULT_LIST};
-use patch_core::model::{CheckItem, Repeat, Task, Unit, PALETTE};
+use patch_core::model::{CheckItem, Filter, Repeat, SmartView, Task, Unit, PALETTE};
 use patch_core::time::{add_months, fmt_hour_label, hm, minutes_of, month_start, now_local};
 use patch_core::{quick, Doc};
 use patch_sync::{SyncClient, SyncConfig, SyncEvent, SyncStatus};
@@ -67,6 +67,7 @@ struct Models {
     checklist: Rc<VecModel<CheckRow>>,
     editor_lists: Rc<VecModel<Choice>>,
     editor_columns: Rc<VecModel<Choice>>,
+    editor_links: Rc<VecModel<SharedString>>,
     themes: Rc<VecModel<crate::ThemeCard>>,
     palette: Rc<VecModel<slint::Color>>,
     custom_repeats: Rc<VecModel<SharedString>>,
@@ -97,6 +98,7 @@ impl Models {
             checklist: Rc::default(),
             editor_lists: Rc::default(),
             editor_columns: Rc::default(),
+            editor_links: Rc::default(),
             themes: Rc::new(VecModel::from(themes::cards())),
             palette: Rc::new(VecModel::from(PALETTE.iter().map(|(_, h)| color(h)).collect::<Vec<_>>())),
             custom_repeats: Rc::default(),
@@ -133,6 +135,7 @@ impl Models {
         e.set_checklist(self.checklist.clone().into());
         e.set_lists(self.editor_lists.clone().into());
         e.set_columns(self.editor_columns.clone().into());
+        e.set_links(self.editor_links.clone().into());
         e.set_repeats(self.repeat_labels.clone().into());
         e.set_reminders(self.alert_labels.clone().into());
     }
@@ -164,6 +167,7 @@ struct EditorState {
     base: Task,
     list_ids: Vec<String>,
     column_ids: Vec<String>,
+    parent_ids: Vec<Option<String>>,
     is_new: bool,
     /// Next tap in the range picker sets the end date.
     picking_end: bool,
@@ -178,6 +182,11 @@ struct UiState {
     search: String,
     editor: Option<EditorState>,
     today: NaiveDate,
+    filter: Filter,
+    browse: i32,
+    active_smart: Option<String>,
+    selection: HashSet<String>,
+    selection_anchor: Option<String>,
     model_minute: NaiveDateTime,
 }
 
@@ -208,10 +217,11 @@ pub struct App {
     pet_recovery: Timer,
     timers: RefCell<Vec<Timer>>,
     toast_timer: Timer,
+    focus_clock: Timer,
     focus_timer: Timer,
-    grain: slint::Image,
     icon: slint::Image,
-    undo_task: RefCell<Option<String>>,
+    undo_stack: RefCell<Vec<patch_core::doc::ChangeSet>>,
+    redo_stack: RefCell<Vec<patch_core::doc::ChangeSet>>,
     offline_since: Cell<Option<std::time::Instant>>,
 }
 
@@ -224,7 +234,7 @@ fn qr_image(text: &str) -> slint::Image {
     let w = code.width();
     let n = w + 2 * QUIET;
     let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(n as u32, n as u32);
-    let white = slint::Rgba8Pixel { r: 20, g: 21, b: 24, a: 255 };
+    let white = slint::Rgba8Pixel { r: 17, g: 17, b: 17, a: 255 };
     buf.make_mut_slice().fill(white);
     for (i, c) in code.to_colors().iter().enumerate() {
         if *c == qrcode::Color::Dark {
@@ -238,6 +248,7 @@ fn qr_image(text: &str) -> slint::Image {
 fn show_hosted(s: &Store, h: &HostedHub) {
     s.set_host_urls(h.urls.join("\n").into());
     s.set_host_token(h.token.clone().into());
+    s.set_host_calendar(h.calendar_url.clone().into());
     s.set_host_address(hosted_pair_url(&h.urls).unwrap_or_default().into());
     s.set_host_qr(hosted_pair_url(&h.urls).map(|u| qr_image(&SyncConfig::pair_link(u, &h.token))).unwrap_or_default());
 }
@@ -254,23 +265,6 @@ fn client_pairing(url: &str, token: &str) -> Option<SyncConfig> {
         !c.base.host.eq_ignore_ascii_case("localhost")
             && !c.base.host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
     })
-}
-
-fn grain_image() -> slint::Image {
-    // Fine film grain for the matte finish; deterministic so it never shimmers.
-    const N: u32 = 160;
-    let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(N, N);
-    let mut seed: u32 = 0x9e37_79b9;
-    for px in buf.make_mut_slice() {
-        seed ^= seed << 13;
-        seed ^= seed >> 17;
-        seed ^= seed << 5;
-        let light = seed & 1 == 0;
-        let a = ((seed >> 8) % if light { 9 } else { 14 }) as u8;
-        let v = if light { a } else { 0 };
-        *px = slint::Rgba8Pixel { r: v, g: v, b: v, a };
-    }
-    slint::Image::from_rgba8_premultiplied(buf)
 }
 
 fn icon_image() -> slint::Image {
@@ -324,6 +318,11 @@ impl App {
                 search: String::new(),
                 editor: None,
                 today,
+                filter: Filter { include_done: true, ..Filter::default() },
+                browse: 0,
+                active_smart: None,
+                selection: HashSet::new(),
+                selection_anchor: None,
                 model_minute: now_local(),
             }),
             prefs: RefCell::new(prefs),
@@ -345,10 +344,11 @@ impl App {
             pet_recovery: Timer::default(),
             timers: RefCell::new(Vec::new()),
             toast_timer: Timer::default(),
+            focus_clock: Timer::default(),
             focus_timer: Timer::default(),
-            grain: grain_image(),
             icon: icon_image(),
-            undo_task: RefCell::default(),
+            undo_stack: RefCell::default(),
+            redo_stack: RefCell::default(),
             offline_since: Cell::new(None),
             host,
         });
@@ -366,6 +366,7 @@ impl App {
             }
         }
         app.refresh_presets();
+        app.auto_archive();
         app.start_timers();
         app.refresh();
         app
@@ -492,7 +493,6 @@ impl App {
         s.set_can_update(self.host.can_update());
         s.set_custom_chrome(self.host.custom_chrome());
         s.set_version(env!("CARGO_PKG_VERSION").into());
-        s.set_grain(self.grain.clone());
         s.set_app_icon(self.icon.clone());
         let p = self.prefs.borrow();
         s.set_sidebar_open(p.sidebar);
@@ -504,7 +504,11 @@ impl App {
 
     fn apply_prefs_to(&self, s: &Store, theme: &Theme) {
         let p = self.prefs.borrow();
-        themes::apply(theme, p.look);
+        themes::customize(theme, p.look, p.accent, p.text_size);
+        s.set_accent_choice(p.accent);
+        s.set_text_size(p.text_size);
+        s.set_daily_plan(p.daily_plan);
+        s.set_accent_choices(models::model(themes::accent_choices(p.look)));
         s.set_theme(p.look);
         s.set_pet_skin(p.pet_skin);
         s.set_pet_image(crate::pet::image(
@@ -544,6 +548,8 @@ impl App {
         if self.state.borrow().editor.is_some() {
             self.load_editor();
         }
+        self.maybe_plan();
+        self.focus_resume();
     }
 
     /// Wire up the floating overlay (Android) / widget (Linux) window.
@@ -608,7 +614,18 @@ impl App {
         let mut consumed = false;
         if let Some(w) = self.main.borrow().as_ref().and_then(|w| w.upgrade()) {
             let s = w.global::<Store>();
-            if s.get_settings_open() {
+            if s.get_plan_open() {
+                s.set_plan_open(false);
+                consumed = true;
+            } else if s.get_tools_open() {
+                s.set_tools_open(false);
+                consumed = true;
+            } else if s.get_selection_mode() {
+                self.state.borrow_mut().selection.clear();
+                s.set_selection_mode(false);
+                self.refresh();
+                consumed = true;
+            } else if s.get_settings_open() {
                 self.host.stop_scan();
                 s.set_scan_active(false);
                 if s.get_environment_page() > 0 { s.set_environment_page(s.get_environment_page() - 1); }
@@ -655,18 +672,105 @@ impl App {
         on!(on_new_card, |app, col| app.new_task("", -2, &col));
         on!(on_toggle_done, |app, id| {
             let done = app.doc.lock().unwrap().task(&id).is_some_and(|t| !t.done);
+            let blocked = { let d = app.doc.lock().unwrap(); d.task(&id).is_some_and(|t| d.blocked(&t)) };
             app.edit(|d| d.set_done(&id, done));
+            if done && blocked { app.toast("Completed; check unfinished blockers"); }
         });
         on!(on_quick_add, |app, text| app.quick_add(&text, None, false));
         on!(on_quick_add_today, |app, text| app.quick_add(&text, None, true));
         on!(on_quick_add_card, |app, col, text| app.quick_add(&text, Some(col.to_string()), false));
         on!(on_delete_task, |app, id| app.delete_task(&id));
-        on!(on_undo_delete, |app| {
-            let id = app.undo_task.borrow_mut().take();
+        on!(on_undo_delete, |app| app.undo(false));
+        on!(on_undo, |app| app.undo(false));
+        on!(on_redo, |app| app.undo(true));
+        on!(on_filter_changed, |app| app.read_filter());
+        on!(on_browse, |app, mode| {
+            { let mut st = app.state.borrow_mut(); st.browse = mode; st.active_smart = None; st.selection.clear(); st.filter = Filter { include_done: true, ..Filter::default() }; }
+            app.each_store(|s| {
+                s.set_browse_mode(mode); s.set_tools_open(false);
+                s.set_filter_tags("".into()); s.set_filter_list(0); s.set_filter_priority(0); s.set_filter_due(0); s.set_filter_done(true);
+            });
+            app.refresh();
+        });
+        on!(on_save_smart, |app| app.save_smart());
+        on!(on_open_smart, |app, id| app.open_smart(&id));
+        on!(on_delete_smart, |app, id| {
+            app.edit(|d| d.delete_smart_view(&id));
+            if app.state.borrow().active_smart.as_deref() == Some(id.as_str()) { app.state.borrow_mut().active_smart = None; }
+            app.refresh();
+        });
+        on!(on_rename_smart, |app, id, name| {
+            if !name.trim().is_empty() { app.edit(|d| {
+                if let Some(base) = d.smart_views().into_iter().find(|v| v.id == id.as_str()) {
+                    let mut view = base.clone(); view.name = name.trim().into(); d.save_smart_view_from(&base, &view);
+                }
+            }); }
+        });
+        on!(on_selection_mode, |app, enabled| {
+            if !enabled { app.state.borrow_mut().selection.clear(); }
+            app.each_store(|s| s.set_selection_mode(enabled)); app.refresh();
+        });
+        on!(on_select_task, |app, id, range| app.select_task(&id, range));
+        on!(on_bulk, |app, action, argument| app.bulk(action, &argument));
+        on!(on_duplicate_task, |app| {
+            let id = app.state.borrow().editor.as_ref().map(|e| e.task.id.clone());
+            app.close_editor(true);
+            if app.state.borrow().editor.is_some() { return; }
             if let Some(id) = id {
-                app.edit(|d| d.restore_task(&id));
-                app.toast("Task restored");
+                let mut new_id = None; app.edit(|d| new_id = d.duplicate_task(&id));
+                if let Some(id) = new_id { app.open_task(&id); }
             }
+        });
+        on!(on_blocker_toggle, |app, id| {
+            app.read_editor();
+            if let Some(e) = app.state.borrow_mut().editor.as_mut() {
+                if let Some(i) = e.task.blockers.iter().position(|x| x == id.as_str()) { e.task.blockers.remove(i); }
+                else { e.task.blockers.push(id.into()); }
+            }
+            app.editor_links();
+        });
+        on!(on_focus_start, |app, minutes| {
+            let id = app.state.borrow().editor.as_ref().map(|e| e.task.id.clone());
+            app.close_editor(true);
+            if app.state.borrow().editor.is_some() { return; }
+            if let Some(id) = id { app.focus_begin(&id, i64::from(minutes)); }
+        });
+        on!(on_focus_stop, |app| app.focus_stop());
+        on!(on_catch_up, |app| app.catch_up());
+        on!(on_skip_occurrence, |app| {
+            let id = app.state.borrow().editor.as_ref().map(|e| e.task.id.clone());
+            app.close_editor(true);
+            if app.state.borrow().editor.is_some() { return; }
+            if let Some(id) = id {
+                app.edit(|d| { d.skip_occurrence(&id, now_local()); });
+                app.toast("Skipped; moved to the next date");
+            }
+        });
+        on!(on_open_link, |app, url| app.host.open_url(&url));
+        on!(on_notes_edited, |app, text| {
+            app.models.editor_links.set_vec(patch_core::model::links_in(&text).into_iter().map(SharedString::from).collect::<Vec<_>>());
+        });
+        on!(on_set_daily_plan, |app, on| {
+            app.prefs.borrow_mut().daily_plan = on;
+            app.save_prefs();
+            app.each_store(|s| s.set_daily_plan(on));
+        });
+        on!(on_set_accent, |app, i| {
+            app.prefs.borrow_mut().accent = i;
+            app.save_prefs();
+            app.each_theme(|t| app.apply_look(t));
+            app.each_store(|s| s.set_accent_choice(i));
+        });
+        on!(on_set_text_size, |app, i| {
+            app.prefs.borrow_mut().text_size = i;
+            app.save_prefs();
+            app.each_theme(|t| app.apply_look(t));
+            app.each_store(|s| s.set_text_size(i));
+        });
+        on!(on_set_archive_days, |app, days| {
+            app.prefs.borrow_mut().archive_days = days.clamp(0, 36500) as u32;
+            app.save_prefs(); app.each_store(|s| s.set_archive_days(days.max(0)));
+            app.auto_archive(); app.refresh();
         });
         on!(on_drop_on_date, |app, id, key| app.drop_on_date(&id, &key));
         on!(on_move_block, |app, id, days, minutes| app.move_block(&id, days, minutes));
@@ -734,8 +838,9 @@ impl App {
             }
         }));
         on!(on_add_custom_repeat, |app, n, unit| {
-            let unit = Unit::ALL.get(unit.max(0) as usize).copied().unwrap_or(Unit::Week);
-            let code = Repeat::Every(n.clamp(1, 999) as u16, unit).normalized().encode();
+            let after = unit >= 4;
+            let unit = Unit::ALL.get(unit.max(0) as usize % 4).copied().unwrap_or(Unit::Week);
+            let code = if after { Repeat::AfterDone(n.clamp(1, 999) as u16, unit) } else { Repeat::Every(n.clamp(1, 999) as u16, unit).normalized() }.encode();
             let builtin = Repeat::ALL.iter().any(|r| r.encode() == code);
             {
                 let mut p = app.prefs.borrow_mut();
@@ -850,7 +955,8 @@ impl App {
             let look = if (0..2).contains(&look) { look } else { 0 };
             app.prefs.borrow_mut().look = look;
             app.save_prefs();
-            app.each_theme(|t| themes::apply(t, look));
+            app.each_theme(|t| app.apply_look(t));
+            app.each_store(|s| s.set_accent_choices(models::model(themes::accent_choices(look))));
             app.each_store(|s| s.set_theme(look));
             app.refresh();
         });
@@ -990,23 +1096,50 @@ impl App {
 
     /// Runs a document mutation, then refreshes the UI and nudges sync.
     fn edit(&self, f: impl FnOnce(&mut Doc)) {
-        {
+        let changes = {
             let mut d = self.doc.lock().unwrap();
+            // shortcut: capture clones the document; track touched fields if large documents make edits slow.
+            let before = d.clone();
             f(&mut d);
+            d.changes_since(&before)
+        };
+        if !changes.is_empty() {
+            let mut stack = self.undo_stack.borrow_mut();
+            stack.push(changes);
+            if stack.len() > 100 { stack.remove(0); }
+            self.redo_stack.borrow_mut().clear();
+            drop(stack);
+            // Only toasts right after an edit offer Undo; the toast timer clears it.
+            self.each_store(|s| s.set_toast_action("Undo".into()));
+            self.toast("Updated");
         }
         self.sync.notify_local_change();
         self.refresh();
     }
 
+    fn undo(&self, redo: bool) {
+        let change = if redo { self.redo_stack.borrow_mut().pop() } else { self.undo_stack.borrow_mut().pop() };
+        if let Some(change) = change {
+            self.doc.lock().unwrap().replay(&change, !redo);
+            if redo { self.undo_stack.borrow_mut().push(change); } else { self.redo_stack.borrow_mut().push(change); }
+            self.sync.notify_local_change();
+            self.refresh();
+            self.each_store(|s| s.set_toast_action("".into()));
+            self.toast(if redo { "Redone" } else { "Undone" });
+        }
+    }
+
     fn delete_task(&self, id: &str) {
         self.edit(|d| d.delete_task(id));
         self.toast("Task deleted");
-        *self.undo_task.borrow_mut() = Some(id.into());
-        self.each_store(|s| s.set_toast_action("Undo".into()));
     }
 
-    pub fn complete_task(&self, id: &str) {
+    pub fn complete_task(&self, key: &str) {
+        let id = key.split('@').next().unwrap_or(key);
+        if key.contains('@') && !self.doc.lock().unwrap().task(id).is_some_and(|t| !t.done && t.active() && reminder_matches(&t, key)) { return; }
+        let blocked = { let d = self.doc.lock().unwrap(); d.task(id).is_some_and(|t| d.blocked(&t)) };
         self.edit(|d| d.set_done(id, true));
+        if blocked { self.toast("Completed; check unfinished blockers"); }
         self.save_if_dirty();
     }
 
@@ -1027,18 +1160,16 @@ impl App {
             let json = std::fs::read_to_string(app.data_dir.join("doc.json")).ok()?;
             Doc::from_json(&json)?;
             let doc = app.doc.lock().ok()?;
-            Some(doc.task(id).is_some_and(|task| !task.done))
+            let task_id = id.split('@').next().unwrap_or(id);
+            Some(doc.task(task_id).is_some_and(|task| !task.done && task.active() && reminder_matches(&task, id)))
         })
     }
 
     fn toast(&self, text: &str) {
-        self.undo_task.borrow_mut().take();
-        self.each_store(|s| s.set_toast_action("".into()));
         self.each_store(|s| s.set_toast(text.into()));
         let weak = CURRENT.with(|c| c.borrow().clone());
         self.toast_timer.start(TimerMode::SingleShot, StdDuration::from_secs(5), move || {
             if let Some(app) = weak.upgrade() {
-                app.undo_task.borrow_mut().take();
                 app.each_store(|s| { s.set_toast("".into()); s.set_toast_action("".into()); });
             }
         });
@@ -1093,6 +1224,7 @@ impl App {
 
     fn set_view(&self, v: i32) {
         self.state.borrow_mut().view = v.clamp(0, 4);
+        self.state.borrow_mut().browse = 0;
         {
             let mut st = self.state.borrow_mut();
             st.anchor = st.selected;
@@ -1116,6 +1248,24 @@ impl App {
         self.refresh();
     }
 
+    /// Adds a task from outside the UI, e.g. `patch add`.
+    pub fn add_text(&self, text: &str) {
+        // Shared text comes from other apps: one line, of a sane length.
+        let text: String = text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(2000).collect();
+        self.quick_add(&text, None, false);
+    }
+
+    /// Adds a calendar file's events as tasks, e.g. `patch import`.
+    pub fn import_ics(&self, path: &std::path::Path) {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) => return self.toast(&format!("Couldn't read {}: {e}", path.display())),
+        };
+        let mut report = patch_core::ics::ImportReport::default();
+        self.edit(|d| report = patch_core::ics::import(d, &text, now_local()));
+        self.toast(&report.summary());
+    }
+
     fn quick_add(&self, text: &str, column: Option<String>, default_today: bool) {
         let text = text.trim();
         if text.is_empty() {
@@ -1123,14 +1273,7 @@ impl App {
         }
         let lists = self.doc.lock().unwrap().lists();
         let q = quick::parse(text, now_local(), &lists);
-        let mut t = Task::blank("", DEFAULT_LIST, column.as_deref().unwrap_or(COL_TODO));
-        t.title = q.title.clone();
-        t.start = q.start;
-        t.end = q.end;
-        t.all_day = q.all_day;
-        t.priority = q.priority;
-        t.repeat = q.repeat;
-        t.list = q.list.clone().unwrap_or_else(|| self.default_list(&lists));
+        let mut t = q.to_task(&self.default_list(&lists), column.as_deref().unwrap_or(COL_TODO));
         if default_today && t.start.is_none() {
             t.all_day = true;
             t.start = Some(now_local().date().and_time(NaiveTime::MIN));
@@ -1189,18 +1332,9 @@ impl App {
     fn drop_card(&self, id: &str, col: i32, index: i32) {
         let cols = self.doc.lock().unwrap().columns();
         let Some(column) = cols.get(col.max(0) as usize).map(|c| c.id.clone()) else { return };
-        // The board hides lists; translate the visible index into a position
-        // among all of the column's cards.
-        let hidden = self.prefs.borrow().hidden_lists.clone();
-        let visible_ids: Vec<String> = self
-            .doc
-            .lock()
-            .unwrap()
-            .tasks()
-            .into_iter()
-            .filter(|t| t.column == column && t.id != id && !hidden.contains(&t.list))
-            .map(|t| t.id)
-            .collect();
+        // Translate a filtered drop position back into the full column order.
+        let visible_ids: Vec<String> = self.models.board.row_data(col.max(0) as usize)
+            .map(|c| c.cards.iter().filter(|t| t.id != id).map(|t| t.id.to_string()).collect()).unwrap_or_default();
         let all: Vec<String> = self
             .doc
             .lock()
@@ -1215,7 +1349,9 @@ impl App {
             Some(next) => all.iter().position(|x| x == next).unwrap_or(all.len()),
             None => all.len(),
         };
+        let blocked = { let d = self.doc.lock().unwrap(); d.column(&column).is_some_and(|c| c.done) && d.task(id).is_some_and(|t| d.blocked(&t)) };
         self.edit(|d| d.move_task(id, &column, pos));
+        if blocked { self.toast("Completed; check unfinished blockers"); }
     }
 
     /// A scanned pairing QR code (see [`SyncConfig::pair_link`]).
@@ -1379,6 +1515,7 @@ impl App {
     }
 
     fn tick(&self) {
+        self.auto_archive();
         let today = now_local().date();
         let rolled = {
             let mut st = self.state.borrow_mut();
@@ -1396,6 +1533,9 @@ impl App {
             }
         };
         let minute_changed = self.state.borrow().model_minute != now_local();
+        if rolled {
+            self.maybe_plan();
+        }
         if rolled || minute_changed || self.offline_since.get().is_some() {
             self.refresh();
         } else {
@@ -1405,31 +1545,151 @@ impl App {
     }
 
     /// Undelivered reminders from the last 15 minutes through the next two weeks.
+    fn apply_look(&self, t: &Theme) {
+        let p = self.prefs.borrow();
+        themes::customize(t, p.look, p.accent, p.text_size);
+    }
+
+    pub fn focus_begin(&self, id: &str, minutes: i64) {
+        let ends_ms = chrono::Local::now().timestamp_millis() + minutes * 60_000;
+        self.prefs.borrow_mut().focus = Some(crate::prefs::FocusSession { task: id.into(), ends_ms, minutes });
+        self.save_prefs();
+        self.focus_resume();
+        // Schedules the end-of-focus alert with the OS.
+        self.refresh();
+    }
+
+    fn focus_resume(&self) {
+        if self.prefs.borrow().focus.is_none() {
+            return;
+        }
+        let weak = CURRENT.with(|c| c.borrow().clone());
+        self.focus_clock.start(TimerMode::Repeated, StdDuration::from_secs(1), move || {
+            if let Some(app) = weak.upgrade() {
+                app.focus_tick();
+            }
+        });
+        self.focus_tick();
+    }
+
+    fn focus_tick(&self) {
+        let Some(session) = self.prefs.borrow().focus.clone() else { return };
+        let title = self.doc.lock().unwrap().task(&session.task).map(|t| t.title);
+        let Some(title) = title else {
+            return self.focus_end(0);
+        };
+        let left = session.ends_ms - chrono::Local::now().timestamp_millis();
+        if left <= 0 {
+            self.fire_reminders();
+            self.focus_end(session.minutes);
+            return self.toast(&format!("Focus finished: {title}"));
+        }
+        let secs = (left + 999) / 1000;
+        self.each_store(|s| {
+            s.set_focus_active(true);
+            s.set_focus_title(title.clone().into());
+            s.set_focus_left(format!("{:02}:{:02}", secs / 60, secs % 60).into());
+        });
+    }
+
+    /// Stopping early still counts the whole minutes spent.
+    fn focus_stop(&self) {
+        let Some(session) = self.prefs.borrow().focus.clone() else { return };
+        let left = (session.ends_ms - chrono::Local::now().timestamp_millis()).max(0) / 60_000;
+        self.focus_end((session.minutes - left - 1).max(0));
+    }
+
+    fn focus_end(&self, minutes: i64) {
+        let session = self.prefs.borrow_mut().focus.take();
+        self.save_prefs();
+        self.focus_clock.stop();
+        self.each_store(|s| s.set_focus_active(false));
+        if let Some(session) = session.filter(|_| minutes > 0) {
+            self.doc.lock().unwrap().log_focus(&session.task, minutes, now_local().date());
+            self.sync.notify_local_change();
+        }
+        self.refresh();
+    }
+
+    fn catch_up(&self) {
+        let mut moved = 0;
+        self.edit(|d| moved = d.reschedule_overdue(now_local()));
+        self.each_store(|s| s.set_plan_open(false));
+        self.toast(&match moved {
+            0 => "Nothing is overdue".to_string(),
+            1 => "Moved 1 task up to date".to_string(),
+            n => format!("Moved {n} tasks up to date"),
+        });
+    }
+
+    /// Prompts once a day. The very first launch only records the date.
+    fn maybe_plan(&self) {
+        let today = now_local().date().to_string();
+        let mut p = self.prefs.borrow_mut();
+        if !p.daily_plan || p.planned_on == today {
+            return;
+        }
+        let first_launch = p.planned_on.is_empty();
+        p.planned_on = today;
+        drop(p);
+        self.save_prefs();
+        if !first_launch {
+            self.show_plan();
+        }
+    }
+
+    pub fn show_plan(&self) {
+        let ctx = self.ctx();
+        let open: Vec<&Task> = ctx.tasks.iter().filter(|t| t.active() && !t.done && !ctx.hidden.contains(&t.list)).collect();
+        let overdue = open.iter().filter(|t| t.is_overdue(ctx.now)).count();
+        let day = ctx.now.date().and_time(NaiveTime::MIN);
+        let mut today: Vec<_> = open.iter()
+            .filter(|t| !t.is_overdue(ctx.now))
+            .flat_map(|t| patch_core::recur::occurrences(t, day, day + Duration::days(1)).into_iter().take(1).map(move |o| (o.start, *t)))
+            .collect();
+        if overdue == 0 && today.is_empty() {
+            return;
+        }
+        today.sort_by_key(|(start, _)| *start);
+        let more = today.len().saturating_sub(8);
+        let mut items: Vec<slint::SharedString> = today.iter().take(8)
+            .map(|(start, t)| if t.all_day { t.title.clone() } else { format!("{}  {}", patch_core::time::fmt_time(*start, ctx.h24), t.title) }.into())
+            .collect();
+        if more > 0 {
+            items.push(format!("and {more} more").into());
+        }
+        self.each_store(|s| {
+            s.set_plan_overdue(overdue as i32);
+            s.set_plan_items(models::model(items.clone()));
+            s.set_plan_open(true);
+        });
+    }
+
     fn upcoming_reminders(&self) -> Vec<Reminder> {
         use chrono::TimeZone;
         let now = now_local();
         let tasks = self.doc.lock().unwrap().tasks();
         let ctx = self.ctx();
-        let mut out: Vec<Reminder> = tasks
-            .iter()
-            .filter(|t| !t.done)
-            .filter_map(|t| {
-                let (start, before) = (t.start?, t.reminder?);
-                let at = start - Duration::minutes(before);
-                let key = format!("{}@{}", t.id, patch_core::time::fmt_dt(start));
-                if at <= now - Duration::minutes(15) || at > now + Duration::days(14) || self.prefs.borrow().notified.contains(&key) {
-                    return None;
-                }
-                let at_ms = chrono::Local.from_local_datetime(&at).earliest()?.timestamp_millis();
-                Some(Reminder {
-                    key,
-                    at_ms,
-                    title: t.title.clone(),
-                    body: ctx.when(t, start),
-                })
-            })
-            .collect();
+        let mut out = Vec::new();
+        for task in tasks.iter().filter(|t| !t.done && t.active()) {
+            let Some(start) = task.start else { continue };
+            for before in task.reminder_offsets() {
+                let Some(at) = Duration::try_minutes(before).and_then(|offset| start.checked_sub_signed(offset)) else { continue };
+                let key = if task.reminder == Some(before) { format!("{}@{}", task.id, patch_core::time::fmt_dt(start)) } else { format!("{}@{}@{before}", task.id, patch_core::time::fmt_dt(start)) };
+                if at <= now - Duration::minutes(15) || at > now + Duration::days(14) || self.prefs.borrow().notified.contains(&key) { continue; }
+                let Some(at) = chrono::Local.from_local_datetime(&at).earliest() else { continue };
+                out.push(Reminder { key, at_ms: at.timestamp_millis(), title: task.title.clone(), body: ctx.when(task, start) });
+            }
+        }
+        if let Some(session) = &self.prefs.borrow().focus {
+            let key = format!("{}@focus@{}", session.task, session.ends_ms);
+            let live = session.ends_ms > chrono::Local::now().timestamp_millis() - 15 * 60_000;
+            if let Some(task) = tasks.iter().find(|t| t.id == session.task).filter(|_| live && !self.prefs.borrow().notified.contains(&key)) {
+                out.push(Reminder { key, at_ms: session.ends_ms, title: "Focus finished".into(), body: task.title.clone() });
+            }
+        }
         out.sort_by_key(|r| r.at_ms);
+        // shortcut: schedule the nearest 64 alerts within 14 days; page alarms if larger batches are needed.
         out.truncate(64);
         out
     }
@@ -1449,27 +1709,12 @@ impl App {
         if self.os_delivers.get() {
             return;
         }
-        let now = now_local();
-        let tasks = self.doc.lock().unwrap().tasks();
-        let mut fired = Vec::new();
-        {
-            let p = self.prefs.borrow();
-            for t in tasks.iter().filter(|t| !t.done) {
-                let (Some(start), Some(before)) = (t.start, t.reminder) else { continue };
-                let at = start - Duration::minutes(before);
-                let key = format!("{}@{}", t.id, patch_core::time::fmt_dt(start));
-                if at <= now && now < at + Duration::minutes(15) && !p.notified.contains(&key) {
-                    fired.push((key, t.clone(), start));
-                }
-            }
-        }
-        if fired.is_empty() {
-            return;
-        }
-        let ctx = self.ctx();
-        for (key, t, start) in &fired {
-            self.host.notify_reminder(&t.id, &t.title, &ctx.when(t, *start));
-            self.prefs.borrow_mut().notified.push(key.clone());
+        let now = chrono::Local::now().timestamp_millis();
+        let fired: Vec<_> = self.upcoming_reminders().into_iter().filter(|r| r.at_ms <= now).collect();
+        if fired.is_empty() { return; }
+        for reminder in &fired {
+            self.host.notify_reminder(&reminder.key, &reminder.title, &reminder.body);
+            self.prefs.borrow_mut().notified.push(reminder.key.clone());
         }
         let mut p = self.prefs.borrow_mut();
         let excess = p.notified.len().saturating_sub(300);
@@ -1487,10 +1732,11 @@ impl App {
         }
         if self.state.borrow().editor.is_some() {
             self.close_editor(true);
+            if self.state.borrow().editor.is_some() { return; }
         }
         let Some(task) = self.doc.lock().unwrap().task(id) else { return };
         let month = month_start(task.start.map(|s| s.date()).unwrap_or(self.state.borrow().selected));
-        self.state.borrow_mut().editor = Some(EditorState { repeat_options: Vec::new(), alert_options: Vec::new(), base: task.clone(), task, list_ids: Vec::new(), column_ids: Vec::new(), is_new: false, picking_end: false, picker_month: month });
+        self.state.borrow_mut().editor = Some(EditorState { repeat_options: Vec::new(), alert_options: Vec::new(), base: task.clone(), task, list_ids: Vec::new(), column_ids: Vec::new(), parent_ids: Vec::new(), is_new: false, picking_end: false, picker_month: month });
         self.load_editor();
     }
 
@@ -1498,6 +1744,7 @@ impl App {
     fn new_task(&self, key: &str, minutes: i32, column: &str) {
         if self.state.borrow().editor.is_some() {
             self.close_editor(true);
+            if self.state.borrow().editor.is_some() { return; }
         }
         let (selected, view) = {
             let st = self.state.borrow();
@@ -1528,7 +1775,7 @@ impl App {
             }
             _ => {}
         }
-        self.state.borrow_mut().editor = Some(EditorState { repeat_options: Vec::new(), alert_options: Vec::new(), base: t.clone(), task: t, list_ids: Vec::new(), column_ids: Vec::new(), is_new: true, picking_end: true, picker_month: month_start(day) });
+        self.state.borrow_mut().editor = Some(EditorState { repeat_options: Vec::new(), alert_options: Vec::new(), base: t.clone(), task: t, list_ids: Vec::new(), column_ids: Vec::new(), parent_ids: Vec::new(), is_new: true, picking_end: true, picker_month: month_start(day) });
         self.load_editor();
     }
 
@@ -1552,6 +1799,12 @@ impl App {
             ed.set_is_new(e.is_new);
             ed.set_title(t.title.clone().into());
             ed.set_notes(t.notes.clone().into());
+            self.models.editor_links.set_vec(patch_core::model::links_in(&t.notes).into_iter().map(SharedString::from).collect::<Vec<_>>());
+            ed.set_tags(t.tags.join(" ").into());
+            ed.set_extra_reminders(t.reminders.iter().map(i64::to_string).collect::<Vec<_>>().join(", ").into());
+            ed.set_template(t.template);
+            ed.set_done(t.done);
+            ed.set_archived(t.archived);
             ed.set_list_index(lists.iter().position(|l| l.id == t.list).unwrap_or(0) as i32);
             ed.set_column_index(columns.iter().position(|c| c.id == t.column).unwrap_or(0) as i32);
             ed.set_priority(t.priority as i32);
@@ -1570,6 +1823,7 @@ impl App {
         update(&self.models.checklist, checklist_rows(&t.checklist));
         drop(st);
         self.refresh_editor_dates();
+        self.editor_links();
         self.each_store(|s| s.set_editor_open(true));
     }
 
@@ -1586,6 +1840,12 @@ impl App {
         let t = &mut e.task;
         t.title = ed.get_title().trim().to_string();
         t.notes = ed.get_notes().to_string();
+        t.tags = words(&ed.get_tags());
+        t.reminders = ed.get_extra_reminders().split([',', ' ']).filter_map(|m| m.parse::<i64>().ok()).filter(|m| (0..=525600).contains(m)).collect();
+        t.reminders.sort_unstable(); t.reminders.dedup();
+        t.template = ed.get_template();
+        t.archived = ed.get_archived();
+        t.parent = e.parent_ids.get(ed.get_parent_index().max(0) as usize).cloned().flatten();
         if let Some(id) = e.list_ids.get(ed.get_list_index().max(0) as usize).filter(|id| lists.iter().any(|l| &l.id == *id)) {
             t.list = id.clone();
         } else {
@@ -1756,10 +2016,17 @@ impl App {
             if !e.task.title.is_empty() {
                 let is_new = e.is_new;
                 let title = e.task.title.clone();
-                let mut task = e.task;
+                let mut task = e.task.clone();
                 if task.start != e.base.start || task.repeat != e.base.repeat {
                     task.repeat_anchor = None;
                 }
+                if (is_new || task.parent != e.base.parent || task.blockers != e.base.blockers) && !self.doc.lock().unwrap().links_valid(&task) {
+                    self.state.borrow_mut().editor = Some(EditorState { task, ..e });
+                    self.each_store(|s| s.set_editor_open(true));
+                    self.toast("Parent or blockers would create a cycle");
+                    return;
+                }
+                let blocked = { let d = self.doc.lock().unwrap(); !e.base.done && d.column(&task.column).is_some_and(|c| c.done) && d.blocked(&task) };
                 self.edit(|d| {
                     if is_new {
                         d.add_task(task);
@@ -1767,9 +2034,8 @@ impl App {
                         d.save_task_from(&e.base, &task);
                     }
                 });
-                if is_new {
-                    self.toast(&format!("Added “{title}”"));
-                }
+                if blocked { self.toast("Completed; check unfinished blockers"); }
+                else if is_new { self.toast(&format!("Added “{title}”")); }
                 return;
             }
         }
@@ -1861,7 +2127,8 @@ impl App {
         } else if !(6..23).contains(&hour) {
             (3, if open_today == 0 { "All done. Sleep well".into() } else { format!("Late night · {open_today} left") })
         } else if open_today == 0 {
-            (0, "All clear today ✓".into())
+            let streak = self.doc.lock().unwrap().stats(ctx.now.date()).streak;
+            (0, if streak > 1 { format!("All clear · {streak}-day streak") } else { "All clear today ✓".into() })
         } else {
             (1, if open_today == 1 { "1 thing left today".into() } else { format!("{open_today} things left today") })
         }
@@ -1895,17 +2162,194 @@ impl App {
 
     // ------------------------------------------------------------------ refresh
 
+    fn main_ctx(&self) -> Ctx {
+        let mut ctx = self.ctx();
+        let st = self.state.borrow();
+        let d = self.doc.lock().unwrap();
+        let filter = st.active_smart.as_ref().and_then(|id| d.smart_views().into_iter().find(|v| &v.id == id)).map(|v| v.filter).unwrap_or_else(|| st.filter.clone());
+        ctx.tasks = d.tasks().into_iter().filter(|t| match st.browse {
+            1 => t.template && !t.archived,
+            2 => t.archived,
+            _ => t.active(),
+        }).filter(|t| filter.matches(t, ctx.now)).collect();
+        if st.browse != 0 { ctx.hidden.clear(); }
+        ctx.selected = st.selection.clone();
+        ctx
+    }
+
+    fn refresh_tools(&self) {
+        let (views, lists, ids, stats) = {
+            let d = self.doc.lock().unwrap();
+            (d.smart_views(), d.lists(), d.tasks().into_iter().map(|t| t.id).collect::<HashSet<_>>(), d.stats(now_local().date()))
+        };
+        self.state.borrow_mut().selection.retain(|id| ids.contains(id));
+        let st = self.state.borrow();
+        self.each_store(|s| {
+            s.set_smart_views(models::model(views.iter().map(|v| crate::SavedView { id: v.id.clone().into(), name: v.name.clone().into() }).collect()));
+            s.set_filter_lists(models::model(std::iter::once("Any list".into()).chain(lists.iter().map(|l| l.name.clone().into())).collect()));
+            s.set_selection_count(st.selection.len() as i32);
+            s.set_can_undo(!self.undo_stack.borrow().is_empty());
+            s.set_can_redo(!self.redo_stack.borrow().is_empty());
+            s.set_active_smart(st.active_smart.clone().unwrap_or_default().into());
+            s.set_browse_mode(st.browse);
+            s.set_archive_days(self.prefs.borrow().archive_days as i32);
+            s.set_stat_today(stats.today as i32);
+            s.set_stat_streak(stats.streak as i32);
+            s.set_stat_best(stats.best as i32);
+            s.set_stat_focus(stats.focus_today as i32);
+            s.set_stat_week_max(stats.last_7.iter().copied().max().unwrap_or(0).max(1) as i32);
+            s.set_stat_week(models::model(stats.last_7.iter().map(|n| *n as i32).collect()));
+        });
+    }
+
+    fn read_filter(&self) {
+        let Some(w) = self.main.borrow().as_ref().and_then(|w| w.upgrade()) else { return };
+        let s = w.global::<Store>();
+        let lists = self.doc.lock().unwrap().lists();
+        let mut st = self.state.borrow_mut();
+        st.filter = Filter {
+            tags: words(&s.get_filter_tags()),
+            list: s.get_filter_list().checked_sub(1).and_then(|i| lists.get(i as usize)).map(|l| l.id.clone()),
+            priority: (s.get_filter_priority() > 0).then(|| (s.get_filter_priority() - 1).clamp(0, 3) as u8),
+            due: ["any", "overdue", "today", "week"].get(s.get_filter_due().max(0) as usize).unwrap_or(&"any").to_string(),
+            include_done: s.get_filter_done(),
+        };
+        st.active_smart = None;
+        drop(st);
+        self.refresh();
+    }
+
+    fn save_smart(&self) {
+        let Some(w) = self.main.borrow().as_ref().and_then(|w| w.upgrade()) else { return };
+        let name = w.global::<Store>().get_view_name();
+        if name.trim().is_empty() { self.toast("Enter a name for the view"); return; }
+        let filter = self.state.borrow().filter.clone();
+        let id = patch_core::id::new_id("view");
+        let view = SmartView { id: id.clone(), name: name.trim().into(), filter };
+        self.edit(|d| d.save_smart_view_from(&view, &view));
+        self.open_smart(&id);
+    }
+
+    fn open_smart(&self, id: &str) {
+        let view = self.doc.lock().unwrap().smart_views().into_iter().find(|v| v.id == id);
+        let Some(view) = view else { return };
+        let lists = self.doc.lock().unwrap().lists();
+        { let mut st = self.state.borrow_mut(); st.browse = 0; st.filter = view.filter.clone(); st.active_smart = Some(id.into()); st.selection.clear(); }
+        self.each_store(|s| {
+            s.set_filter_tags(view.filter.tags.join(" ").into());
+            s.set_filter_list(view.filter.list.as_ref().and_then(|id| lists.iter().position(|l| &l.id == id)).map_or(0, |i| i as i32 + 1));
+            s.set_filter_priority(view.filter.priority.map_or(0, |p| p as i32 + 1));
+            s.set_filter_due(["any", "overdue", "today", "week"].iter().position(|v| *v == view.filter.due).unwrap_or(0) as i32);
+            s.set_filter_done(view.filter.include_done);
+            s.set_view_name(view.name.clone().into());
+            s.set_tools_open(false);
+        });
+        self.refresh();
+    }
+
+    fn select_task(&self, id: &str, range: bool) {
+        let mut order: Vec<String> = if self.state.borrow().view == 3 {
+            self.models.board.iter().flat_map(|c| c.cards.iter().map(|t| t.id.to_string()).collect::<Vec<_>>()).collect()
+        } else {
+            self.models.sections.iter().flat_map(|s| s.items.iter().map(|t| t.id.to_string()).collect::<Vec<_>>()).collect()
+        };
+        if !order.iter().any(|x| x == id) { order.push(id.into()); }
+        let mut st = self.state.borrow_mut();
+        if let Some((a,b)) = range.then(|| st.selection_anchor.as_ref().and_then(|anchor| {
+            Some((order.iter().position(|x| x == anchor)?, order.iter().position(|x| x == id)?))
+        })).flatten() {
+            st.selection.extend(order[a.min(b)..=a.max(b)].iter().cloned());
+        } else if !st.selection.insert(id.into()) { st.selection.remove(id); }
+        st.selection_anchor = Some(id.into());
+        drop(st);
+        self.each_store(|s| s.set_selection_mode(true));
+        self.refresh();
+    }
+
+    fn bulk(&self, action: i32, argument: &str) {
+        let ids = self.state.borrow().selection.clone();
+        if ids.is_empty() { return; }
+        let argument = argument.trim();
+        let list = self.doc.lock().unwrap().lists().into_iter().find(|l| l.name.eq_ignore_ascii_case(argument) || l.id == argument).map(|l| l.id);
+        let priority = argument.parse::<u8>().ok().filter(|p| *p <= 3);
+        let date = parse_key(argument);
+        if (action == 3 && list.is_none()) || (action == 4 && priority.is_none()) || (action == 5 && date.is_none()) || (action == 6 && words(argument).is_empty()) {
+            self.toast("Enter a valid list, priority (0–3), date (YYYY-MM-DD), or tag"); return;
+        }
+        let mut warned = false;
+        self.edit(|d| {
+            for id in &ids {
+                let Some(mut task) = d.task(id) else { continue };
+                match action {
+                    0 => { warned |= d.blocked(&task); d.set_done(id, true); continue; }
+                    1 => { d.delete_task(id); continue; }
+                    2 => { if task.done { task.archived = true; } }
+                    3 => task.list = list.clone().unwrap(),
+                    4 => task.priority = priority.unwrap(),
+                    5 => {
+                        let start = date.unwrap().and_time(task.start.map(|s| s.time()).unwrap_or(NaiveTime::MIN));
+                        if task.start.is_some() { d.reschedule(id, start); }
+                        else { task.start = Some(start); task.all_day = true; d.save_task(&task); }
+                        continue;
+                    }
+                    6 => { task.tags.extend(words(argument)); task.tags.sort(); task.tags.dedup(); }
+                    7 => task.archived = false,
+                    8 => { d.set_done(id, false); continue; }
+                    _ => continue,
+                }
+                d.save_task(&task);
+            }
+        });
+        self.state.borrow_mut().selection.clear();
+        self.each_store(|s| { s.set_selection_mode(false); s.set_tools_open(false); });
+        self.refresh();
+        if warned { self.toast("Completed; some tasks still have unfinished blockers"); }
+    }
+
+    fn editor_links(&self) {
+        let tasks = self.doc.lock().unwrap().tasks();
+        let mut st = self.state.borrow_mut();
+        let Some(e) = st.editor.as_mut() else { return };
+        let choices: Vec<_> = tasks.iter().filter(|t| t.id != e.task.id && (t.active() || e.task.parent.as_deref() == Some(&t.id) || e.task.blockers.contains(&t.id))).collect();
+        e.parent_ids = std::iter::once(None).chain(choices.iter().map(|t| Some(t.id.clone()))).collect();
+        if e.task.parent.is_some() && !e.parent_ids.contains(&e.task.parent) { e.parent_ids.push(e.task.parent.clone()); }
+        let parent_index = e.parent_ids.iter().position(|id| *id == e.task.parent).unwrap_or(0) as i32;
+        let parents = models::model(e.parent_ids.iter().map(|id| match id {
+            None => "No parent".into(),
+            Some(id) => tasks.iter().find(|t| &t.id == id).map(|t| t.title.clone()).unwrap_or_else(|| "Unavailable parent".into()).into(),
+        }).collect());
+        let mut blockers: Vec<_> = choices.iter().map(|t| CheckRow { id: t.id.clone().into(), text: t.title.clone().into(), done: e.task.blockers.contains(&t.id) }).collect();
+        blockers.extend(e.task.blockers.iter().filter(|id| !tasks.iter().any(|t| &t.id == *id)).map(|id| CheckRow { id: id.clone().into(), text: "Unavailable task".into(), done: true }));
+        let blockers = models::model(blockers);
+        let children = models::model(tasks.iter().filter(|t| t.parent.as_deref() == Some(&e.task.id)).map(|t| CheckRow { id: t.id.clone().into(), text: t.title.clone().into(), done: t.done }).collect());
+        let progress = tasks.iter().filter(|t| t.parent.as_deref() == Some(&e.task.id)).fold((0,0), |(done,total),t| (done + usize::from(t.done), total+1));
+        self.with_editor(|ed| {
+            ed.set_parent_options(parents.clone()); ed.set_parent_index(parent_index);
+            ed.set_blocker_options(blockers.clone()); ed.set_children(children.clone());
+            ed.set_link_status(format!("Subtasks: {}/{} complete", progress.0, progress.1).into());
+        });
+    }
+
+    fn auto_archive(&self) {
+        let days = self.prefs.borrow().archive_days;
+        if days == 0 { return; }
+        let mut d = self.doc.lock().unwrap();
+        let rev = d.rev();
+        d.auto_archive(days, patch_core::hlc::now_ms() as i64);
+        if rev != d.rev() { self.sync.notify_local_change(); }
+    }
+
     fn ctx(&self) -> Ctx {
         let d = self.doc.lock().unwrap();
         let p = self.prefs.borrow();
-        Ctx {
-            tasks: d.tasks(),
-            lists: d.lists().into_iter().map(|l| (l.id.clone(), l)).collect::<HashMap<_, _>>(),
-            hidden: p.hidden_lists.iter().cloned().collect::<HashSet<_>>(),
-            now: now_local(),
-            h24: p.time_24h,
-            monday: p.week_monday,
-        }
+        Ctx::new(
+            d.tasks(),
+            d.lists().into_iter().map(|l| (l.id.clone(), l)).collect::<HashMap<_, _>>(),
+            p.hidden_lists.iter().cloned().collect::<HashSet<_>>(),
+            now_local(),
+            p.time_24h,
+            p.week_monday,
+        )
     }
 
     fn refresh_clock(&self) {
@@ -1930,14 +2374,16 @@ impl App {
 
     /// Recomputes every view model from the document and UI state.
     pub fn refresh(&self) {
+        self.refresh_tools();
         self.state.borrow_mut().model_minute = now_local();
-        let ctx = self.ctx();
+        let ctx = self.main_ctx();
+        let normal_ctx = self.ctx();
         let (columns, all_lists) = {
             let d = self.doc.lock().unwrap();
             (d.columns(), d.lists())
         };
         let st = self.state.borrow();
-        let (view, anchor, selected, mini) = (st.view, st.anchor, st.selected, st.mini_month);
+        let (view, anchor, selected, mini) = (if st.browse == 0 { st.view } else { 4 }, st.anchor, st.selected, st.mini_month);
         let search = st.search.clone();
         drop(st);
 
@@ -1958,7 +2404,7 @@ impl App {
         update(&self.models.blocks, grid.blocks);
         update(&self.models.bars, grid.bars);
 
-        let mut board = models::board(&ctx, &columns);
+        let mut board = models::board(if self.state.borrow().browse == 0 { &ctx } else { &normal_ctx }, &columns);
         for (i, col) in board.iter_mut().enumerate() {
             if let Some(old) = self.models.board.row_data(i) {
                 if old.id == col.id && old.cards.row_count() == col.cards.row_count()
@@ -1968,6 +2414,7 @@ impl App {
                 }
             }
         }
+        let board_details = board.iter().any(|c| c.cards.iter().any(|t| !t.subtitle.is_empty()));
         let tallest = board.iter().map(|c| c.count).max().unwrap_or(0);
         let open_cards: i32 = board.iter().filter(|c| !c.done).map(|c| c.count).sum();
         update(&self.models.board, board);
@@ -1976,8 +2423,8 @@ impl App {
         let sections = models::sections(&ctx, theme_colors);
         let open_tasks: usize = sections.iter().filter(|s| s.title != "Completed").map(|s| s.items.row_count()).sum();
         update(&self.models.sections, sections);
-        update(&self.models.up_next, models::up_next(&ctx, 6));
-        let (today_items, today_open) = models::today_items(&ctx);
+        update(&self.models.up_next, models::up_next(&normal_ctx, 6));
+        let (today_items, today_open) = models::today_items(&normal_ctx);
         update(&self.models.today, today_items);
         update(&self.models.results, models::search(&ctx, &search));
 
@@ -2014,7 +2461,12 @@ impl App {
             3 => ("Board".into(), String::new(), format!("{open_cards} open")),
             _ => ("Tasks".into(), String::new(), format!("{open_tasks} open")),
         };
-        let (mood, pet_line) = self.pet(&ctx, today_open);
+        let (title_main, title_sub, caption) = match self.state.borrow().browse {
+            1 => ("Templates".into(), String::new(), String::new()),
+            2 => ("Archive".into(), String::new(), String::new()),
+            _ => (title_main, title_sub, caption),
+        };
+        let (mood, pet_line) = self.pet(&normal_ctx, today_open);
         let agenda_title = format!("{} · {}", ctx.day_name(selected).to_uppercase(), selected.format("%-d %B").to_string().to_uppercase());
         self.each_store(|s| {
             s.set_view(view);
@@ -2025,6 +2477,7 @@ impl App {
             s.set_mini_title(mini.format("%B %Y").to_string().into());
             s.set_grid_lanes(lanes);
             s.set_board_tallest(tallest);
+            s.set_board_details(board_details);
             s.set_today_open(today_open as i32);
             s.set_day_agenda_title(agenda_title.clone().into());
             s.set_pet_mood(mood);
@@ -2033,10 +2486,20 @@ impl App {
         if self.pet_mood.replace(mood) != mood || self.pet_tick.get() == 0 {
             self.animate_pet();
         }
-        self.publish_snapshot(&ctx, mood, today_open);
+        self.publish_snapshot(&normal_ctx, mood, today_open);
         self.refresh_clock();
         self.sync_os_reminders();
     }
+}
+
+fn reminder_matches(task: &Task, key: &str) -> bool {
+    let mut parts = key.split('@');
+    parts.next() == Some(task.id.as_str()) && parts.next().is_none_or(|start| start == "focus" || task.start.is_some_and(|s| patch_core::time::fmt_dt(s) == start))
+}
+
+fn words(text: &str) -> Vec<String> {
+    let mut words: Vec<_> = text.split_whitespace().map(|t| t.trim_start_matches('#').to_lowercase()).filter(|t| !t.is_empty()).collect();
+    words.sort(); words.dedup(); words
 }
 
 fn checklist_rows(items: &[CheckItem]) -> Vec<CheckRow> {

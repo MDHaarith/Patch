@@ -53,7 +53,7 @@ final class PatchNative {
     static final int IME_SHOW = 2;
     static final int IME_SHOW_ACTIONS = 3;
 
-    /** Look of the app: 0 matte black, 1 black glass, 2 light, 3 light glass. */
+    /** Look of the app: 0 pitch black, 2 light. */
     static volatile int look = 0;
     static WeakReference<MainActivity> activity = new WeakReference<>(null);
 
@@ -257,6 +257,15 @@ final class PatchNative {
         });
     }
 
+    static void openUrl(String url) {
+        try {
+            app.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (android.content.ActivityNotFoundException e) {
+            Log.w("Patch", "No app opens " + url);
+        }
+    }
+
     static void copyText(String text) {
         Runnable copy = () -> clipboard.setPrimaryClip(ClipData.newPlainText("Patch", text));
         if (Looper.myLooper() == Looper.getMainLooper()) {
@@ -365,6 +374,7 @@ final class PatchNative {
 
     /** The widget's "+": open the editor on a new task. */
     static native void nativeNewTask();
+    static native void nativeAddText(String text);
 
     static native void nativeScanStopped();
 

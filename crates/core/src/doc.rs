@@ -2,8 +2,8 @@
 
 use crate::hlc::{now_ms, Clock, Stamp};
 use crate::id::{new_id, random_string};
-use crate::model::{Column, List, Task};
-use crate::record::{Record, KIND_COLUMN, KIND_LIST, KIND_TASK};
+use crate::model::{Column, List, SmartView, Task};
+use crate::record::{Record, KIND_COLUMN, KIND_LIST, KIND_TASK, KIND_VIEW};
 use crate::recur;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -26,6 +26,31 @@ struct DocFile {
     hub_id: Option<String>,
     dirty: Vec<(String, Stamp)>,
     records: Vec<Record>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Stats {
+    pub today: u32,
+    pub streak: u32,
+    pub best: u32,
+    /// Completions per day, oldest first, ending today.
+    pub last_7: [u32; 7],
+    pub focus_today: u32,
+}
+
+/// Values only: replay always goes through `write` with fresh clock stamps.
+#[derive(Clone, Debug)]
+pub struct ChangeSet(Vec<RecordChange>);
+
+#[derive(Clone, Debug)]
+struct RecordChange {
+    id: String,
+    kind: String,
+    fields: Vec<(String, Value, Value)>,
+}
+
+impl ChangeSet {
+    pub fn is_empty(&self) -> bool { self.0.is_empty() }
 }
 
 #[derive(Clone, Debug)]
@@ -232,6 +257,203 @@ impl Doc {
         true
     }
 
+    pub fn changes_since(&self, before: &Doc) -> ChangeSet {
+        ChangeSet(self.records.values().filter_map(|record| {
+            let old = before.record(&record.id);
+            let mut fields: Vec<_> = record.f.iter().filter_map(|(key, field)| {
+                let prev = old.and_then(|r| r.get(key)).cloned().unwrap_or(Value::Null);
+                (prev != field.v).then(|| (key.clone(), prev, field.v.clone()))
+            }).collect();
+            if old.is_none() {
+                fields = vec![("deleted".into(), json!(true), json!(false))];
+            }
+            (!fields.is_empty()).then(|| RecordChange { id: record.id.clone(), kind: record.kind.clone(), fields })
+        }).collect())
+    }
+
+    pub fn replay(&mut self, changes: &ChangeSet, undo: bool) {
+        for change in &changes.0 {
+            self.write(&change.id, &change.kind, change.fields.iter().map(|(key, before, after)|
+                (key.as_str(), if undo { before } else { after }.clone())).collect());
+        }
+    }
+
+    pub fn smart_views(&self) -> Vec<SmartView> {
+        self.records.values().filter_map(SmartView::from_record).collect()
+    }
+
+    pub fn save_smart_view_from(&mut self, base: &SmartView, view: &SmartView) {
+        if base.id != view.id { return; }
+        let before: BTreeMap<_, _> = base.fields().into_iter().collect();
+        let mut after: BTreeMap<_, _> = view.fields().into_iter().collect();
+        for key in before.keys().filter(|k| k.starts_with("tags.")) {
+            after.entry(key.clone()).or_insert(Value::Null);
+        }
+        let fields = after.iter().filter(|(k,v)| before.get(*k) != Some(*v) || self.record(&view.id).is_none())
+            .map(|(k,v)| (k.as_str(), v.clone())).collect();
+        self.write(&view.id, KIND_VIEW, fields);
+    }
+
+    pub fn delete_smart_view(&mut self, id: &str) {
+        self.write(id, KIND_VIEW, vec![("deleted", json!(true))]);
+    }
+
+    /// Validate local edits; remote cycles remain stored and traversals use visited sets.
+    pub fn links_valid(&self, task: &Task) -> bool {
+        for dependencies in [false, true] {
+            let edges: Vec<_> = if dependencies { task.blockers.clone() } else { task.parent.iter().cloned().collect() };
+            for edge in edges {
+                let mut pending = vec![edge];
+                let mut visited = std::collections::HashSet::new();
+                while let Some(id) = pending.pop() {
+                    if id == task.id { return false; }
+                    if !visited.insert(id.clone()) { continue; }
+                    if let Some(t) = self.task(&id) {
+                        if dependencies { pending.extend(t.blockers); } else { pending.extend(t.parent); }
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    pub fn blocked(&self, task: &Task) -> bool {
+        task.blockers.iter().any(|id| self.task(id).is_some_and(|t| !t.done && !t.archived))
+    }
+
+    pub fn duplicate_task(&mut self, id: &str) -> Option<String> {
+        let mut t = self.task(id)?;
+        t.id.clear();
+        t.done = false;
+        t.done_at = None;
+        t.column = self.first_open_column();
+        t.archived = false;
+        t.template = false;
+        if self.task(id)?.template {
+            t.parent = None;
+            t.start = None; t.end = None; t.repeat_anchor = None;
+        }
+        for item in &mut t.checklist { item.done = false; item.id = new_id("check"); }
+        Some(self.add_task(t))
+    }
+
+    /// Rolls a repeating task to its next occurrence; false if it has none.
+    fn advance_repeat(&mut self, id: &str, at: chrono::NaiveDateTime) -> bool {
+        let Some(mut t) = self.task(id) else { return false };
+        let base = t.clone();
+        let Some(start) = t.start.filter(|_| t.repeat != crate::model::Repeat::None) else { return false };
+        let Some(next) = recur::after_completion(t.repeat, at).or_else(|| recur::next_start(&t)) else { return false };
+        t.repeat_anchor.get_or_insert(start);
+        let next = if t.all_day { next.date().and_time(chrono::NaiveTime::MIN) } else { next };
+        let delta = next - start;
+        t.start = Some(next);
+        t.end = t.end.map(|e| e + delta);
+        for item in &mut t.checklist {
+            item.done = false;
+        }
+        if self.column_is_done(&t.column) {
+            t.column = self.first_open_column();
+        }
+        t.done = false;
+        t.done_at = None;
+        self.save_task_from(&base, &t);
+        true
+    }
+
+    /// Skips one occurrence of a repeating task without counting it as done.
+    pub fn skip_occurrence(&mut self, id: &str, now: chrono::NaiveDateTime) -> bool {
+        self.advance_repeat(id, now)
+    }
+
+    /// Brings every overdue task up to date and returns how many moved. Calendar
+    /// repeats roll past what they missed; anything else lands on today.
+    pub fn reschedule_overdue(&mut self, now: chrono::NaiveDateTime) -> usize {
+        use crate::model::Repeat;
+        let overdue: Vec<Task> = self.tasks().into_iter().filter(|t| t.active() && t.is_overdue(now)).collect();
+        for t in &overdue {
+            if !matches!(t.repeat, Repeat::None | Repeat::AfterDone(..)) {
+                // Bounded: a daily repeat that is years behind still catches up.
+                for _ in 0..10_000 {
+                    if !self.task(&t.id).is_some_and(|t| t.is_overdue(now)) || !self.advance_repeat(&t.id, now) { break; }
+                }
+                continue;
+            }
+            let Some(start) = t.start else { continue };
+            let today = now.date().and_time(start.time());
+            if t.all_day || today > now {
+                self.reschedule(&t.id, today);
+            } else {
+                // Its time has passed today, so a timed slot would stay overdue.
+                let mut moved = t.clone();
+                moved.start = Some(now.date().and_time(chrono::NaiveTime::MIN));
+                moved.end = None;
+                moved.all_day = true;
+                self.save_task(&moved);
+            }
+        }
+        overdue.len()
+    }
+
+    /// Adds finished focus minutes to the task's total for that day.
+    pub fn log_focus(&mut self, id: &str, minutes: i64, on: chrono::NaiveDate) {
+        let key = format!("focus.{on}");
+        let total = self.record(id).and_then(|r| r.i64(&key)).unwrap_or(0) + minutes;
+        if self.task(id).is_some() {
+            self.write(id, KIND_TASK, vec![(key.as_str(), json!(total))]);
+        }
+    }
+
+    /// Reads deleted tasks too: removing a finished task shouldn't break a streak.
+    pub fn stats(&self, today: chrono::NaiveDate) -> Stats {
+        use chrono::{Duration, TimeZone};
+        let (mut days, mut stats) = (BTreeMap::<chrono::NaiveDate, u32>::new(), Stats::default());
+        let date_key = |key: &str, prefix: &str| key.strip_prefix(prefix).and_then(crate::time::parse_date);
+        for r in self.records.values().filter(|r| r.kind == KIND_TASK) {
+            if r.bool("done") {
+                let done = r.i64("doneAt").and_then(|ms| chrono::Local.timestamp_millis_opt(ms).single());
+                if let Some(done) = done {
+                    *days.entry(done.date_naive()).or_default() += 1;
+                }
+            }
+            for (key, field) in &r.f {
+                if field.v == true {
+                    if let Some(day) = date_key(key, "completed.") {
+                        *days.entry(day).or_default() += 1;
+                    }
+                } else if date_key(key, "focus.") == Some(today) {
+                    stats.focus_today += field.v.as_i64().unwrap_or(0).max(0) as u32;
+                }
+            }
+        }
+        stats.today = days.get(&today).copied().unwrap_or(0);
+        for (i, slot) in stats.last_7.iter_mut().enumerate() {
+            *slot = days.get(&(today - Duration::days(6 - i as i64))).copied().unwrap_or(0);
+        }
+        // An empty today doesn't end the streak yet: there is still time left.
+        let mut day = if stats.today > 0 { today } else { today - Duration::days(1) };
+        while days.contains_key(&day) {
+            stats.streak += 1;
+            day -= Duration::days(1);
+        }
+        let mut run = (0, None);
+        for &day in days.keys().filter(|d| **d <= today) {
+            run.0 = if run.1 == Some(day - Duration::days(1)) { run.0 + 1 } else { 1 };
+            run.1 = Some(day);
+            stats.best = stats.best.max(run.0);
+        }
+        stats
+    }
+
+    pub fn auto_archive(&mut self, days: u32, now: i64) {
+        // shortcut: restored tasks keep their completion age; track restoration time if restores should restart the policy.
+        if days == 0 { return; }
+        for mut task in self.tasks().into_iter().filter(|t| t.done && !t.archived && !t.template
+            && t.done_at.is_some_and(|at| now.saturating_sub(at) >= i64::from(days) * 86_400_000)) {
+            task.archived = true;
+            self.save_task(&task);
+        }
+    }
+
     // ---------------------------------------------------------------- queries
 
     pub fn tasks(&self) -> Vec<Task> {
@@ -287,6 +509,7 @@ impl Doc {
         if task.id.is_empty() {
             task.id = new_id("t");
         }
+        if !self.links_valid(&task) { return String::new(); }
         if self.column(&task.column).is_none() {
             task.column = self.first_open_column();
         }
@@ -305,6 +528,39 @@ impl Doc {
         let id = task.id.clone();
         self.write(&id, KIND_TASK, task.fields().iter().map(|(k, v)| (k.as_str(), v.clone())).collect());
         id
+    }
+
+    /// `add_task` for a whole calendar, whose per-insert rescan would take
+    /// minutes. Tasks need ids; ones marked done go to the first done column.
+    pub(crate) fn add_tasks(&mut self, tasks: Vec<Task>) {
+        let columns = self.columns();
+        let lists = self.lists();
+        let open = self.first_open_column();
+        let closed = self.first_done_column();
+        let fallback_list = lists.first().map_or(DEFAULT_LIST.to_string(), |l| l.id.clone());
+        let mut orders: BTreeMap<String, f64> = BTreeMap::new();
+        for t in self.tasks() {
+            let order = orders.entry(t.column).or_insert(0.0);
+            *order = order.max(t.order);
+        }
+        let now = now_ms() as i64;
+        for mut task in tasks {
+            if task.done {
+                task.done_at = Some(now);
+                task.column = closed.clone().unwrap_or_else(|| open.clone());
+            } else if !columns.iter().any(|c| c.id == task.column && !c.done) {
+                task.column = open.clone();
+            }
+            if !lists.iter().any(|l| l.id == task.list) {
+                task.list = fallback_list.clone();
+            }
+            task.created = now;
+            let order = orders.entry(task.column.clone()).or_insert(0.0);
+            *order += 1.0;
+            task.order = *order;
+            let id = task.id.clone();
+            self.write(&id, KIND_TASK, task.fields().iter().map(|(k, v)| (k.as_str(), v.clone())).collect());
+        }
     }
 
     /// Persists an immediate edit against the current task. Editor snapshots
@@ -328,11 +584,25 @@ impl Doc {
             return;
         }
         let mut task = task.clone();
+        if (task.parent != base.parent || task.blockers != base.blockers) && !self.links_valid(&task) {
+            return;
+        }
         if task.column != base.column {
             task.done = self.column_is_done(&task.column);
         }
+        if task.done && !base.done && task.repeat != crate::model::Repeat::None && task.start.is_some() {
+            // Inspector status changes complete through the same recurrence path as a checkbox.
+            task.done = false;
+            task.done_at = None;
+            task.column = base.column.clone();
+            self.save_task_from(base, &task);
+            self.set_done(&task.id, true);
+            return;
+        }
         if task.done && !base.done && task.done_at.is_none() {
             task.done_at = Some(now_ms() as i64);
+        } else if !task.done && base.done {
+            task.done_at = None;
         }
         let mut before: std::collections::BTreeMap<_, _> = base.fields().into_iter().collect();
         let mut after: std::collections::BTreeMap<_, _> = task.fields().into_iter().collect();
@@ -359,7 +629,7 @@ impl Doc {
         } else {
             before.retain(|key, _| !key.starts_with("checklist."));
         }
-        for key in before.keys().filter(|key| key.starts_with("checklist.")) {
+        for key in before.keys().filter(|key| ["checklist.", "tags.", "reminders.", "blockers."].iter().any(|prefix| key.starts_with(prefix))) {
             after.entry(key.clone()).or_insert(Value::Null);
         }
         let reset_anchor = task.repeat_anchor.is_none() && (task.start != base.start || task.repeat != base.repeat);
@@ -373,26 +643,16 @@ impl Doc {
     /// Completes or reopens a task. Completing a repeating task rolls it to
     /// its next occurrence instead.
     pub fn set_done(&mut self, id: &str, done: bool) {
-        let Some(mut t) = self.task(id) else { return };
-        let base = t.clone();
-        if done && t.repeat != crate::model::Repeat::None && t.start.is_some() {
-            if let (Some(start), Some(next)) = (t.start, recur::next_start(&t)) {
-                t.repeat_anchor.get_or_insert(start);
-                let delta = next - start;
-                t.start = Some(next);
-                t.end = t.end.map(|e| e + delta);
-                for item in &mut t.checklist {
-                    item.done = false;
-                }
-                if self.column_is_done(&t.column) {
-                    t.column = self.first_open_column();
-                }
-                t.done = false;
-                t.done_at = None;
-                self.save_task_from(&base, &t);
-                return;
-            }
+        self.set_done_at(id, done, crate::time::now_local());
+    }
+
+    pub fn set_done_at(&mut self, id: &str, done: bool, completed: chrono::NaiveDateTime) {
+        if done && self.advance_repeat(id, completed) {
+            // The rolled-forward task keeps no done date, so streaks need this log.
+            self.write(id, KIND_TASK, vec![(format!("completed.{}", completed.date()).as_str(), json!(true))]);
+            return;
         }
+        let Some(mut t) = self.task(id) else { return };
         t.done = done;
         if done {
             t.done_at = Some(now_ms() as i64);

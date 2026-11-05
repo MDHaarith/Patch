@@ -51,7 +51,7 @@ component ChoiceGrid inherits Rectangle {
 }
 
 // A compact dropdown: the current choice, expanding into a list in place.
-component Picker inherits VerticalLayout {
+export component Picker inherits VerticalLayout {
     in property <string> label;
     in property <string> icon;
     in property <[string]> options;
@@ -71,8 +71,10 @@ component Picker inherits VerticalLayout {
             spacing: 8px;
             IconBox { name: root.icon; size: 13px; tint: Theme.text-2; }
             Text { text: root.label; color: Theme.text-2; font-size: Theme.fs-m; vertical-alignment: center; }
-            Rectangle { horizontal-stretch: 1; }
             Text {
+                horizontal-stretch: 1;
+                horizontal-alignment: right;
+                overflow: elide;
                 text: root.current >= 0 && root.current < root.options.length ? root.options[root.current] : "";
                 color: Theme.text;
                 font-size: Theme.fs-m;
@@ -132,6 +134,7 @@ component Group inherits VerticalLayout {
 }
 
 export component EditorPanel inherits Rectangle {
+    property <bool> choosing-blockers;
     callback close();
     VerticalLayout {
         HorizontalLayout {
@@ -174,7 +177,7 @@ export component EditorPanel inherits Rectangle {
                 title-field := Field {
                     text <=> Editor.title;
                     placeholder: "What needs doing?";
-                    font-size: 18px;
+                    font-size: 18px * Theme.text-scale;
                     font-weight: 600;
                     init => {
                         if (Editor.is-new && !Store.mobile) {
@@ -250,12 +253,53 @@ export component EditorPanel inherits Rectangle {
                     picked(i) => { Editor.repeat-index = i; }
                 }
 
+                if Editor.scheduled && Editor.repeat-index > 0 && !Editor.is-new: Button {
+                    text: "Skip this occurrence";
+                    clicked => { Actions.skip-occurrence(); }
+                }
+
                 if Editor.scheduled: Picker {
                     label: "Alert";
                     icon: "bell";
                     options: Editor.reminders;
                     current: Editor.reminder-index;
                     picked(i) => { Editor.reminder-index = i; }
+                }
+
+                Group {
+                    title: "TAGS";
+                    Field { text <=> Editor.tags; placeholder: "Tags, separated by spaces"; }
+                }
+
+                if Editor.scheduled: Group {
+                    title: "ADDITIONAL ALERTS";
+                    Field { text <=> Editor.extra-reminders; placeholder: "Minutes before: 5, 60, 1440"; }
+                }
+
+                Group {
+                    title: "SUBTASKS & DEPENDENCIES";
+                    Text { text: Editor.link-status; color: Theme.text-2; font-size: Theme.fs-s; }
+                    Picker {
+                        label: "Parent";
+                        options: Editor.parent-options;
+                        current: Editor.parent-index;
+                        picked(i) => { Editor.parent-index = i; }
+                    }
+                    for child in Editor.children: Button { text: (child.done ? "✓ " : "○ ") + child.text; clicked => { Actions.open-task(child.id); } }
+                    SectionLabel { text: "BLOCKED BY"; }
+                    Button { text: root.choosing-blockers ? "Done choosing blockers" : "Choose blockers"; clicked => { root.choosing-blockers = !root.choosing-blockers; } }
+                    VerticalLayout {
+                        spacing: 0px;
+                        for task in Editor.blocker-options: Rectangle {
+                            height: root.choosing-blockers || task.done ? (Store.mobile ? 40px : 30px) : 0px;
+                            visible: root.choosing-blockers || task.done;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Check { checked: task.done; toggled => { Actions.blocker-toggle(task.id); } }
+                                Text { text: task.text; color: Theme.text; font-size: Theme.fs-m; overflow: elide; vertical-alignment: center; horizontal-stretch: 1; }
+                            }
+                        }
+                    }
                 }
 
                 Group {
@@ -306,9 +350,42 @@ export component EditorPanel inherits Rectangle {
                         multiline: true;
                         min-height: 96px;
                         placeholder: "Notes, links, details…";
+                        edited(text) => { Actions.notes-edited(text); }
+                    }
+                    // Not a Button: those grow to fit their text, and URLs get long.
+                    for link in Editor.links: Rectangle {
+                        height: Store.mobile ? 40px : 30px;
+                        border-radius: 6px;
+                        background: link-touch.has-hover ? Theme.hover : transparent;
+                        accessible-role: button;
+                        accessible-label: link;
+                        accessible-action-default => { Actions.open-link(link); }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Icon { y: (parent.height - self.height) / 2; name: "open"; size: 14px; tint: Theme.accent; }
+                            Text { text: link; color: Theme.accent; font-size: Theme.fs-m; overflow: elide; vertical-alignment: center; horizontal-stretch: 1; }
+                        }
+                        link-touch := TouchArea { clicked => { Actions.open-link(link); } }
                     }
                 }
 
+                HorizontalLayout {
+                    Text { text: "Use as template"; color: Theme.text; font-size: Theme.fs-m; vertical-alignment: center; horizontal-stretch: 1; }
+                    Toggle { checked <=> Editor.template; }
+                }
+                if !Editor.is-new && (Editor.archived || Editor.done): HorizontalLayout {
+                    Text { text: Editor.archived ? "Archived" : "Archive completed task"; color: Theme.text; font-size: Theme.fs-m; vertical-alignment: center; horizontal-stretch: 1; }
+                    Toggle { checked <=> Editor.archived; }
+                }
+                if !Editor.is-new && !Editor.done && !Editor.template: HorizontalLayout {
+                    spacing: 8px;
+                    Button { horizontal-stretch: 1; text: "Focus 25 min"; clicked => { Actions.focus-start(25); } }
+                    Button { horizontal-stretch: 1; text: "Focus 50 min"; clicked => { Actions.focus-start(50); } }
+                }
+                if !Editor.is-new: Button {
+                    text: Editor.template ? "Create task from template" : "Duplicate task";
+                    clicked => { Actions.duplicate-task(); }
+                }
                 if !Editor.is-new: Button {
                     text: "Delete task";
                     icon: "trash";

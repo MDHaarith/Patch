@@ -256,3 +256,45 @@ fn malformed_identity_is_rejected_without_registering_a_device() {
     drop(hub);
     std::fs::remove_dir_all(cfg.data_dir).unwrap();
 }
+
+fn get(hub: &Hub, path: &str) -> Result<patch_sync::http::Response, HttpError> {
+    request(&base(hub), "GET", path, "", None, Duration::from_secs(2))
+}
+
+#[test]
+fn calendar_feed_is_private_read_only_and_rotates() {
+    let cfg = config();
+    let hub = Hub::start(cfg.clone()).unwrap();
+    let code = hub.token();
+
+    let mut doc = Doc::with_node("feed-test");
+    let mut task = Task::blank("", DEFAULT_LIST, COL_TODO);
+    task.title = "Dentist".into();
+    task.start = patch_core::time::parse_dt("2031-05-01T15:00");
+    doc.add_task(task);
+    let changes = serde_json::to_value(doc.pending()).unwrap();
+    sync(&hub, &code, serde_json::json!({"since": 0, "changes": changes, "node": "feed-test"})).unwrap();
+
+    let link = token_in(&std::fs::read_to_string(cfg.data_dir.join("devices.json")).unwrap());
+    let body = get(&hub, &format!("/calendar.ics?token={link}")).unwrap().body;
+    let body = String::from_utf8(body).unwrap();
+    assert!(body.contains("SUMMARY:Dentist\r\n") && body.contains("DTSTART:20310501T150000\r\n"), "{body}");
+
+    for bad in ["/calendar.ics", "/calendar.ics?token=", "/calendar.ics?token=wrong"] {
+        assert!(matches!(get(&hub, bad), Err(HttpError::Status(401, _))), "{bad}");
+    }
+    assert!(matches!(get(&hub, &format!("/calendar.ics?token={code}")), Err(HttpError::Status(401, _))), "the pairing code never works in a URL");
+    let as_sync = request(&base(&hub), "GET", "/api/info", &link, None, Duration::from_secs(2));
+    assert!(matches!(as_sync, Err(HttpError::Status(401, _))), "the feed link grants nothing else");
+
+    drop(hub);
+    let hub = Hub::start(cfg.clone()).unwrap();
+    assert!(get(&hub, &format!("/calendar.ics?token={link}")).is_ok(), "the link survives restarts");
+    hub.regenerate_code().unwrap();
+    assert!(matches!(get(&hub, &format!("/calendar.ics?token={link}")), Err(HttpError::Status(401, _))), "regenerating revokes a leaked link");
+}
+
+fn token_in(devices_json: &str) -> String {
+    let value: serde_json::Value = serde_json::from_str(devices_json).unwrap();
+    value["calendar"].as_str().unwrap().to_string()
+}

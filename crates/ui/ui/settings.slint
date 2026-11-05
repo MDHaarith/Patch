@@ -26,7 +26,7 @@ component ThemePreview inherits Rectangle {
         border-color: root.theme.edge;
         property <length> cw: (self.width - 12px) / 7;
         property <length> rh: (self.height - 22px) / 3;
-        Text { x: 7px; y: 5px; text: "October"; color: root.theme.ink; font-size: 8px; font-weight: 700; }
+        Text { x: 7px; y: 5px; text: "October"; color: root.theme.ink; font-size: 8px * Theme.text-scale; font-weight: 700; }
         // The selected range 13–15 as one capsule under the end circles.
         Rectangle {
             x: 6px + 1.5 * card.cw - card.rh * 0.42;
@@ -107,7 +107,7 @@ component Card inherits Surface {
     in property <string> title;
     in property <string> icon;
     fill: Theme.panel-strong;
-    sheen: !Theme.matte;
+    sheen: Theme.light;
     radius: 16px;
     height: lay.preferred-height;
     lay := VerticalLayout {
@@ -158,6 +158,39 @@ export component SettingsPanel inherits Rectangle {
                 spacing: 14px;
 
                 Card {
+                    title: "Progress";
+                    icon: "check";
+                    HorizontalLayout {
+                        spacing: 8px;
+                        for tile in [
+                            { value: Store.stat-streak, label: "day streak" },
+                            { value: Store.stat-best, label: "best streak" },
+                            { value: Store.stat-today, label: "done today" },
+                            { value: Store.stat-focus, label: "focus min" },
+                        ]: VerticalLayout {
+                            horizontal-stretch: 1;
+                            Text { text: tile.value; font-size: Theme.fs-xl; font-weight: 700; color: Theme.text; }
+                            Text { text: tile.label; font-size: Theme.fs-xs; color: Theme.text-2; }
+                        }
+                    }
+                    HorizontalLayout {
+                        height: 44px;
+                        spacing: 6px;
+                        accessible-role: text;
+                        accessible-label: "Tasks finished over the last 7 days";
+                        for count in Store.stat-week: Rectangle {
+                            horizontal-stretch: 1;
+                            Rectangle {
+                                height: count == 0 ? 3px : max(3px, parent.height * count / Store.stat-week-max);
+                                y: parent.height - self.height;
+                                border-radius: 3px;
+                                background: count == 0 ? Theme.hairline : Theme.accent;
+                            }
+                        }
+                    }
+                    Text { text: "Last 7 days"; font-size: Theme.fs-xs; color: Theme.text-2; }
+                }
+                Card {
                     title: "Appearance";
                     icon: "layers";
                     themes := Rectangle {
@@ -195,6 +228,46 @@ export component SettingsPanel inherits Rectangle {
                         }
                     }
                     Row {
+                        label: "Accent colour";
+                        HorizontalLayout {
+                            alignment: end;
+                            spacing: 6px;
+                            for c[i] in Store.accent-choices: Rectangle {
+                                y: (parent.height - self.height) / 2;
+                                width: 22px;
+                                height: 22px;
+                                border-radius: self.width / 2;
+                                background: c;
+                                border-width: Store.accent-choice == i ? 2px : 0px;
+                                border-color: Theme.text;
+                                accessible-role: button;
+                                accessible-label: "Accent colour \{i + 1}";
+                                accessible-action-default => { Actions.set-accent(i); }
+                                if Store.accent-choice == i: Icon { name: "check"; size: 12px; tint: Theme.on-accent; }
+                                TouchArea { clicked => { Actions.set-accent(i); } }
+                            }
+                        }
+                    }
+                    Row {
+                        label: "Text size";
+                        VerticalLayout {
+                            alignment: center;
+                            Segmented {
+                                items: ["Default", "Large", "Larger"];
+                                current: Store.text-size;
+                                picked(i) => { Actions.set-text-size(i); }
+                            }
+                        }
+                    }
+                    Row {
+                        label: "Plan my day";
+                        hint: "Show what's on when you first open Patch each day.";
+                        Toggle {
+                            checked: Store.daily-plan;
+                            toggled => { Actions.set-daily-plan(self.checked); }
+                        }
+                    }
+                    Row {
                         label: "Week starts on Monday";
                         Toggle { y: (parent.height - self.height) / 2; checked: Store.week-monday; toggled(v) => { Actions.set-week-monday(v); } }
                     }
@@ -208,6 +281,7 @@ export component SettingsPanel inherits Rectangle {
                     title: "Repeat & alerts";
                     icon: "repeat";
                     property <int> n: 2;
+                    property <bool> after-done;
                     property <int> unit: 1;
                     property <int> amount: 30;
                     property <int> scale: 0;
@@ -241,7 +315,17 @@ export component SettingsPanel inherits Rectangle {
                             current: presets.unit;
                             picked(u) => { presets.unit = u; }
                         }
-                        Button { y: (parent.height - self.height) / 2; text: "Add"; kind: 1; clicked => { Actions.add-custom-repeat(presets.n, presets.unit); } }
+                        Button { y: (parent.height - self.height) / 2; text: "Add"; kind: 1; clicked => { Actions.add-custom-repeat(presets.n, presets.unit + (presets.after-done ? 4 : 0)); } }
+                    }
+                    HorizontalLayout {
+                        Text { text: "Repeat after completion"; color: Theme.text; font-size: Theme.fs-m; horizontal-stretch: 1; vertical-alignment: center; }
+                        Toggle { checked <=> presets.after-done; }
+                    }
+                    SectionLabel { text: "AUTO-ARCHIVE COMPLETED"; }
+                    Field {
+                        text: Store.archive-days == 0 ? "" : "\{Store.archive-days}";
+                        placeholder: "Days after completion (0 disables)";
+                        accepted(t) => { Actions.set-archive-days(t.to-float()); }
                     }
                     SectionLabel { text: "CUSTOM ALERTS"; }
                     if Store.custom-alerts.length == 0: Text { text: "None yet"; color: Theme.text-3; font-size: Theme.fs-s; }
@@ -288,29 +372,31 @@ export component SettingsPanel inherits Rectangle {
                     }
                     if Store.can-host && Store.hosting: Rectangle {
                         border-radius: 20px;
-                        background: #141518;
+                        background: #111111;
                         height: pair.preferred-height;
                         pair := VerticalLayout {
                             padding: 20px;
                             spacing: 12px;
-                            Text { text: "Add an environment"; color: #ffffff; font-size: 19px; font-weight: 600; }
-                            Text { text: "Scan this code from Patch on your phone"; color: #a6a7af; font-size: 13px; wrap: word-wrap; }
+                            Text { text: "Add an environment"; color: #ffffff; font-size: 19px * Theme.text-scale; font-weight: 600; }
+                            Text { text: "Scan this code from Patch on your phone"; color: #a6a7af; font-size: 13px * Theme.text-scale; wrap: word-wrap; }
                             HorizontalLayout {
                                 alignment: center;
                                 Rectangle {
                                     width: 224px; height: 224px; border-radius: 18px; clip: true;
-                                    background: #141518;
+                                    background: #111111;
                                     Image { source: Store.host-qr; width: parent.width; height: parent.height; image-rendering: pixelated; accessible-role: image; accessible-label: "Pairing QR code"; }
                                 }
                             }
-                            Text { text: Store.host-address == "" ? "Connect to Wi-Fi or start Tailscale" : Store.host-address; color: #ffffff; font-size: 13px; wrap: word-wrap; }
+                            Text { text: Store.host-address == "" ? "Connect to Wi-Fi or start Tailscale" : Store.host-address; color: #ffffff; font-size: 13px * Theme.text-scale; wrap: word-wrap; }
                             Button { text: "Copy address"; kind: 3; clicked => { Actions.copy-text(Store.host-address); } }
-                            Text { text: Store.host-token; color: #ffffff; font-size: 20px; font-weight: 600; letter-spacing: 1px; horizontal-alignment: center; }
+                            Text { text: Store.host-token; color: #ffffff; font-size: 20px * Theme.text-scale; font-weight: 600; letter-spacing: 1px; horizontal-alignment: center; }
                             HorizontalLayout {
                                 spacing: 8px;
                                 Button { text: "Copy code"; kind: 3; clicked => { Actions.copy-text(Store.host-token); } }
                                 Button { text: "Regenerate code"; kind: 3; clicked => { Actions.regenerate-code(); } }
                             }
+                            Text { text: "Calendar apps on this network can subscribe to your scheduled tasks with this private link. Regenerating the code replaces it."; color: #a6a7af; font-size: 13px * Theme.text-scale; wrap: word-wrap; }
+                            Button { text: "Copy calendar link"; kind: 3; enabled: Store.host-calendar != ""; clicked => { Actions.copy-text(Store.host-calendar); } }
                         }
                     }
                     if !Store.mobile: VerticalLayout {

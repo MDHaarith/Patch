@@ -15,6 +15,7 @@ import { ListView } from "listview.slint";
 import { EditorPanel } from "editor.slint";
 import { SettingsPanel } from "settings.slint";
 import { TaskRow } from "rows.slint";
+import { TaskTools, DayPlan } from "task-tools.slint";
 import { OverlayWindow } from "overlay.slint";
 import { Pet } from "pet.slint";
 
@@ -22,13 +23,6 @@ export { Store, Editor, Actions, Theme, OverlayWindow }
 
 component Backdrop inherits Rectangle {
     background: Theme.backdrop;
-    if Theme.matte: Image {
-        width: parent.width;
-        height: parent.height;
-        source: Store.grain;
-        horizontal-tiling: repeat;
-        vertical-tiling: repeat;
-    }
 }
 
 // Window controls for the custom frame: three quiet dots that take their
@@ -202,7 +196,7 @@ component Sidebar inherits Surface {
     property <string> menu;
     fill: Theme.panel;
     radius: 18px;
-    sheen: !Theme.matte;
+    sheen: Theme.light;
     VerticalLayout {
         padding: 12px;
         padding-top: 12px;
@@ -238,7 +232,7 @@ component Sidebar inherits Surface {
                     SyncDot { y: (parent.height - self.height) / 2; }
                     Rectangle { horizontal-stretch: 1; }
                 }
-                Text { text: Store.pet-line; font-size: Theme.fs-s; color: Theme.text-2; overflow: elide; }
+                Text { text: Store.focus-active ? "Focus · \{Store.focus-left}" : Store.pet-line; font-size: Theme.fs-s; color: Theme.text-2; overflow: elide; }
             }
         }
         MiniCalendar {}
@@ -276,6 +270,24 @@ component Sidebar inherits Surface {
                 }
                 escaped => { root.adding = false; }
             }
+        }
+        Divider {}
+        SectionLabel { text: "SMART VIEWS"; }
+        Button { text: "Views & filters"; clicked => { Store.tools-open = true; } }
+        saved-scroll := Scroll {
+            height: min(120px, Store.smart-views.length * 32px);
+            content-height: saved-body.preferred-height;
+            saved-body := VerticalLayout {
+                width: saved-scroll.width;
+                alignment: start;
+                spacing: 2px;
+                for view in Store.smart-views: Button { text: view.name; clicked => { Actions.open-smart(view.id); } }
+            }
+        }
+        HorizontalLayout {
+            spacing: 4px;
+            Button { text: "Templates"; clicked => { Actions.browse(1); } }
+            Button { text: "Archive"; clicked => { Actions.browse(2); } }
         }
         Divider {}
         HorizontalLayout {
@@ -359,6 +371,7 @@ component Toolbar inherits HorizontalLayout {
     Rectangle { width: 6px; }
     if root.width > 900px: Field {
         y: (parent.height - self.height) / 2;
+        height: 30px;
         horizontal-stretch: 1;
         min-width: 160px;
         max-width: 300px;
@@ -380,6 +393,7 @@ component Toolbar inherits HorizontalLayout {
     }
     Rectangle { horizontal-stretch: 1; }
     search := SearchBox { y: (parent.height - self.height) / 2; }
+    IconButton { y: (parent.height - self.height) / 2; icon: "more"; clicked => { Store.tools-open = true; } }
     IconButton { y: (parent.height - self.height) / 2; icon: "pin"; active: Store.pinned; clicked => { Actions.set-pinned(!Store.pinned); } }
     IconButton { y: (parent.height - self.height) / 2; icon: "gear"; clicked => { Store.settings-open = true; } }
     public function focus-search-box() {
@@ -480,7 +494,7 @@ component DesktopShell inherits Rectangle {
         height: parent.height - 2 * root.gap;
         radius: 18px;
         fill: Theme.content;
-        sheen: !Theme.matte;
+        sheen: Theme.light;
         clip: true;
         VerticalLayout {
             Rectangle {
@@ -562,11 +576,12 @@ component MobileShell inherits Rectangle {
             if Store.custom-chrome: WindowControls { height: parent.height; }
             HorizontalLayout {
                 spacing: 7px;
-                Text { text: Store.title-main; font-size: 26px; font-weight: 700; color: Theme.text; vertical-alignment: center; }
-                Text { text: Store.title-sub; font-size: 26px; font-weight: 400; color: Theme.text-2; vertical-alignment: center; }
+                Text { text: Store.title-main; font-size: 26px * Theme.text-scale; font-weight: 700; color: Theme.text; vertical-alignment: center; }
+                Text { text: Store.title-sub; font-size: 26px * Theme.text-scale; font-weight: 400; color: Theme.text-2; vertical-alignment: center; }
             }
             Rectangle { horizontal-stretch: 1; }
             if Store.view <= 1: Button { y: (parent.height - self.height) / 2; text: "Today"; kind: 0; pad: 12px; clicked => { Actions.go-today(); } }
+            IconButton { y: (parent.height - self.height) / 2; size: 38px; icon-size: 18px; icon: "more"; active: Store.selection-mode; clicked => { Store.tools-open = true; } }
             IconButton { y: (parent.height - self.height) / 2; size: 38px; icon-size: 18px; icon: "search"; active: root.searching; clicked => { root.searching = !root.searching; } }
             IconButton { y: (parent.height - self.height) / 2; size: 38px; icon-size: 18px; icon: "gear"; clicked => { Store.settings-open = true; } }
         }
@@ -712,6 +727,9 @@ export component MainWindow inherits Window {
     keys := FocusScope {
         key-pressed(e) => {
             if (e.text == Key.Escape) {
+                if Store.plan-open { Store.plan-open = false; return accept; }
+                if Store.tools-open { Store.tools-open = false; return accept; }
+                if Store.selection-mode { Actions.selection-mode(false); return accept; }
                 if (Store.settings-open) {
                     Store.settings-open = false;
                     return accept;
@@ -727,6 +745,11 @@ export component MainWindow inherits Window {
                 return reject;
             }
             if (e.modifiers.control || e.modifiers.meta) {
+                if !Store.editor-open && (e.text == "z" || e.text == "Z") {
+                    if e.modifiers.shift { Actions.redo(); } else { Actions.undo(); }
+                    return accept;
+                }
+                if !Store.editor-open && (e.text == "y" || e.text == "Y") { Actions.redo(); return accept; }
                 if (e.text == "f") {
                     root.focus-search-box();
                     return accept;
@@ -791,6 +814,70 @@ export component MainWindow inherits Window {
                         Actions.window-action(1, i);
                     }
                 }
+            }
+        }
+        if !Store.mobile && Store.selection-mode && !Store.settings-open && !Store.editor-open: Button {
+            width: 160px;
+            x: parent.width - self.width - 30px;
+            y: parent.height - self.height - 18px;
+            text: "Selected: \{Store.selection-count}";
+            clicked => { Store.tools-open = true; }
+        }
+        if Store.mobile && Store.selection-mode && !Store.editor-open: Button {
+            width: 210px;
+            x: 12px; y: parent.height - self.height - 88px - Store.safe-bottom;
+            text: "Selected: \{Store.selection-count} · Actions";
+            kind: 1;
+            clicked => { Store.tools-open = true; }
+        }
+        if Store.tools-open: Rectangle {
+            background: #00000066;
+            TouchArea { clicked => { Store.tools-open = false; } }
+            Surface {
+                width: min(440px, parent.width - 20px);
+                height: min(760px, parent.height - 40px - Store.safe-top - Store.safe-bottom);
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                radius: 18px;
+                fill: Theme.modal;
+                sheen: false;
+                elevated: true;
+                clip: true;
+                TouchArea {}
+                TaskTools {}
+            }
+        }
+        if Store.plan-open && !Store.editor-open && !Store.settings-open: Rectangle {
+            background: #00000066;
+            TouchArea { clicked => { Store.plan-open = false; } }
+            Surface {
+                width: min(400px, parent.width - 20px);
+                height: plan.preferred-height;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                radius: 18px;
+                fill: Theme.modal;
+                sheen: false;
+                elevated: true;
+                clip: true;
+                TouchArea {}
+                plan := DayPlan { width: parent.width; }
+            }
+        }
+        if Store.focus-active && !Store.editor-open && !Store.settings-open: Surface {
+            width: min(340px, parent.width - 24px);
+            height: Store.mobile ? 48px : 40px;
+            x: (parent.width - self.width) / 2;
+            y: parent.height - self.height - (Store.mobile ? 90px + Store.safe-bottom : 18px);
+            radius: self.height / 2;
+            fill: Theme.card;
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 6px;
+                spacing: 10px;
+                Text { text: Store.focus-title; color: Theme.text; font-size: Theme.fs-m; overflow: elide; vertical-alignment: center; horizontal-stretch: 1; }
+                Text { text: Store.focus-left; color: Theme.accent; font-size: Theme.fs-l; font-weight: 700; vertical-alignment: center; }
+                Button { y: (parent.height - self.height) / 2; text: "Stop"; clicked => { Actions.focus-stop(); } }
             }
         }
         Toast {

@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 use std::time::Duration;
 
-const LOOKS: [(i32, &str); 2] = [(0, "matte"), (1, "light")];
+const LOOKS: [(i32, &str); 2] = [(0, "pitch"), (1, "light")];
 
 /// One step of the script; returns how long to let the UI settle after it.
 type Step = Box<dyn FnOnce(&Rc<Shell>) -> Duration>;

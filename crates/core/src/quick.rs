@@ -2,7 +2,7 @@
 //! task titled "Dentist" tomorrow at 15:00 in the Work list with medium
 //! priority.
 
-use crate::model::{List, Repeat};
+use crate::model::{List, Repeat, Unit};
 use crate::time::{add_months, hm, month_start, week_start};
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Weekday};
 
@@ -13,8 +13,24 @@ pub struct QuickTask {
     pub end: Option<NaiveDateTime>,
     pub all_day: bool,
     pub list: Option<String>,
+    pub tags: Vec<String>,
     pub priority: u8,
     pub repeat: Repeat,
+}
+
+impl QuickTask {
+    /// The task this parse describes, in `default_list` unless it named a list.
+    pub fn to_task(&self, default_list: &str, column: &str) -> crate::Task {
+        let mut t = crate::Task::blank("", self.list.as_deref().unwrap_or(default_list), column);
+        t.title = self.title.clone();
+        t.start = self.start;
+        t.end = self.end;
+        t.all_day = self.all_day;
+        t.priority = self.priority;
+        t.repeat = self.repeat;
+        t.tags = self.tags.clone();
+        t
+    }
 }
 
 const CONNECTORS: [&str; 7] = ["on", "at", "by", "due", "from", "starting", "@"];
@@ -400,14 +416,15 @@ impl Parser<'_> {
             let hit = self
                 .lists
                 .iter()
-                .find(|l| l.name.to_lowercase().replace(' ', "") == name)
-                .or_else(|| self.lists.iter().find(|l| l.name.to_lowercase().replace(' ', "").starts_with(&name)));
+                .find(|l| l.name.to_lowercase().replace(' ', "") == name);
             if let Some(list) = hit {
                 self.out.list = Some(list.id.clone());
                 self.used[i] = true;
                 return true;
             }
-            return false;
+            if !self.out.tags.contains(&name) { self.out.tags.push(name); }
+            self.used[i] = true;
+            return true;
         }
         if let Some(p) = t.strip_prefix('!') {
             // More marks, higher priority: "!" low, "!!" medium, "!!!" high.
@@ -421,6 +438,19 @@ impl Parser<'_> {
             if let Some(pri) = pri {
                 self.out.priority = pri;
                 self.used[i] = true;
+                return true;
+            }
+        }
+        if t == "every" {
+            let (n, offset) = self.tok(i + 1).and_then(|s| s.parse::<u16>().ok()).filter(|n| *n > 0).map(|n| (n, 2)).unwrap_or((1, 1));
+            let unit = match self.tok(i + offset) {
+                Some("day" | "days") => Some(Unit::Day), Some("week" | "weeks") => Some(Unit::Week),
+                Some("month" | "months") => Some(Unit::Month), Some("year" | "years") => Some(Unit::Year), _ => None,
+            };
+            if let Some(unit) = unit {
+                let after = self.tok(i + offset + 1) == Some("after") && matches!(self.tok(i + offset + 2), Some("done" | "finishing"));
+                self.out.repeat = if after { Repeat::AfterDone(n, unit) } else { Repeat::Every(n, unit).normalized() };
+                self.take(i, offset + 1 + if after { 2 } else { 0 });
                 return true;
             }
         }
@@ -668,9 +698,10 @@ mod tests {
     }
 
     #[test]
-    fn unknown_hashtag_is_kept() {
+    fn unknown_hashtag_becomes_tag() {
         let t = q("Read #rust book");
-        assert_eq!(t.title, "Read #rust book");
+        assert_eq!(t.title, "Read book");
+        assert_eq!(t.tags, ["rust"]);
         assert_eq!(t.list, None);
     }
 }

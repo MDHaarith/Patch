@@ -131,6 +131,10 @@ impl Bridge for JniBridge {
         self.call_void("publishSnapshot", "(Ljava/lang/String;)V", |env| Ok(vec![string(env, json)?]));
     }
 
+    fn open_url(&self, url: &str) {
+        self.call_void("openUrl", "(Ljava/lang/String;)V", |env| Ok(vec![string(env, url)?]));
+    }
+
     fn set_clipboard(&self, text: &str) {
         self.call_void("copyText", "(Ljava/lang/String;)V", |env| {
             Ok(vec![string(env, text)?])

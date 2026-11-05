@@ -113,10 +113,14 @@ fn save_state(path: &std::path::Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 fn json_response(status: u16, body: String) -> Response<io::Cursor<Vec<u8>>> {
+    response(status, b"application/json", body)
+}
+
+fn response(status: u16, content_type: &[u8], body: String) -> Response<io::Cursor<Vec<u8>>> {
     Response::from_string(body)
         .with_status_code(status)
         .with_chunked_threshold(MAX_BODY + 1)
-        .with_header(Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).expect("static header"))
+        .with_header(Header::from_bytes(&b"Content-Type"[..], content_type).expect("static header"))
         .with_header(Header::from_bytes(&b"Connection"[..], &b"close"[..]).expect("static header"))
 }
 
@@ -230,6 +234,12 @@ impl Hub {
         net::hub_urls(self.port(), self.shared.allow_lan)
     }
 
+    /// Private `.ics` feed link, or `None` while this machine has no reachable address.
+    pub fn calendar_url(&self) -> Option<String> {
+        let token = self.shared.registry.lock().unwrap().calendar.clone();
+        self.urls().first().map(|url| format!("{url}/calendar.ics?token={token}"))
+    }
+
     pub fn stop(mut self) {
         self.shutdown();
     }
@@ -308,6 +318,16 @@ fn handle_request_from(shared: &Shared, reader: &mut impl Read, address: &str) -
     if path == "/api/ping" {
         let hub = shared.state.lock().unwrap_or_else(|e| e.into_inner()).hub.clone();
         return json_response(200, serde_json::json!({ "ok": true, "hub": hub, "name": shared.name }).to_string());
+    }
+
+    // Calendar apps can't send a bearer token, so this has its own link-only credential.
+    if (method, path) == ("GET", "/calendar.ics") {
+        if !shared.registry.lock().unwrap().calendar_ok(query_param(url, "token").unwrap_or_default()) {
+            return error(401, "Wrong calendar link");
+        }
+        let st = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+        let tasks: Vec<_> = st.records.values().filter_map(|s| patch_core::Task::from_record(&s.rec)).collect();
+        return response(200, b"text/calendar; charset=utf-8", patch_core::ics::export(&tasks));
     }
 
     let revocations = shared.revocations.load(Ordering::SeqCst);

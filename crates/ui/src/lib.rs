@@ -81,7 +81,8 @@ pub trait Host {
     /// Show a system notification (reminders).
     fn notify(&self, _title: &str, _body: &str) {}
 
-    fn notify_reminder(&self, _id: &str, title: &str, body: &str) {
+    /// `key` identifies a task occurrence and reminder offset, not just the task.
+    fn notify_reminder(&self, _key: &str, title: &str, body: &str) {
         self.notify(title, body);
     }
 
@@ -93,6 +94,9 @@ pub trait Host {
     }
 
     fn copy_text(&self, _text: &str) {}
+
+    /// Opens a web link in the default browser.
+    fn open_url(&self, _url: &str) {}
 
     /// A text field gained or lost focus (Android raises the keyboard).
     fn text_focus(&self, _focused: bool) {}
@@ -181,4 +185,6 @@ pub struct HostedHub {
     /// Tailnet URLs for other devices.
     pub urls: Vec<String>,
     pub token: String,
+    /// Read-only `.ics` feed for calendar apps on the same network.
+    pub calendar_url: String,
 }

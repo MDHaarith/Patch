@@ -7,6 +7,9 @@ pub const USAGE: &str = "\
 Patch — calendar, board and todos, synced over Tailscale
 
 Usage: patch [OPTIONS]
+       patch new                             Open a new task; bind this to a keyboard shortcut
+       patch [--data-dir DIR] add TEXT...    Add a task, e.g. patch add Dentist tomorrow 3pm #work
+       patch [--data-dir DIR] import FILE    Add an .ics calendar file's events as tasks
 
 Options:
   --background       Start without the main window (tray, widget, sync hub and
@@ -39,6 +42,7 @@ pub enum Windowing {
 pub struct Args {
     pub background: bool,
     pub quit: bool,
+    pub new_task: bool,
     pub windowing: Windowing,
     pub data_dir: Option<PathBuf>,
     pub screenshot: Option<PathBuf>,
@@ -47,6 +51,8 @@ pub struct Args {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
     Run(Args),
+    Add { data_dir: Option<PathBuf>, text: String },
+    Import { data_dir: Option<PathBuf>, file: PathBuf },
     Version,
     Help,
 }
@@ -73,10 +79,30 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command, String
             "-V" | "--version" => return Ok(Command::Version),
             "--background" => out.background = true,
             "--quit" => out.quit = true,
+            "new" => out.new_task = true,
             "--x11" => out.windowing = Windowing::X11,
             "--wayland" => out.windowing = Windowing::Wayland,
             "--data-dir" => out.data_dir = Some(value("--data-dir")?),
             "--screenshot" => out.screenshot = Some(value("--screenshot")?),
+            "add" | "import" => {
+                let rest: Vec<OsString> = args.collect();
+                if rest.first().is_some_and(|a| a == "-h" || a == "--help") {
+                    return Ok(Command::Help);
+                }
+                let data_dir = out.data_dir;
+                if flag == "import" {
+                    return match <[OsString; 1]>::try_from(rest) {
+                        Ok([file]) => Ok(Command::Import { data_dir, file: file.into() }),
+                        Err(_) => Err("import needs exactly one file".into()),
+                    };
+                }
+                let words: Vec<_> = rest.iter().map(|a| a.to_string_lossy()).collect();
+                let text = words.join(" ");
+                if text.trim().is_empty() {
+                    return Err("add needs the task's text".into());
+                }
+                return Ok(Command::Add { data_dir, text });
+            }
             _ => return Err(format!("unknown option {text:?}")),
         }
     }
@@ -102,6 +128,26 @@ mod tests {
         assert_eq!(a.data_dir, Some(PathBuf::from("/d")));
         let Ok(Command::Run(a)) = p(&["--screenshot=out"]) else { panic!() };
         assert_eq!(a.screenshot, Some(PathBuf::from("out")));
+    }
+
+    #[test]
+    fn new_task() {
+        let Ok(Command::Run(a)) = p(&["new"]) else { panic!() };
+        assert!(a.new_task);
+    }
+
+    #[test]
+    fn add_and_import() {
+        assert_eq!(
+            p(&["--data-dir", "/d", "add", "Dentist", "--tomorrow", "!!!"]),
+            Ok(Command::Add { data_dir: Some(PathBuf::from("/d")), text: "Dentist --tomorrow !!!".into() })
+        );
+        assert_eq!(p(&["import", "a b.ics"]), Ok(Command::Import { data_dir: None, file: PathBuf::from("a b.ics") }));
+        assert_eq!(p(&["add", "--help"]), Ok(Command::Help));
+        assert!(p(&["add"]).is_err());
+        assert!(p(&["add", " "]).is_err());
+        assert!(p(&["import"]).is_err());
+        assert!(p(&["import", "a", "b"]).is_err());
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Drives the Android runtime exactly as the Java side does — surfaces,
 //! redraw requests, touches, IME edits — on the desktop, with in-memory
-//! surfaces, and writes what it rendered to `screenshots/android-*.png`.
+//! surfaces, and writes what it rendered to the temporary `patch-shots/android-runtime/` directory.
 //!
 //! One test: Slint allows a single platform per process.
 
@@ -52,6 +52,7 @@ impl Bridge for Recorder {
     }
     fn open_app(&self, _task_id: Option<&str>) {}
     fn notify(&self, _title: &str, _body: &str) {}
+    fn open_url(&self, _url: &str) {}
     fn schedule_reminders(&self, json: &str) {
         self.reminders.borrow_mut().push(json.to_string());
     }
@@ -122,7 +123,7 @@ impl MemSurface {
     }
 
     fn save(&self, name: &str) {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../screenshots");
+        let dir = std::env::temp_dir().join("patch-shots/android-runtime");
         std::fs::create_dir_all(&dir).unwrap();
         let file = std::fs::File::create(dir.join(name)).unwrap();
         let mut enc = png::Encoder::new(std::io::BufWriter::new(file), self.width, self.height);
@@ -187,6 +188,7 @@ fn seed(dir: &Path) {
         t.start = Some((t0 + Days::days(1)).and_time(hm(13, 0)));
         t.end = Some((t0 + Days::days(1)).and_time(hm(14, 0)));
         t.reminder = Some(15);
+        t.reminders = vec![60];
     });
     add("Ship Android build", LIST_WORK, COL_DOING, &|t| {
         t.start = Some((t0 + Days::days(2)).and_time(hm(15, 0)));
@@ -311,11 +313,16 @@ fn renders_and_drives_both_windows() {
     // Reminders go to AlarmManager so they survive the process being killed.
     let scheduled = h.rec.reminders.borrow().last().cloned().expect("reminders handed to Java");
     let list: serde_json::Value = serde_json::from_str(&scheduled).unwrap();
-    let lunch = list.as_array().unwrap().iter().find(|r| r["title"] == "Lunch with Sam").expect("lunch reminder");
+    let lunch = list.as_array().unwrap().iter().find(|r| r["title"] == "Lunch with Sam" && r["key"].as_str().unwrap().matches('@').count() == 1).expect("lunch reminder");
     let due = (today() + Days::days(1)).and_time(hm(12, 45));
     let due_ms = chrono::TimeZone::from_local_datetime(&chrono::Local, &due).earliest().unwrap().timestamp_millis();
     assert_eq!(lunch["at"].as_i64(), Some(due_ms), "fires 15 minutes before the start");
     assert_eq!(lunch["body"], "Tomorrow, 13:00");
+    let alarms: Vec<_> = list.as_array().unwrap().iter().filter(|r| r["title"] == "Lunch with Sam").collect();
+    assert_eq!(alarms.len(), 2, "both reminder offsets reach the Java JSON boundary");
+    assert_ne!(alarms[0]["key"], alarms[1]["key"], "each alarm has its own identity");
+    assert_ne!(alarms[0]["at"], alarms[1]["at"]);
+
     // The home-screen widget gets today's agenda as JSON.
     let snapshot = h.rec.snapshots.borrow().last().cloned().expect("widget snapshot handed to Java");
     let snapshot: serde_json::Value = serde_json::from_str(&snapshot).unwrap();
@@ -330,7 +337,7 @@ fn renders_and_drives_both_windows() {
     assert_eq!(
         h.rec.looks.borrow().first(),
         Some(&0),
-        "matte look reported to Java"
+        "pitch black look reported to Java"
     );
     let mw = h.rt.main_window().expect("main window created");
     assert!(mw.global::<Store>().get_mobile(), "phone layout");

@@ -73,6 +73,9 @@ fn main() {
     for u in urls {
         println!("Pair:   {u}");
     }
+    if let Some(url) = hub.calendar_url() {
+        println!("Calendar: {url}");
+    }
     loop {
         std::thread::park();
     }

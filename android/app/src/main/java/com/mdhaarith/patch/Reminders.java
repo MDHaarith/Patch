@@ -144,6 +144,8 @@ final class Reminders {
     private static PendingIntent pending(Context context, int code, String key, String title, String body, boolean snoozed) {
         Intent intent = new Intent(context, ReminderReceiver.class);
         if (key != null) {
+            // The URI includes the occurrence AND offset, so even hash collisions
+            // cannot replace a different reminder's PendingIntent.
             intent.setData(new Uri.Builder().scheme("patch-reminder").authority("alarm").appendPath(key).build());
         }
         if (title != null) {

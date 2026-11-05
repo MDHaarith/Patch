@@ -72,7 +72,7 @@ public final class MainActivity extends Activity {
 
     /**
      * Status and navigation bars go to Rust as safe-area padding, so the
-     * matte backdrop runs underneath them; the keyboard counts as bottom
+     * black backdrop runs underneath them; the keyboard counts as bottom
      * inset. Side insets (landscape, cutouts) shrink the surface instead.
      */
     private WindowInsets applyInsets(WindowInsets insets) {
@@ -108,10 +108,9 @@ public final class MainActivity extends Activity {
 
     /** Window background and system bar icons follow the app's look. */
     void applyLook(int look) {
-        int background = (look == 2 || look == 3) ? 0xFFF2F2F7 : look == 1 ? 0xFF101011 : 0xFF0B0B0C;
+        boolean lightBars = look == 2;
         Window window = getWindow();
-        window.setBackgroundDrawable(new ColorDrawable(background));
-        boolean lightBars = look == 2 || look == 3;
+        window.setBackgroundDrawable(new ColorDrawable(lightBars ? 0xFFF2F2F7 : 0xFF000000));
         if (Build.VERSION.SDK_INT >= 30) {
             WindowInsetsController c = window.getInsetsController();
             if (c != null) {
@@ -175,6 +174,24 @@ public final class MainActivity extends Activity {
     }
 
     private void handleIntent(Intent intent) {
+        if (intent != null && Intent.ACTION_SEND.equals(intent.getAction())) {
+            CharSequence subject = intent.getCharSequenceExtra(Intent.EXTRA_SUBJECT);
+            CharSequence text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
+            intent.removeExtra(Intent.EXTRA_TEXT);
+            intent.removeExtra(Intent.EXTRA_SUBJECT);
+            if (text != null) {
+                PatchNative.nativeAddText(subject == null ? text.toString() : subject + " " + text);
+            }
+            return;
+        }
+        if (intent != null && Intent.ACTION_PROCESS_TEXT.equals(intent.getAction())) {
+            CharSequence text = intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT);
+            intent.removeExtra(Intent.EXTRA_PROCESS_TEXT);
+            if (text != null) {
+                PatchNative.nativeAddText(text.toString());
+            }
+            return;
+        }
         String id = intent == null ? null : intent.getStringExtra(EXTRA_TASK_ID);
         if (id != null) {
             intent.removeExtra(EXTRA_TASK_ID);

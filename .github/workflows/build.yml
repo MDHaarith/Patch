@@ -172,10 +172,10 @@ jobs:
       - name: Release images and body
         run: |
           cp assets/images/icon.png dist/patch-icon.png
-          cp artifacts/screenshots/desktop-matte-{month,week,board}.png \
-            artifacts/screenshots/phone-matte-month.png \
-            artifacts/screenshots/overlay-matte-{panel,bubble}.png \
-            artifacts/screenshots/desk-matte.png dist/
+          cp artifacts/screenshots/desktop-pitch-{month,week,board}.png \
+            artifacts/screenshots/phone-pitch-month.png \
+            artifacts/screenshots/overlay-pitch-{panel,bubble}.png \
+            artifacts/screenshots/desk-pitch.png dist/
           bash .github/scripts/release-body.sh "$TAG" > release-body.md
       - uses: softprops/action-gh-release@v2
         with:

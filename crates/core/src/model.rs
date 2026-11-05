@@ -1,6 +1,6 @@
 //! Typed views over records.
 
-use crate::record::{Record, KIND_COLUMN, KIND_LIST, KIND_TASK};
+use crate::record::{Record, KIND_COLUMN, KIND_LIST, KIND_TASK, KIND_VIEW};
 use crate::time::{fmt_dt, parse_dt};
 use chrono::{Duration, NaiveDateTime};
 use serde::{Deserialize, Serialize};
@@ -42,17 +42,19 @@ pub enum Repeat {
     Yearly,
     /// Every `n` units, e.g. every 2 weeks.
     Every(u16, Unit),
+    AfterDone(u16, Unit),
 }
 
 impl Repeat {
     /// The built-in choices, in menu order.
-    pub const ALL: [Repeat; 6] = [
+    pub const ALL: [Repeat; 7] = [
         Repeat::None,
         Repeat::Daily,
         Repeat::Weekdays,
         Repeat::Weekly,
         Repeat::Monthly,
         Repeat::Yearly,
+        Repeat::AfterDone(1, Unit::Day),
     ];
 
     /// Stored form: "weekly", or "every:2:week" for custom intervals.
@@ -65,6 +67,7 @@ impl Repeat {
             Repeat::Monthly => "monthly".into(),
             Repeat::Yearly => "yearly".into(),
             Repeat::Every(n, u) => format!("every:{n}:{}", u.as_str()),
+            Repeat::AfterDone(n, u) => format!("after:{n}:{}", u.as_str()),
         }
     }
 
@@ -76,17 +79,19 @@ impl Repeat {
             Repeat::Weekly => "Every week".into(),
             Repeat::Monthly => "Every month".into(),
             Repeat::Yearly => "Every year".into(),
+            Repeat::AfterDone(n, u) => format!("{} after finishing", if n == 1 { format!("1 {}", u.as_str()) } else { format!("{n} {}s", u.as_str()) }),
             Repeat::Every(1, u) => Repeat::Every(1, u).normalized().label(),
             Repeat::Every(n, u) => format!("Every {n} {}s", u.as_str()),
         }
     }
 
     pub fn parse(s: &str) -> Repeat {
-        if let Some(rest) = s.strip_prefix("every:") {
+        if let Some(rest) = s.strip_prefix("every:").or_else(|| s.strip_prefix("after:")) {
             let mut it = rest.split(':');
             let n = it.next().and_then(|n| n.parse::<u16>().ok()).filter(|n| *n > 0);
             let u = it.next().and_then(Unit::parse);
             return match (n, u) {
+                (Some(n), Some(u)) if s.starts_with("after:") => Repeat::AfterDone(n, u),
                 (Some(n), Some(u)) => Repeat::Every(n, u).normalized(),
                 _ => Repeat::None,
             };
@@ -135,6 +140,13 @@ pub struct Task {
     /// Original calendar anchor, retained when completion advances a repeat.
     pub repeat_anchor: Option<NaiveDateTime>,
     pub checklist: Vec<CheckItem>,
+    pub tags: Vec<String>,
+    /// Additional offsets; the legacy reminder remains independently readable.
+    pub reminders: Vec<i64>,
+    pub template: bool,
+    pub archived: bool,
+    pub parent: Option<String>,
+    pub blockers: Vec<String>,
     pub order: f64,
     pub created: i64,
 }
@@ -161,6 +173,12 @@ impl Task {
             repeat: Repeat::None,
             repeat_anchor: None,
             checklist: Vec::new(),
+            tags: Vec::new(),
+            reminders: Vec::new(),
+            template: false,
+            archived: false,
+            parent: None,
+            blockers: Vec::new(),
             order: 0.0,
             created: 0,
         }
@@ -183,6 +201,12 @@ impl Task {
             end: r.str("end").and_then(parse_dt),
             all_day: r.bool("allDay"),
             reminder: r.i64("reminder"),
+            reminders: r.f.iter().filter_map(|(key, field)| key.strip_prefix("reminders.").filter(|_| field.v == true)?.parse::<i64>().ok()).filter(|m| (0..=525600).contains(m)).collect(),
+            tags: members(r, "tags."),
+            blockers: members(r, "blockers."),
+            parent: r.str("parent").filter(|s| !s.is_empty()).map(str::to_string),
+            template: r.bool("template"),
+            archived: r.bool("archived"),
             repeat: Repeat::parse(r.str("repeat").unwrap_or("none")),
             repeat_anchor: r.str("repeatAnchor").and_then(parse_dt),
             checklist: if r.f.keys().any(|key| key.starts_with("checklist.")) {
@@ -222,12 +246,28 @@ impl Task {
             ("checklist", serde_json::to_value(&self.checklist).unwrap_or(Value::Null)),
             ("order", json!(self.order)),
             ("created", json!(self.created)),
+            ("template", json!(self.template)),
+            ("archived", json!(self.archived)),
+            ("parent", json!(self.parent)),
         ].into_iter().map(|(key, value)| (key.to_string(), value)).collect();
         fields.extend(self.checklist.iter().enumerate().map(|(order, item)| (
             format!("checklist.{}", item.id), json!({"text": item.text, "done": item.done, "order": order})
         )));
+        fields.extend(self.tags.iter().map(|tag| (format!("tags.{tag}"), json!(true))));
+        fields.extend(self.reminders.iter().map(|m| (format!("reminders.{m}"), json!(true))));
+        fields.extend(self.blockers.iter().map(|id| (format!("blockers.{id}"), json!(true))));
         fields
     }
+
+    pub fn reminder_offsets(&self) -> Vec<i64> {
+        let mut offsets = self.reminders.clone();
+        offsets.extend(self.reminder);
+        offsets.sort_unstable();
+        offsets.dedup();
+        offsets
+    }
+
+    pub fn active(&self) -> bool { !self.template && !self.archived }
 
     /// Exclusive end of the first occurrence.
     pub fn span_end(&self) -> Option<NaiveDateTime> {
@@ -333,3 +373,73 @@ pub const PALETTE: [(&str, &str); 10] = [
     ("Pink", "#FF375F"),
     ("Brown", "#AC8E68"),
 ];
+
+/// Web links in notes. Notes sync from other devices, so only http(s) passes.
+pub fn links_in(text: &str) -> Vec<String> {
+    let mut links: Vec<String> = text.split_whitespace()
+        .map(|word| word.trim_start_matches(['(', '[', '<', '"', '\'']).trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '>', '"', '\'']))
+        .filter(|word| ["http://", "https://"].iter().any(|scheme| word.len() > scheme.len() && word.starts_with(scheme)))
+        .map(str::to_string)
+        .collect();
+    links.dedup();
+    links
+}
+
+fn members(r: &Record, prefix: &str) -> Vec<String> {
+    r.f.iter().filter_map(|(key, field)| {
+        key.strip_prefix(prefix).filter(|_| field.v == true).map(str::to_string)
+    }).collect()
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Filter {
+    pub tags: Vec<String>,
+    pub list: Option<String>,
+    pub priority: Option<u8>,
+    /// any, overdue, today, week.
+    pub due: String,
+    pub include_done: bool,
+}
+
+impl Filter {
+    pub fn matches(&self, t: &Task, now: NaiveDateTime) -> bool {
+        (self.include_done || !t.done)
+            && self.tags.iter().all(|tag| t.tags.contains(tag))
+            && self.list.as_ref().is_none_or(|list| t.list == *list)
+            && self.priority.is_none_or(|p| p == t.priority)
+            && match self.due.as_str() {
+                "overdue" => t.is_overdue(now),
+                "today" => !crate::recur::occurrences(t, now.date().and_time(chrono::NaiveTime::MIN), (now.date() + Duration::days(1)).and_time(chrono::NaiveTime::MIN)).is_empty(),
+                "week" => !crate::recur::occurrences(t, crate::time::week_start(now.date(), true).and_time(chrono::NaiveTime::MIN), (crate::time::week_start(now.date(), true) + Duration::days(7)).and_time(chrono::NaiveTime::MIN)).is_empty(),
+                _ => true,
+            }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SmartView {
+    pub id: String,
+    pub name: String,
+    pub filter: Filter,
+}
+
+impl SmartView {
+    pub fn from_record(r: &Record) -> Option<Self> {
+        (r.kind == KIND_VIEW && !r.is_deleted()).then(|| Self {
+            id: r.id.clone(), name: r.str("name").unwrap_or("Smart view").into(),
+            filter: Filter {
+                tags: members(r, "tags."), list: r.str("list").map(str::to_string),
+                priority: r.i64("priority").filter(|p| (0..=3).contains(p)).map(|p| p as u8),
+                due: r.str("due").unwrap_or("any").into(), include_done: r.bool("includeDone"),
+            },
+        })
+    }
+
+    pub fn fields(&self) -> Vec<(String, Value)> {
+        let mut fields: Vec<_> = vec![("name", json!(self.name)), ("list", json!(self.filter.list)),
+            ("priority", json!(self.filter.priority)), ("due", json!(self.filter.due)),
+            ("includeDone", json!(self.filter.include_done))].into_iter().map(|(k,v)| (k.into(),v)).collect();
+        fields.extend(self.filter.tags.iter().map(|tag| (format!("tags.{tag}"), json!(true))));
+        fields
+    }
+}
