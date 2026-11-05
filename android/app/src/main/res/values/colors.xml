@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="backdrop">#FF0B0B0C</color>
+    <color name="backdrop">#FF000000</color>
     <color name="accent">#FF0A84FF</color>
     <color name="icon_top">#FF4B4B4D</color>
     <color name="icon_bottom">#FF0E0E10</color>
     <!-- Home-screen widget -->
-    <color name="widget_card">#EB121214</color>
+    <color name="widget_card">#FF000000</color>
     <color name="widget_stroke">#1FFFFFFF</color>
-    <color name="widget_row">#0AFFFFFF</color>
+    <color name="widget_row">#14FFFFFF</color>
     <color name="widget_text">#FFFFFFFF</color>
     <color name="widget_secondary">#FF9A9AA1</color>
     <color name="widget_overdue">#FFFF453A</color>
-    <color name="widget_done">#FF5C5C62</color>
+    <color name="widget_done">#FF7C7C82</color>
 </resources>

@@ -48,7 +48,7 @@ final class QrScanner implements LifecycleOwner, AutoCloseable {
         this.parent = parent;
         card = new FrameLayout(activity);
         GradientDrawable background = new GradientDrawable();
-        background.setColor(0xFF141518);
+        background.setColor(0xFF111111);
         background.setCornerRadius(20 * activity.getResources().getDisplayMetrics().density);
         card.setBackground(background);
         card.setClipToOutline(true);

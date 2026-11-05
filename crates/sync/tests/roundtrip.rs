@@ -227,3 +227,34 @@ fn concurrent_fields_and_tombstones_converge_without_overwriting_other_edits() {
     hub.stop();
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn unknown_record_kind_and_smart_views_pass_through_hub() {
+    use patch_core::model::SmartView;
+    let dir = temp_dir("unknown-kind");
+    let mut cfg = HubConfig::new(&dir);
+    cfg.bind = "127.0.0.1:0".into();
+    let hub = Hub::start(cfg).unwrap();
+    let mut source = Doc::with_node("source");
+    let view = SmartView { id: "saved-view".into(), name: "Saved filter".into(), ..SmartView::default() };
+    source.save_smart_view_from(&view, &view);
+    let mut record = source.record(&view.id).unwrap().clone();
+    record.id = "unknown-record".into();
+    record.kind = "future-kind".into();
+    source.apply_remote(std::slice::from_ref(&record));
+    source.adopt_hub("force-full-push");
+    let a_doc = Arc::new(Mutex::new(source));
+    let b_doc = Arc::new(Mutex::new(Doc::with_node("reader")));
+    let cfg = SyncConfig::new(&format!("http://127.0.0.1:{}", hub.port()), &hub.token()).unwrap();
+    let a = SyncClient::start(a_doc.clone(), Some(cfg.clone()), |_| {});
+    let b = SyncClient::start(b_doc.clone(), Some(cfg), |_| {});
+    wait_until("unknown kind and saved view", || {
+        let d = b_doc.lock().unwrap();
+        d.record("unknown-record") == Some(&record) && d.smart_views() == vec![view.clone()]
+    });
+    assert!(b_doc.lock().unwrap().tasks().is_empty());
+    drop(a);
+    drop(b);
+    hub.stop();
+    std::fs::remove_dir_all(dir).unwrap();
+}

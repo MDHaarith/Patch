@@ -1,14 +1,14 @@
 # Patch
 
 An always-on todo list, kanban board and calendar — native Rust on **Linux** and
-**Android**, matte black and glassy, laid out like the macOS Calendar, and synced
+**Android**, pitch black, laid out like the macOS Calendar, and synced
 between your devices **over Tailscale** or your home Wi-Fi.
 
-![Month view, Matte Black](docs/screenshots/desktop-matte-month.jpg)
+![Month view, Pitch Black](docs/screenshots/desktop-pitch-month.jpg)
 
-| Week | Board (Glass) | Editor with range picker (Light) |
+| Week | Board | Editor with range picker (Light) |
 |---|---|---|
-| ![](docs/screenshots/desktop-matte-week.jpg) | ![](docs/screenshots/desktop-glass-board.jpg) | ![](docs/screenshots/desktop-light-editor.jpg) |
+| ![](docs/screenshots/desktop-pitch-week.jpg) | ![](docs/screenshots/desktop-pitch-board.jpg) | ![](docs/screenshots/desktop-light-editor.jpg) |
 
 **Android**: the phone layout, a home-screen widget, and Patch the pet, which
 floats *over other apps* when you want it to.
@@ -16,7 +16,7 @@ floats *over other apps* when you want it to.
 ![Phone](docs/screenshots/phone.jpg)
 ![Overlay](docs/screenshots/overlay.jpg)
 
-**Four themes**: Matte Black, Black Glass, Light and Light Glass. Glass opacity is adjustable in Settings.
+**Two themes**: Pitch Black, with true black pages for OLED screens, and Light.
 
 ![Themes](docs/screenshots/themes.jpg)
 
@@ -27,18 +27,35 @@ floats *over other apps* when you want it to.
 - **Calendar like macOS**: Day, Week and Month views. Multi-day items are bars that keep their lane across a week. The week grid lays overlapping items side by side and shows a red "now" line. You can drag to move and drag the bottom edge to resize, snapping to 15 minutes.
 - **Kanban board**: drag cards between columns and reorder them; on phones, long-press to drag. You can add, rename and delete columns. Dropping a card in **Done** completes it.
 - **Todo list**: grouped into Overdue, Today, Tomorrow, Next 7 days, Later, Someday and Completed.
+- **Undo and redo**: task edits, completion, calendar and board moves, ordering, deletion, and bulk changes have a 100-step in-memory history. Undo writes fresh sync stamps; Ctrl+Z undoes, Ctrl+Shift+Z or Ctrl+Y redoes. **Views & actions** also keeps Undo/Redo available on phones after the toast closes.
+- **Tags and smart views**: tag tasks in the inspector or with `#tag` in quick add (`#work` still selects a matching list). Filter every view by tags, list, priority, due window and completion; save, rename and delete synced smart views from **Views & actions** (the phone’s ⋯ menu).
+- **Bulk actions**: Ctrl/Shift-click rows or cards on desktop; long-press then tap on phones. On the phone board, hold and move to drag, or release without moving to select. Complete, reopen, delete, archive, restore, move lists, set priority, reschedule or add tags in one undo step.
+- **Templates and duplication**: duplicate from the inspector, or mark a task as a template and create tasks from it. New checklist entries are unchecked; templates clear dates when used. Templates have their own section and stay out of ordinary views and reminders.
+- **Archive**: archive completed tasks without deleting them; browse and restore them in Archive. Settings → Repeat & alerts can auto-archive after a chosen number of days (0 disables it).
+- **Subtasks and dependencies**: choose a parent and blockers in the inspector. Lists nest subtasks with progress counts; rows and cards flag unfinished blockers. Completion remains available with a warning, and merged cycles render safely.
 - **Task inspector**:
   - list, status, priority, checklist and notes
-  - repeats (daily, weekdays, weekly, monthly, yearly) and reminders, picked from tidy drop-downs
+  - repeats (daily, weekdays, weekly, monthly, yearly), plus intervals after completion such as `every 3 days after done`
+  - multiple reminders: the Alert menu keeps the original reminder, and Additional alerts accepts comma-separated minutes before the start (e.g. `5, 60, 1440`)
   - your own repeat intervals ("every 2 weeks") and alert timings ("3 hours before"), added once in Settings → *Repeat & alerts*
   - the date-range picker from the design reference: tap a start, tap an end, set times, then Reset or ✓
 - **Natural-language quick add**: `Dentist tomorrow 3pm #work !!!`, `Conference 13-15 nov`, `Standup every weekday 9:30`, `Gym tmrw 7am for 1h30m`, `Call back in 2 hours`.
-- **Four themes**, each with a live preview in Settings.
+- **Two themes**, Pitch Black and Light, each with a live preview in Settings.
+- **Make it yours**: pick an accent colour and a larger text size in Settings → Appearance.
+- **Focus timer**: start 25 or 50 minutes from a task. The time shows in the app and the floating panel, an alert tells you when it ends, even if Patch was closed on Android, and the minutes count toward your day.
+- **Plan my day**: the first time you open Patch each day it shows what's on, with one tap to bring overdue tasks up to date. Turn it off in Settings. The same action is in Views & actions.
+- **Progress**: Settings shows your streak, best streak, tasks done today, focus minutes and the last 7 days. Repeating tasks count too, and deleting a finished task doesn't break a streak.
+- **Skip one occurrence**: move a repeating task to its next date without marking it done.
+- **Links in notes**: web addresses in a task's notes appear under them, ready to open.
 - **Lists with your colours**: open a list's ⋯ menu to recolour, rename or delete it.
 - **Patch the pet**: a pixel-art buddy that bobs, blinks and reacts to your day. It is happy when you're clear, busy when you have work, worried about overdue tasks, and asleep at night.
 - **Always on**:
   - **Linux**: a frameless window with rounded corners and its own controls. The widget (Today / Upcoming / Board with quick add) sits on the desktop like a home-screen widget; pin it to float above your apps, and it stays on top even when you click elsewhere. Also a tray icon, start at login, and desktop notifications.
   - **Android**: a **home-screen widget** with today's and upcoming tasks and the pet. Turn on *Display over other apps* when you want the pet to hover above other apps; tap it to open the same panel. Reminders arrive as system notifications.
+- **Calendar apps**: the hub serves a private, read-only `.ics` link of your scheduled tasks (Settings → *Copy calendar link*), for calendar apps that can reach the hub. Cloud services like Google Calendar fetch feeds from their own servers, so they can't reach a hub on your tailnet or LAN.
+- **Capture from anywhere (Android)**: share text to Patch, choose *Add to Patch* on selected text, add the *New task* Quick Settings tile, or tick tasks off right on the widget.
+- **Keyboard shortcut (Linux)**: bind `patch new` to a shortcut in your desktop's settings to open a new task from anywhere. Desktops don't let apps claim global shortcuts themselves on Wayland.
+- **Command line (Linux)**: `patch add Dentist tomorrow 3pm #work` adds a task, whether or not Patch is running, so you can bind it to a desktop shortcut. `patch import calendar.ics` adds a calendar file's events as tasks and can safely be repeated.
 - **Offline first**: every device keeps a full copy and edits merge field by field, so nothing is lost when two devices change the same task.
 
 ## Sync
@@ -144,7 +161,8 @@ Android will ask you to grant that permission.
 | `Check oven in 20 min` | 20 minutes from now |
 
 Desktop shortcuts: `N` new task · `T` today · `D/W/M/B/L` or `1–5` views ·
-`←/→` previous/next · `/` or `Ctrl+F` search · `Ctrl+,` settings · `Esc` close.
+`←/→` previous/next · `/` or `Ctrl+F` search · `Ctrl+,` settings · `Esc` close ·
+`Ctrl+Z` undo · `Ctrl+Shift+Z` / `Ctrl+Y` redo.
 
 ## Project layout
 

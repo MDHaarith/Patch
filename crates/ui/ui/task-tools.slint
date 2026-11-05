@@ -1,0 +1,118 @@
+import { Theme } from "theme.slint";
+import { Store, Actions } from "store.slint";
+import { Button, Field, Scroll, SectionLabel, Toggle, Segmented, IconButton } from "widgets.slint";
+import { Picker } from "editor.slint";
+
+export component TaskTools inherits Rectangle {
+    property <int> bulk-action;
+    property <string> bulk-argument;
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+        HorizontalLayout {
+            Text { text: "Views & actions"; font-size: Theme.fs-l; font-weight: 700; color: Theme.text; vertical-alignment: center; horizontal-stretch: 1; }
+            IconButton { icon: "close"; clicked => { Store.tools-open = false; } }
+        }
+        scroll := Scroll {
+            vertical-stretch: 1;
+            content-height: body.preferred-height;
+            body := VerticalLayout {
+                width: scroll.width;
+                alignment: start;
+                spacing: 12px;
+                Segmented {
+                    items: ["Tasks", "Templates", "Archive"];
+                    current: Store.browse-mode;
+                    stretch: true;
+                    picked(i) => { Actions.browse(i); }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Button { text: "Undo"; enabled: Store.can-undo; clicked => { Actions.undo(); } }
+                    Button { text: "Redo"; enabled: Store.can-redo; clicked => { Actions.redo(); } }
+                }
+                Button { text: "Move overdue to today"; clicked => { Actions.catch-up(); Store.tools-open = false; } }
+                Button {
+                    text: Store.selection-mode ? "Finish selection (\{Store.selection-count})" : "Select tasks";
+                    clicked => { Actions.selection-mode(!Store.selection-mode); Store.tools-open = false; }
+                }
+                if Store.selection-count > 0: VerticalLayout {
+                    spacing: 8px;
+                    SectionLabel { text: "\{Store.selection-count} SELECTED"; }
+                    Picker {
+                        label: "Action";
+                        options: ["Complete", "Delete", "Archive completed", "Move to list", "Set priority", "Reschedule", "Add tag", "Restore from archive", "Reopen"];
+                        current: root.bulk-action;
+                        picked(i) => { root.bulk-action = i; }
+                    }
+                    if root.bulk-action >= 3 && root.bulk-action <= 6: Field {
+                        text <=> root.bulk-argument;
+                        placeholder: root.bulk-action == 3 ? "List name" : root.bulk-action == 4 ? "Priority: 0 none, 1 low, 2 medium, 3 high" : root.bulk-action == 5 ? "Date: YYYY-MM-DD" : "Tags, separated by spaces";
+                    }
+                    Button { text: "Apply to selected tasks"; kind: 1; clicked => { Actions.bulk(root.bulk-action, root.bulk-argument); } }
+                }
+                SectionLabel { text: "FILTER TASKS"; }
+                Field {
+                    text <=> Store.filter-tags;
+                    placeholder: "Tags, separated by spaces";
+                    edited => { Actions.filter-changed(); }
+                }
+                Picker {
+                    label: "List";
+                    options: Store.filter-lists;
+                    current: Store.filter-list;
+                    picked(i) => { Store.filter-list = i; Actions.filter-changed(); }
+                }
+                Picker {
+                    label: "Priority";
+                    options: ["Any priority", "None", "Low", "Medium", "High"];
+                    current: Store.filter-priority;
+                    picked(i) => { Store.filter-priority = i; Actions.filter-changed(); }
+                }
+                Picker {
+                    label: "Due";
+                    options: ["Any date", "Overdue", "Today", "This week"];
+                    current: Store.filter-due;
+                    picked(i) => { Store.filter-due = i; Actions.filter-changed(); }
+                }
+                HorizontalLayout {
+                    Text { text: "Include completed"; color: Theme.text; font-size: Theme.fs-m; vertical-alignment: center; horizontal-stretch: 1; }
+                    Toggle { checked <=> Store.filter-done; toggled => { Actions.filter-changed(); } }
+                }
+                Button {
+                    text: "Clear filters";
+                    clicked => { Store.filter-tags = ""; Store.filter-list = 0; Store.filter-priority = 0; Store.filter-due = 0; Store.filter-done = true; Actions.filter-changed(); }
+                }
+                Field { text <=> Store.view-name; placeholder: "Name this filter"; accepted => { Actions.save-smart(); } }
+                Button { text: "Save smart view"; kind: 1; clicked => { Actions.save-smart(); } }
+                SectionLabel { text: "SAVED SMART VIEWS"; }
+                for view in Store.smart-views: VerticalLayout {
+                    spacing: 4px;
+                    Button { text: view.name; kind: Store.active-smart == view.id ? 1 : 0; clicked => { Actions.open-smart(view.id); } }
+                    HorizontalLayout {
+                        spacing: 4px;
+                        Field { text: view.name; placeholder: "Rename view"; accepted(t) => { Actions.rename-smart(view.id, t); } }
+                        IconButton { icon: "trash"; clicked => { Actions.delete-smart(view.id); } }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The first look of the day: what's on, and one tap to clear what slipped.
+export component DayPlan inherits VerticalLayout {
+    padding: 18px;
+    spacing: 12px;
+    Text { text: "Plan your day"; font-size: Theme.fs-xl; font-weight: 700; color: Theme.text; }
+    if Store.plan-overdue > 0: Text {
+        text: Store.plan-overdue == 1 ? "1 task is overdue" : "\{Store.plan-overdue} tasks are overdue";
+        color: Theme.danger;
+        font-size: Theme.fs-m;
+        wrap: word-wrap;
+    }
+    if Store.plan-items.length > 0: SectionLabel { text: "TODAY"; }
+    for item in Store.plan-items: Text { text: item; color: Theme.text; font-size: Theme.fs-m; overflow: elide; }
+    if Store.plan-overdue > 0: Button { text: "Move overdue to today"; clicked => { Actions.catch-up(); } }
+    Button { text: "Start the day"; kind: 1; clicked => { Store.plan-open = false; } }
+}

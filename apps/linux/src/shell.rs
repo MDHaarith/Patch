@@ -260,6 +260,22 @@ impl Shell {
             Request::Show => self.show_main(),
             Request::Quit => self.quit(),
             Request::Ping => {}
+            Request::New => {
+                self.show_main();
+                if let Some(main) = self.main.get() {
+                    main.global::<patch_ui::Actions>().invoke_new_task("".into(), -2);
+                }
+            }
+            Request::Add(text) => {
+                if let Some(app) = self.app() {
+                    app.add_text(&text);
+                }
+            }
+            Request::Import(path) => {
+                if let Some(app) = self.app() {
+                    app.import_ics(std::path::Path::new(&path));
+                }
+            }
         }
     }
 
@@ -802,6 +818,7 @@ impl Host for Shell {
             local_url: format!("http://127.0.0.1:{}", hub.port()),
             urls: hub.urls(),
             token: hub.token().to_string(),
+            calendar_url: hub.calendar_url().unwrap_or_default(),
         }))
     }
 
@@ -922,6 +939,16 @@ impl Host for Shell {
 
     fn notify(&self, title: &str, body: &str) {
         self.notify_user(title, body);
+    }
+
+    fn open_url(&self, url: &str) {
+        let url = url.to_string();
+        // On its own thread so the child gets reaped without blocking the UI.
+        std::thread::spawn(move || {
+            if let Err(e) = std::process::Command::new("xdg-open").arg(&url).status() {
+                eprintln!("patch: can't open {url}: {e}");
+            }
+        });
     }
 
     fn copy_text(&self, text: &str) {

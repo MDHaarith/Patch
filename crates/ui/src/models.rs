@@ -6,6 +6,7 @@ use patch_core::model::{Column, List, Repeat, Task};
 use patch_core::recur::occurrences;
 use patch_core::time::{fmt_time, month_grid, week_start};
 use slint::{Color, ModelRc, SharedString, VecModel};
+use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -22,23 +23,137 @@ pub fn model<T: Clone + 'static>(v: Vec<T>) -> ModelRc<T> {
     ModelRc::from(Rc::new(VecModel::from(v)))
 }
 
+/// Lookups by task id, so building a row doesn't rescan every task.
+#[derive(Default)]
+pub struct TaskIndex {
+    /// Position in `Ctx::tasks`.
+    position: HashMap<String, usize>,
+    visible: HashSet<String>,
+    /// Unfinished tasks: what still blocks others.
+    open: HashSet<String>,
+    /// (done, total) subtasks by parent id.
+    progress: HashMap<String, (usize, usize)>,
+}
+
 /// Everything the builders need, computed once per refresh.
 pub struct Ctx {
     pub tasks: Vec<Task>,
+    pub all_tasks: Vec<Task>,
     pub lists: HashMap<String, List>,
     pub hidden: HashSet<String>,
     pub now: NaiveDateTime,
     pub h24: bool,
     pub monday: bool,
+    pub selected: HashSet<String>,
+    /// Built on first use, once `tasks` and `hidden` are final.
+    pub index: OnceCell<TaskIndex>,
+    children: OnceCell<HashMap<String, Vec<usize>>>,
 }
 
 impl Ctx {
+    pub fn new(all_tasks: Vec<Task>, lists: HashMap<String, List>, hidden: HashSet<String>, now: NaiveDateTime, h24: bool, monday: bool) -> Ctx {
+        Ctx {
+            tasks: all_tasks.iter().filter(|t| t.active()).cloned().collect(),
+            all_tasks,
+            lists,
+            hidden,
+            now,
+            h24,
+            monday,
+            selected: HashSet::new(),
+            index: OnceCell::new(),
+            children: OnceCell::new(),
+        }
+    }
+
+    fn index(&self) -> &TaskIndex {
+        self.index.get_or_init(|| {
+            let mut index = TaskIndex::default();
+            for (i, t) in self.tasks.iter().enumerate() {
+                index.position.insert(t.id.clone(), i);
+                if !self.hidden.contains(&t.list) {
+                    index.visible.insert(t.id.clone());
+                }
+            }
+            for t in &self.all_tasks {
+                if !t.done && !t.archived {
+                    index.open.insert(t.id.clone());
+                }
+                if let Some(parent) = &t.parent {
+                    let progress = index.progress.entry(parent.clone()).or_default();
+                    progress.0 += usize::from(t.done);
+                    progress.1 += 1;
+                }
+            }
+            index
+        })
+    }
+
+    fn by_id(&self, id: &str) -> Option<&Task> {
+        self.index().position.get(id).map(|&i| &self.tasks[i])
+    }
+
+    /// Visible tasks by their (cycle-checked) parent.
+    fn children(&self) -> &HashMap<String, Vec<usize>> {
+        self.children.get_or_init(|| {
+            let mut children: HashMap<String, Vec<usize>> = HashMap::new();
+            for (i, t) in self.tasks.iter().enumerate().filter(|(_, t)| !self.hidden.contains(&t.list)) {
+                if let Some(parent) = self.parent(t) {
+                    children.entry(parent).or_default().push(i);
+                }
+            }
+            children
+        })
+    }
+
     pub fn today(&self) -> NaiveDate {
         self.now.date()
     }
 
     pub fn visible(&self) -> impl Iterator<Item = &Task> {
         self.tasks.iter().filter(|t| !self.hidden.contains(&t.list))
+    }
+
+    pub fn parent(&self, t: &Task) -> Option<String> {
+        let parent = t.parent.as_ref()?;
+        if !self.index().visible.contains(parent) {
+            return None;
+        }
+        let mut path = vec![t.id.clone()];
+        let mut next = Some(parent.clone());
+        while let Some(id) = next {
+            if let Some(at) = path.iter().position(|p| p == &id) {
+                if path[at..].iter().max() == Some(&t.id) { return None; }
+                break;
+            }
+            path.push(id.clone());
+            next = self.by_id(&id).and_then(|p| p.parent.clone());
+        }
+        Some(parent.clone())
+    }
+
+    fn depth(&self, task: &Task) -> usize {
+        let mut seen = HashSet::new();
+        let mut parent = self.parent(task);
+        while let Some(id) = parent {
+            if !seen.insert(id.clone()) { break; }
+            parent = self.by_id(&id).and_then(|t| self.parent(t));
+        }
+        seen.len().min(6)
+    }
+
+    fn nested(&self, roots: &[&Task]) -> Vec<TaskItem> {
+        let mut pending: Vec<_> = roots.iter().rev().copied().collect();
+        let mut visited = HashSet::new();
+        let mut out = Vec::new();
+        while let Some(task) = pending.pop() {
+            if !visited.insert(task.id.clone()) { continue; }
+            out.push(self.task_item(task, None));
+            if let Some(children) = self.children().get(&task.id) {
+                pending.extend(children.iter().rev().map(|&i| &self.tasks[i]));
+            }
+        }
+        out
     }
 
     fn list_color(&self, t: &Task) -> Color {
@@ -92,7 +207,14 @@ impl Ctx {
         TaskItem {
             id: t.id.clone().into(),
             title: t.title.clone().into(),
-            subtitle: SharedString::default(),
+            subtitle: {
+                let mut parts: Vec<String> = t.tags.iter().map(|tag| format!("#{tag}")).collect();
+                if t.blockers.iter().any(|id| self.index().open.contains(id)) { parts.push("Blocked".into()); }
+                if let Some((done, total)) = self.index().progress.get(&t.id) { parts.push(format!("{done}/{total} subtasks")); }
+                parts.join(" · ").into()
+            },
+            selected: self.selected.contains(&t.id),
+            depth: self.depth(t) as i32,
             list_name: self.list_name(t).into(),
             color: self.list_color(t),
             done: t.done,
@@ -444,7 +566,7 @@ pub fn sections(ctx: &Ctx, tint: (Color, Color, Color)) -> Vec<Section> {
     let mut someday = Vec::new();
     let mut done: Vec<&Task> = Vec::new();
 
-    for t in ctx.visible() {
+    for t in ctx.visible().filter(|t| ctx.parent(t).is_none()) {
         if t.done {
             done.push(t);
             continue;
@@ -472,7 +594,6 @@ pub fn sections(ctx: &Ctx, tint: (Color, Color, Color)) -> Vec<Section> {
     }
     someday.sort_by_key(|t| (std::cmp::Reverse(t.priority), (t.order * 1000.0) as i64));
     done.sort_by_key(|t| std::cmp::Reverse(t.done_at.unwrap_or(0)));
-    done.truncate(30);
 
     let mut out = Vec::new();
     let mut push = |title: &str, tint: Color, v: Vec<&Task>| {
@@ -480,7 +601,9 @@ pub fn sections(ctx: &Ctx, tint: (Color, Color, Color)) -> Vec<Section> {
             out.push(Section {
                 title: title.into(),
                 tint,
-                items: model(v.iter().map(|t| ctx.task_item(t, None)).collect()),
+                // Top-level tasks only: nested subtasks would inflate "Overdue 5" next to "4 overdue".
+                count: v.len() as i32,
+                items: model(ctx.nested(&v)),
             });
         }
     };
@@ -567,14 +690,7 @@ mod tests {
     use patch_core::time::parse_dt;
 
     fn ctx(tasks: Vec<Task>) -> Ctx {
-        Ctx {
-            tasks,
-            lists: HashMap::new(),
-            hidden: HashSet::new(),
-            now: parse_dt("2026-10-22T09:30").unwrap(),
-            h24: true,
-            monday: true,
-        }
+        Ctx::new(tasks, HashMap::new(), HashSet::new(), parse_dt("2026-10-22T09:30").unwrap(), true, true)
     }
 
     fn task(id: &str, start: &str, end: Option<&str>, all_day: bool) -> Task {
@@ -677,6 +793,26 @@ mod tests {
         ]);
         let ids: Vec<_> = up_next(&c, 6).into_iter().map(|i| i.id.to_string()).collect();
         assert_eq!(ids, ["lunch"]);
+    }
+
+    #[test]
+    fn merged_parent_cycles_render_each_task_once_and_deleted_parent_becomes_root() {
+        let mut a = Task::blank("a", "l", "c");
+        let mut b = Task::blank("b", "l", "c");
+        let mut child = Task::blank("child", "l", "c");
+        a.parent = Some("b".into()); b.parent = Some("a".into()); child.parent = Some("a".into());
+        a.blockers = vec!["b".into()]; b.blockers = vec!["a".into()];
+        let colors = (Color::default(), Color::default(), Color::default());
+        let c = ctx(vec![a.clone(), b, child]);
+        let sections = sections(&c, colors);
+        use slint::Model;
+        let items: Vec<_> = sections.iter().flat_map(|s| s.items.iter().collect::<Vec<_>>()).collect();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items.iter().map(|t| t.id.to_string()).collect::<HashSet<_>>().len(), 3);
+        assert!(items.iter().any(|t| t.subtitle.contains("Blocked")));
+        let orphan = ctx(vec![a]);
+        assert_eq!(super::sections(&orphan, colors)[0].items.row_count(), 1);
+        assert_eq!(orphan.task_item(&orphan.tasks[0], None).depth, 0);
     }
 
     #[test]

@@ -42,4 +42,12 @@
         android:maxLines="1"
         android:textColor="@color/widget_secondary"
         android:textSize="12sp" />
+    <ImageView
+        android:id="@+id/widget_check"
+        android:layout_width="40dp"
+        android:layout_height="32dp"
+        android:contentDescription="@string/widget_mark_done"
+        android:paddingStart="16dp"
+        android:src="@drawable/ic_widget_check" />
+
 </LinearLayout>

@@ -124,7 +124,11 @@ public final class PatchWidgetService extends RemoteViewsService {
             v.setInt(R.id.widget_dot, "setImageAlpha", done ? 90 : 255);
 
             String id = t.optString("id");
+            v.setViewVisibility(R.id.widget_check, done || id.isEmpty() ? android.view.View.GONE : android.view.View.VISIBLE);
             if (!id.isEmpty()) {
+                v.setOnClickFillInIntent(R.id.widget_check, new Intent()
+                        .putExtra(MainActivity.EXTRA_TASK_ID, id)
+                        .putExtra(WidgetRowActivity.EXTRA_COMPLETE, true));
                 v.setOnClickFillInIntent(R.id.widget_row, new Intent().putExtra(MainActivity.EXTRA_TASK_ID, id));
             }
             return v;

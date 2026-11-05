@@ -64,6 +64,8 @@ pub trait Bridge {
     fn overlay_expand(&self, expanded: bool);
     fn open_app(&self, task_id: Option<&str>);
     fn notify(&self, title: &str, body: &str);
+    /// Open a link in the browser.
+    fn open_url(&self, url: &str);
     /// Replace the reminders Android's AlarmManager will deliver (a JSON array).
     fn schedule_reminders(&self, json: &str);
     fn set_clipboard(&self, text: &str);
@@ -72,7 +74,7 @@ pub trait Bridge {
     /// A frame requested with [`Msg::RedrawNeeded`] has been posted.
     fn frame_done(&self, kind: Kind);
     fn back_result(&self, consumed: bool);
-    /// The app's look changed (0 matte, 2 light): system bar icons
+    /// The app's look changed (0 pitch black, 2 light): system bar icons
     /// and the window background follow it.
     fn set_look(&self, look: i32);
     /// The home-screen widget's state changed (JSON, see
@@ -144,6 +146,8 @@ pub enum Msg {
     OverlayClosed,
     /// The activity paused: save, then reply.
     Pause(Option<SyncSender<()>>),
+    /// Text shared to Patch from another app.
+    AddText(String),
     OpenTask(String),
     CompleteTask(String, Option<SyncSender<()>>),
     /// The widget's "+": open the editor on a new task, once the main window
@@ -477,6 +481,7 @@ impl Runtime {
                 }
             }
             Msg::OpenTask(id) => self.app.open_task(&id),
+            Msg::AddText(text) => self.app.add_text(&text),
             Msg::CompleteTask(id, done) => {
                 self.app.complete_task(&id);
                 if let Some(done) = done {

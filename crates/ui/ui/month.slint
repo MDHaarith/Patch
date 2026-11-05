@@ -215,7 +215,7 @@ component CompactMonth inherits VerticalLayout {
                 background: cell.today ? Theme.today : cell.selected ? Theme.accent : transparent;
                 Text {
                     text: cell.day;
-                    font-size: 16px;
+                    font-size: 16px * Theme.text-scale;
                     font-weight: cell.today || cell.selected ? 700 : 500;
                     color: cell.today || cell.selected ? #ffffff : cell.in-month ? (cell.weekend ? Theme.text-2 : Theme.text) : Theme.text-3;
                 }

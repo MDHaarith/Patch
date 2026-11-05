@@ -24,7 +24,7 @@ fn nth(base: NaiveDateTime, repeat: Repeat, k: u32, anchor: Option<NaiveDateTime
         add_months(anchor.date(), offset + months).and_time(base.time())
     };
     Some(match repeat {
-        Repeat::None => {
+        Repeat::None | Repeat::AfterDone(_, _) => {
             if k == 0 {
                 base
             } else {
@@ -111,6 +111,17 @@ pub fn occurrences(task: &Task, from: NaiveDateTime, to: NaiveDateTime) -> Vec<O
         produced += 1;
     }
     out
+}
+
+pub fn after_completion(repeat: Repeat, completed: NaiveDateTime) -> Option<NaiveDateTime> {
+    let Repeat::AfterDone(n, unit) = repeat else { return None };
+    if n == 0 { return None; }
+    match unit {
+        Unit::Day => completed.checked_add_signed(Duration::days(n as i64)),
+        Unit::Week => completed.checked_add_signed(Duration::weeks(n as i64)),
+        Unit::Month => Some(add_months(completed.date(), n as i32).and_time(completed.time())),
+        Unit::Year => Some(add_months(completed.date(), 12 * n as i32).and_time(completed.time())),
+    }
 }
 
 /// Start of the next occurrence after the task's current one.

@@ -16,12 +16,12 @@ public final class ReminderReceiver extends BroadcastReceiver {
             String key = intent.getStringExtra(Reminders.EXTRA_KEY);
             if (key == null) return;
             context.getSystemService(android.app.NotificationManager.class)
-                    .cancel(intent.getIntExtra(Reminders.EXTRA_NOTIFICATION_ID, -1));
+                    .cancel(intent.getStringExtra(Reminders.EXTRA_KEY), intent.getIntExtra(Reminders.EXTRA_NOTIFICATION_ID, -1));
             PatchNative.init(context);
             PendingResult pending = goAsync();
             new Thread(() -> {
                 try {
-                    PatchNative.nativeCompleteTask(key.split("@", 2)[0]);
+                    PatchNative.nativeCompleteTask(key);
                 } finally {
                     pending.finish();
                 }
@@ -31,7 +31,7 @@ public final class ReminderReceiver extends BroadcastReceiver {
         if (Reminders.ACTION_SNOOZE.equals(intent.getAction())) {
             Reminders.snooze(context, intent);
             context.getSystemService(android.app.NotificationManager.class)
-                    .cancel(intent.getIntExtra(Reminders.EXTRA_NOTIFICATION_ID, -1));
+                    .cancel(intent.getStringExtra(Reminders.EXTRA_KEY), intent.getIntExtra(Reminders.EXTRA_NOTIFICATION_ID, -1));
             return;
         }
         String key = intent.getStringExtra(Reminders.EXTRA_KEY);
@@ -40,7 +40,7 @@ public final class ReminderReceiver extends BroadcastReceiver {
         PendingResult pending = goAsync();
         new Thread(() -> {
             try {
-                boolean open = PatchNative.nativeTaskOpen(key.split("@", 2)[0]);
+                boolean open = PatchNative.nativeTaskOpen(key);
                 if (Reminders.delivered(context, key, intent.getBooleanExtra(Reminders.EXTRA_SNOOZED, false)) && open) {
                     Notifications.createChannels(context);
                     Notifications.reminder(context, key, title, intent.getStringExtra(Reminders.EXTRA_BODY));

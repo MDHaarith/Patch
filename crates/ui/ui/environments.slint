@@ -7,7 +7,7 @@ import { Surface, Field, Toggle, IconButton, Button, Scroll } from "widgets.slin
 component ScanCard inherits Rectangle {
     height: 240px;
     border-radius: 20px;
-    background: #141518;
+    background: #111111;
     border-width: 1px;
     border-color: #303136;
     clip: true;
@@ -24,7 +24,7 @@ component ScanCard inherits Rectangle {
             alignment: center;
             spacing: 12px;
             HorizontalLayout { alignment: center; IconBox { name: "qr"; size: 32px; tint: #ffffff; } }
-            Text { text: Store.scan-active ? "Starting camera…" : "Tap to scan"; color: #ffffff; horizontal-alignment: center; font-size: 15px; }
+            Text { text: Store.scan-active ? "Starting camera…" : "Tap to scan"; color: #ffffff; horizontal-alignment: center; font-size: 15px * Theme.text-scale; }
         }
     }
     TouchArea {
@@ -57,7 +57,7 @@ export component EnvironmentsPanel inherits Rectangle {
                 horizontal-stretch: 1;
                 text: Store.environment-page == 2 ? "Add environment" : "Environments";
                 color: Theme.text;
-                font-size: 27px;
+                font-size: 27px * Theme.text-scale;
                 font-weight: 700;
                 vertical-alignment: center;
             }
@@ -98,11 +98,11 @@ export component EnvironmentsPanel inherits Rectangle {
                             VerticalLayout {
                                 horizontal-stretch: 1;
                                 spacing: 5px;
-                                Text { text: hub.name; color: Theme.text; font-size: 17px; font-weight: 600; overflow: elide; }
+                                Text { text: hub.name; color: Theme.text; font-size: 17px * Theme.text-scale; font-weight: 600; overflow: elide; }
                                 HorizontalLayout {
                                     spacing: 6px;
                                     Rectangle { width: 7px; height: 7px; border-radius: 4px; background: hub.connected ? #43d78b : Theme.text-3; y: (parent.height - self.height) / 2; }
-                                    Text { horizontal-stretch: 1; text: hub.status; color: Theme.text-2; font-size: 12px; wrap: word-wrap; }
+                                    Text { horizontal-stretch: 1; text: hub.status; color: Theme.text-2; font-size: 12px * Theme.text-scale; wrap: word-wrap; }
                                 }
                             }
                             Toggle { checked: hub.enabled; toggled(on) => { Actions.enable-environment(hub.url, on); } }
@@ -113,8 +113,8 @@ export component EnvironmentsPanel inherits Rectangle {
                 if Store.environment-page == 2: VerticalLayout {
                     spacing: 16px;
                     ScanCard {}
-                    Text { text: "Scan the code from your laptop's Patch Settings"; color: Theme.text-2; font-size: 13px; horizontal-alignment: center; wrap: word-wrap; }
-                    Text { text: "Or enter it"; color: Theme.text; font-size: 20px; font-weight: 600; }
+                    Text { text: "Scan the code from your laptop's Patch Settings"; color: Theme.text-2; font-size: 13px * Theme.text-scale; horizontal-alignment: center; wrap: word-wrap; }
+                    Text { text: "Or enter it"; color: Theme.text; font-size: 20px * Theme.text-scale; font-weight: 600; }
                     Surface {
                         radius: 18px;
                         fill: Theme.panel-strong;
@@ -126,7 +126,7 @@ export component EnvironmentsPanel inherits Rectangle {
                             Field { text <=> root.code; placeholder: "Code"; }
                         }
                     }
-                    Text { text: "Enter the address and code shown on your laptop. Keep both devices on the same Wi-Fi or Tailscale."; color: Theme.text-2; font-size: 13px; wrap: word-wrap; }
+                    Text { text: "Enter the address and code shown on your laptop. Keep both devices on the same Wi-Fi or Tailscale."; color: Theme.text-2; font-size: 13px * Theme.text-scale; wrap: word-wrap; }
                     if Store.pairing: Text { text: "Connecting…"; color: Theme.accent; font-size: Theme.fs-m; }
                     if Store.sync-state == 3 || Store.sync-state == 4: Text { text: Store.sync-label; color: Theme.text-2; wrap: word-wrap; font-size: Theme.fs-s; }
                 }

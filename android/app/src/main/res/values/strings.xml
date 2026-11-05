@@ -10,6 +10,9 @@
     <string name="overlay_hide">Hide</string>
 
     <!-- Home-screen widget -->
+    <string name="capture_label">Add to Patch</string>
+    <string name="tile_label">New task</string>
+    <string name="widget_mark_done">Mark done</string>
     <string name="widget_label">Patch</string>
     <string name="widget_description">Today\'s tasks and what\'s coming up, with your Patch pet</string>
     <string name="widget_upcoming">Upcoming</string>

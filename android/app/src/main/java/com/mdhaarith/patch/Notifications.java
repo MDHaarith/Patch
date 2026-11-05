@@ -71,7 +71,7 @@ final class Notifications {
         }
         Notification n = builder.build();
         // Without POST_NOTIFICATIONS this is silently dropped.
-        context.getSystemService(NotificationManager.class).notify(id, n);
+        context.getSystemService(NotificationManager.class).notify(key, id, n);
     }
 
     /** Persisted so reminders still in the tray aren't replaced after the

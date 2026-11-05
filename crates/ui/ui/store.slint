@@ -1,5 +1,7 @@
 // View models pushed from Rust, and the actions the UI sends back.
 
+export struct SavedView { id: string, name: string }
+
 export struct DeviceRow { id: string, name: string, platform: string, status: string, connected: bool, this-device: bool, revoked: bool }
 export struct EnvironmentRow { url: string, name: string, status: string, connected: bool, enabled: bool }
 
@@ -82,6 +84,8 @@ export struct TaskItem {
     check-total: int,
     repeat: bool,
     today: bool,
+    selected: bool,
+    depth: int,
 }
 
 export struct BoardCol {
@@ -95,6 +99,7 @@ export struct BoardCol {
 export struct Section {
     title: string,
     tint: color,
+    count: int,
     items: [TaskItem],
 }
 
@@ -141,7 +146,6 @@ export global Store {
     in-out property <length> safe-bottom: 0px;
     in-out property <string> version: "0.1.0";
     // Generated in Rust so no image decoder is needed at runtime.
-    in-out property <image> grain;
     in-out property <image> app-icon;
 
     // Navigation: 0 day, 1 week, 2 month, 3 board, 4 list
@@ -182,9 +186,43 @@ export global Store {
     // Board and lists
     in-out property <[BoardCol]> board;
     in-out property <int> board-tallest: 0;
+    in-out property <bool> board-details;
     in-out property <[Section]> sections;
     in-out property <[TaskItem]> today-items;
     in-out property <int> today-open: 0;
+
+    in-out property <bool> tools-open;
+    in-out property <bool> can-undo;
+    in-out property <bool> can-redo;
+    in-out property <bool> selection-mode;
+    in-out property <int> selection-count;
+    in-out property <[SavedView]> smart-views;
+    in-out property <string> active-smart;
+    in-out property <int> browse-mode;
+    in-out property <string> filter-tags;
+    in-out property <int> filter-list;
+    in-out property <[string]> filter-lists;
+    in-out property <int> filter-priority;
+    in-out property <int> filter-due;
+    in-out property <bool> filter-done: true;
+    in-out property <string> view-name;
+    in-out property <int> archive-days;
+    in-out property <int> stat-today;
+    in-out property <int> stat-streak;
+    in-out property <int> stat-best;
+    in-out property <int> stat-focus;
+    in-out property <[int]> stat-week;
+    in-out property <int> stat-week-max: 1;
+    in-out property <bool> focus-active;
+    in-out property <string> focus-title;
+    in-out property <string> focus-left;
+    in-out property <bool> plan-open;
+    in-out property <int> plan-overdue;
+    in-out property <[string]> plan-items;
+    in-out property <bool> daily-plan;
+    in-out property <int> accent-choice;
+    in-out property <[color]> accent-choices;
+    in-out property <int> text-size;
 
     // Search
     in-out property <[TaskItem]> results;
@@ -198,6 +236,7 @@ export global Store {
     in-out property <bool> hosting: false;
     in-out property <string> host-urls;
     in-out property <string> host-address;
+    in-out property <string> host-calendar;
     in-out property <string> host-token;
     in-out property <image> host-qr;
     in-out property <[DeviceRow]> devices;
@@ -266,6 +305,17 @@ export global Editor {
     in-out property <bool> is-new;
     in-out property <string> title;
     in-out property <string> notes;
+    in-out property <string> tags;
+    in-out property <string> extra-reminders;
+    in-out property <bool> template;
+    in-out property <bool> done;
+    in-out property <bool> archived;
+    in-out property <int> parent-index;
+    in-out property <[string]> parent-options;
+    in-out property <[CheckRow]> blocker-options;
+    in-out property <[CheckRow]> children;
+    in-out property <string> link-status;
+    in-out property <[string]> links;
     in-out property <int> list-index;
     in-out property <int> column-index;
     in-out property <int> priority;
@@ -357,6 +407,29 @@ export global Actions {
     callback check-update();
     callback refresh-background();
     callback undo-delete();
+    callback undo();
+    callback redo();
+    callback filter-changed();
+    callback browse(int);
+    callback save-smart();
+    callback open-smart(string);
+    callback delete-smart(string);
+    callback rename-smart(string, string);
+    callback select-task(string, bool);
+    callback selection-mode(bool);
+    callback bulk(int, string);
+    callback duplicate-task();
+    callback blocker-toggle(string);
+    callback set-archive-days(int);
+    callback focus-start(int);
+    callback focus-stop();
+    callback catch-up();
+    callback skip-occurrence();
+    callback open-link(string);
+    callback notes-edited(string);
+    callback set-daily-plan(bool);
+    callback set-accent(int);
+    callback set-text-size(int);
     callback battery-unrestrict();
     callback battery-settings();
     callback set-hosting(bool);

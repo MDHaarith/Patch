@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 /// A request from another launch of `patch`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Request {
     /// Show and raise the main window.
     Show,
@@ -25,26 +25,44 @@ pub enum Request {
     /// Only check that the instance is alive (`patch --background` while it
     /// already runs).
     Ping,
+    /// Show the window with a new task open.
+    New,
+    /// Add a task from quick-add text.
+    Add(String),
+    /// Import the calendar file at this path.
+    Import(String),
 }
 
 impl Request {
-    pub fn as_str(self) -> &'static str {
+    pub fn encode(&self) -> String {
         match self {
-            Request::Show => "show",
-            Request::Quit => "quit",
-            Request::Ping => "ping",
+            Request::Show => "show".into(),
+            Request::Quit => "quit".into(),
+            Request::Ping => "ping".into(),
+            Request::New => "new".into(),
+            Request::Add(text) => format!("add {}", text.replace(['\r', '\n'], " ")),
+            Request::Import(path) => format!("import {path}"),
         }
     }
 
     pub fn parse(s: &str) -> Option<Request> {
-        match s.trim() {
+        let s = s.trim();
+        match s.split_once(' ') {
+            Some(("add", text)) => return Some(Request::Add(text.trim().to_string())),
+            Some(("import", path)) => return Some(Request::Import(path.trim().to_string())),
+            _ => {}
+        }
+        match s {
             "show" => Some(Request::Show),
             "quit" => Some(Request::Quit),
             "ping" => Some(Request::Ping),
+            "new" => Some(Request::New),
             _ => None,
         }
     }
 }
+
+const MAX_REQUEST: usize = 64 * 1024;
 
 /// Held by the running instance for its whole lifetime.
 pub struct Primary {
@@ -106,13 +124,17 @@ impl Drop for Primary {
 fn read_request(stream: &UnixStream) -> Option<Request> {
     stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
     let mut line = String::new();
-    BufReader::new(stream.take(64)).read_line(&mut line).ok()?;
+    BufReader::new(stream.take(MAX_REQUEST as u64)).read_line(&mut line).ok()?;
     Request::parse(&line)
 }
 
 /// Delivers `req` to the running instance. Retries for a moment because the
 /// lock is taken slightly before the socket starts listening.
 pub fn send(socket: &Path, req: Request) -> io::Result<()> {
+    let line = req.encode() + "\n";
+    if line.len() > MAX_REQUEST {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "that's too long to send to Patch"));
+    }
     let deadline = Instant::now() + Duration::from_secs(3);
     let mut stream = loop {
         match UnixStream::connect(socket) {
@@ -123,7 +145,7 @@ pub fn send(socket: &Path, req: Request) -> io::Result<()> {
     };
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-    stream.write_all(format!("{}\n", req.as_str()).as_bytes())?;
+    stream.write_all(line.as_bytes())?;
     let mut reply = String::new();
     BufReader::new(stream.take(64)).read_line(&mut reply)?;
     if reply.trim() == "ok" {
@@ -183,5 +205,20 @@ mod tests {
     fn garbage_is_ignored() {
         assert_eq!(Request::parse("show\n"), Some(Request::Show));
         assert_eq!(Request::parse("rm -rf /"), None);
+    }
+
+    #[test]
+    fn add_and_import_reach_the_primary_intact() {
+        let paths = temp_paths("payload");
+        let mut primary = acquire(&paths).unwrap().expect("primary");
+        let (tx, rx) = mpsc::channel();
+        primary.serve(move |r| tx.send(r).unwrap()).unwrap();
+        send(&paths.socket(), Request::Add("Dentist\ntomorrow 3pm #work".into())).unwrap();
+        send(&paths.socket(), Request::Import("/tmp/my cal.ics".into())).unwrap();
+        assert!(send(&paths.socket(), Request::Add("x".repeat(MAX_REQUEST))).is_err(), "never truncated into a wrong task");
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), Request::Add("Dentist tomorrow 3pm #work".into()));
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), Request::Import("/tmp/my cal.ics".into()));
+        drop(primary);
+        let _ = std::fs::remove_dir_all(paths.data.parent().unwrap());
     }
 }

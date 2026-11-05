@@ -57,6 +57,10 @@ impl Host for AndroidHost {
         true
     }
 
+    fn open_url(&self, url: &str) {
+        self.bridge.open_url(url);
+    }
+
     fn copy_text(&self, text: &str) {
         self.bridge.set_clipboard(text);
     }

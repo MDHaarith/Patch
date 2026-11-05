@@ -364,6 +364,19 @@ pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeTaskOpen(
         .unwrap_or(true) as jboolean
 }
 
+/// Text shared from another app: add it as a task.
+#[no_mangle]
+pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeAddText(
+    mut env: JNIEnv,
+    _: JClass,
+    text: JString,
+) {
+    let text = string(&mut env, &text);
+    if !text.trim().is_empty() {
+        send(Msg::AddText(text));
+    }
+}
+
 /// The widget's "+": open the editor on a new task.
 #[no_mangle]
 pub extern "system" fn Java_com_mdhaarith_patch_PatchNative_nativeNewTask(_env: JNIEnv, _: JClass) {

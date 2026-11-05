@@ -9,7 +9,7 @@ export component Card inherits Rectangle {
     border-radius: 14px;
     background: Theme.card;
     border-width: 1px;
-    border-color: Theme.edge;
+    border-color: root.item.selected ? Theme.accent : Theme.edge;
     drop-shadow-blur: ghost && !Store.mobile ? 24px : (!Store.mobile && Theme.light ? 6px : 0px);
     drop-shadow-offset-y: ghost ? 10px : 2px;
     drop-shadow-color: ghost ? #00000080 : (Theme.light ? #00000014 : transparent);
@@ -48,11 +48,17 @@ export component Card inherits Rectangle {
                 vertical-alignment: top;
             }
             Check {
-                checked: root.item.done;
+                checked: Store.selection-mode ? root.item.selected : root.item.done;
                 tint: root.item.color;
                 size: 18px;
-                toggled => { Actions.toggle-done(root.item.id); }
+                toggled => { if Store.selection-mode { Actions.select-task(root.item.id, false); } else { Actions.toggle-done(root.item.id); } }
             }
+        }
+        if root.item.subtitle != "": Text {
+            text: root.item.subtitle;
+            font-size: Theme.fs-xs;
+            color: Theme.text-2;
+            overflow: elide;
         }
         HorizontalLayout {
             spacing: 6px;
@@ -92,13 +98,17 @@ export component BoardView inherits Rectangle {
     property <length> col-w: Store.mobile ? Math.min(self.width - 56px, 330px) : 286px;
     property <length> gap: 12px;
     property <length> head-h: 44px;
-    property <length> card-h: Store.mobile ? 86px : 78px;
+    property <length> card-h: Store.board-details ? (Store.mobile ? 110px : 102px) : (Store.mobile ? 86px : 78px);
     property <length> card-gap: 8px;
     property <length> content-h: Math.max(self.height, head-h + pad * 2 + Math.max(Store.board-tallest, 1) * (card-h + card-gap) + 64px);
 
     // Drag state, in board viewport coordinates.
     property <bool> dragging;
     property <bool> armed;
+    property <bool> moved-card;
+    property <bool> suppress-click;
+    property <bool> modified;
+    property <bool> range;
     property <string> drag-id;
     property <TaskItem> drag-item;
     property <length> grab-x;
@@ -140,7 +150,7 @@ export component BoardView inherits Rectangle {
             height: root.content-h - root.pad * 2;
             radius: 18px;
             fill: Theme.content;
-            sheen: !Theme.matte;
+            sheen: Theme.light;
             border-color: root.dragging && root.drop-col == ci ? Theme.accent.with-alpha(0.6) : Theme.hairline;
 
             // Header
@@ -216,12 +226,18 @@ export component BoardView inherits Rectangle {
                     x: 0;
                     width: parent.width - 34px;
                     clicked => {
+                        if root.suppress-click { root.suppress-click = false; return; }
                         if (!root.dragging) {
-                            Actions.open-task(card.id);
+                            if Store.selection-mode || root.modified { Actions.select-task(card.id, root.range); }
+                            else { Actions.open-task(card.id); }
                         }
                     }
                     pointer-event(e) => {
                         if (e.kind == PointerEventKind.down) {
+                            root.suppress-click = false;
+                            root.moved-card = false;
+                            root.modified = e.modifiers.control || e.modifiers.meta || e.modifiers.shift;
+                            root.range = e.modifiers.shift;
                             root.armed = true;
                             root.drag-id = card.id;
                             root.drag-item = card;
@@ -238,7 +254,9 @@ export component BoardView inherits Rectangle {
                             root.armed = false;
                             if (root.dragging) {
                                 root.dragging = false;
-                                Actions.drop-card(root.drag-id, root.drop-col, root.drop-index);
+                                root.suppress-click = true;
+                                if Store.mobile && !root.moved-card { Actions.select-task(root.drag-id, false); }
+                                else { Actions.drop-card(root.drag-id, root.drop-col, root.drop-index); }
                             }
                         }
                         if (e.kind == PointerEventKind.cancel) {
@@ -251,7 +269,7 @@ export component BoardView inherits Rectangle {
                         if (!self.pressed) {
                             return;
                         }
-                        if (!root.dragging && !Store.mobile && (Math.abs(self.mouse-x - self.pressed-x) > 5px || Math.abs(self.mouse-y - self.pressed-y) > 5px)) {
+                        if (!root.dragging && !root.modified && !Store.selection-mode && !Store.mobile && (Math.abs(self.mouse-x - self.pressed-x) > 5px || Math.abs(self.mouse-y - self.pressed-y) > 5px)) {
                             root.start-drag(card);
                         }
                         if (!root.dragging && Store.mobile && (Math.abs(self.mouse-x - self.pressed-x) > 8px || Math.abs(self.mouse-y - self.pressed-y) > 8px)) {
@@ -259,6 +277,7 @@ export component BoardView inherits Rectangle {
                             root.armed = false;
                         }
                         if (root.dragging) {
+                            if abs(self.mouse-x - self.pressed-x) > 8px || abs(self.mouse-y - self.pressed-y) > 8px { root.moved-card = true; }
                             root.drag-x = root.pad + ci * (root.col-w + root.gap) + 10px + self.mouse-x + scroll.content-x;
                             root.drag-y = root.pad + root.head-h + k * (root.card-h + root.card-gap) + self.mouse-y + scroll.content-y;
                         }

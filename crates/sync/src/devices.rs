@@ -36,6 +36,9 @@ struct Entry {
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Registry {
     pub code: String,
+    /// Grants only the read-only calendar feed, so it can sit in a URL.
+    #[serde(default)]
+    pub calendar: String,
     entries: Vec<Entry>,
     #[serde(skip)]
     file: PathBuf,
@@ -56,12 +59,16 @@ impl Registry {
             Ok(bytes) => serde_json::from_slice::<Self>(&bytes).map_err(io::Error::other)?,
             Err(e) if e.kind() == io::ErrorKind::NotFound => Self {
                 code,
+                calendar: String::new(),
                 entries: vec![],
                 file: file.clone(),
             },
             Err(e) => return Err(e),
         };
         registry.file = file;
+        if registry.calendar.is_empty() {
+            registry.calendar = random_string(32);
+        }
         registry.save()?;
         Ok(registry)
     }
@@ -82,6 +89,10 @@ impl Registry {
             devices.insert(entry.device.id.clone(), entry.device.clone());
         }
         devices.into_values().collect()
+    }
+
+    pub fn calendar_ok(&self, token: &str) -> bool {
+        !token.is_empty() && eq(token, &self.calendar)
     }
 
     pub fn known_token(&self, token: &str) -> bool {
@@ -198,6 +209,7 @@ impl Registry {
     pub fn rotate(&mut self) -> io::Result<String> {
         let mut next = self.clone();
         next.code = patch_core::id::pairing_token();
+        next.calendar = random_string(32);
         next.save()?;
         *self = next;
         Ok(self.code.clone())

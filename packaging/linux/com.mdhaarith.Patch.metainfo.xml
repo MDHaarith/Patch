@@ -10,8 +10,8 @@
   </developer>
   <description>
     <p>
-      Patch keeps your tasks, your board and your calendar in one native app with a matte black,
-      glassy look. It stays on: a desktop widget shows what is left today, reminders arrive even
+      Patch keeps your tasks, your board and your calendar in one native app with a
+      pitch black look. It stays on: a desktop widget shows what is left today, reminders arrive even
       with the window closed, and a tray icon brings it back.
     </p>
     <ul>
@@ -19,7 +19,7 @@
       <li>Quick add in plain language, like “Lunch with Sam tomorrow 1pm”</li>
       <li>A desktop widget that can float above other apps and collapses into a bubble</li>
       <li>Sync between your Linux and Android devices over Tailscale; this computer can host the sync hub itself</li>
-      <li>Matte Black, Liquid Glass and Light looks</li>
+      <li>Pitch Black and Light looks</li>
     </ul>
   </description>
   <launchable type="desktop-id">com.mdhaarith.Patch.desktop</launchable>

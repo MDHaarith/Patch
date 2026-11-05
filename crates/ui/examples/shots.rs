@@ -50,6 +50,7 @@ impl Host for DemoHost {
     fn set_hosting(&self, on: bool) -> Result<Option<patch_ui::HostedHub>, String> {
         Ok(on.then(|| patch_ui::HostedHub {
             local_url: "http://127.0.0.1:1".into(), urls: vec!["http://100.64.0.2:4747".into()], token: "K7QF-2MZD-9XPA-T4RH".into(),
+            calendar_url: "http://100.64.0.2:4747/calendar.ics?token=demo".into(),
         }))
     }
     fn devices(&self) -> Vec<patch_sync::Device> {
@@ -135,6 +136,16 @@ fn seed(dir: &Path) {
     for id in ids {
         d.set_done(&id, true);
     }
+    let parent = d.tasks().into_iter().find(|t| t.title == "Design review").unwrap().id;
+    let mut child = Task::blank("", LIST_WORK, COL_TODO);
+    child.title = "Collect final comments".into(); child.parent = Some(parent.clone()); child.blockers = vec![parent.clone()]; child.tags = vec!["review".into()];
+    d.add_task(child);
+    let mut review = d.task(&parent).unwrap(); review.tags = vec!["review".into(), "work".into()]; review.reminder = Some(15); review.reminders = vec![60]; d.save_task(&review);
+    let mut template = Task::blank("", DEFAULT_LIST, COL_TODO); template.title = "Weekly review template".into(); template.template = true;
+    template.checklist = vec![CheckItem { id: "step".into(), text: "Review priorities".into(), done: false }]; d.add_task(template);
+    let mut archived = Task::blank("", DEFAULT_LIST, COL_DONE); archived.title = "Previous release".into(); archived.archived = true; d.add_task(archived);
+    let view = patch_core::model::SmartView { id: "demo-review-view".into(), name: "Reviews".into(), filter: patch_core::model::Filter { tags: vec!["review".into()], include_done: true, ..Default::default() } };
+    d.save_smart_view_from(&view, &view);
     d.save(&dir.join("doc.json")).unwrap();
 }
 
@@ -208,7 +219,7 @@ fn main() {
         return;
     }
     let want = |name: &str| only.is_empty() || only.split(',').any(|o| name.starts_with(o));
-    let looks = ["matte", "light"];
+    let looks = ["pitch", "light"];
 
     // Desktop
     let dir = std::env::temp_dir().join(format!("patch-shots-desktop-{}", std::process::id()));
@@ -257,6 +268,7 @@ fn main() {
             main.global::<Store>().set_settings_open(false);
         }
     }
+    roadmap_screens(&platform, &app, &main, idx, &dir, &out, &want);
     a.invoke_set_look(0);
 
     // Overlay / widget
@@ -352,6 +364,7 @@ fn main() {
             phone.global::<Store>().set_settings_open(false);
         }
     }
+    roadmap_screens(&platform, &papp, &phone, pidx, &pdir, &out, &want);
     for (tab, name) in [(0, "phone-overlay-popup"), (3, "phone-overlay-popup-calendar")] {
         if want(name) {
             let pov = OverlayWindow::new().unwrap();
@@ -366,6 +379,49 @@ fn main() {
     drop(app);
     drop(papp);
     println!("wrote screenshots to {}", out.display());
+}
+
+fn roadmap_screens(platform: &ShotPlatform, app: &Rc<App>, main: &MainWindow, index: usize, dir: &Path, out: &Path, want: &impl Fn(&str) -> bool) {
+    let actions = main.global::<Actions>();
+    let store = main.global::<Store>();
+    let mobile = store.get_mobile();
+    let scale = if mobile { 2.625 } else { 1.0 };
+    let size = if mobile { ((412.0 * scale) as u32, (915.0 * scale) as u32) } else { (1440, 900) };
+    let prefix = if mobile { "phone" } else { "desktop" };
+    let review = app_task(dir, "Design review");
+    actions.invoke_set_look(0);
+    for screen in ["filters", "bulk", "templates", "archive", "subtasks", "details", "plan", "focus", "progress", "large-text"] {
+        let name = format!("{prefix}-roadmap-{screen}");
+        if !want(&name) { continue; }
+        actions.invoke_set_view(4);
+        match screen {
+            "filters" => store.set_tools_open(true),
+            "bulk" => { actions.invoke_select_task(review.clone().into(), false); store.set_tools_open(true); }
+            "templates" => actions.invoke_browse(1),
+            "archive" => actions.invoke_browse(2),
+            "details" => actions.invoke_open_task(review.clone().into()),
+            "plan" => app.show_plan(),
+            "focus" => app.focus_begin(&review, 25),
+            "progress" => store.set_settings_open(true),
+            "large-text" => { actions.invoke_set_text_size(2); actions.invoke_set_view(2); }
+            _ => {},
+        }
+        render(platform, index, size, scale, &out.join(format!("{name}.png")));
+        if screen == "details" {
+            platform.windows.borrow()[index].dispatch_event(WindowEvent::PointerScrolled {
+                position: slint::LogicalPosition::new(if mobile { 200.0 } else { 1250.0 }, 550.0), delta_x: 0.0, delta_y: -750.0,
+            });
+            render(platform, index, size, scale, &out.join(format!("{prefix}-roadmap-details-lower.png")));
+            actions.invoke_editor_close();
+        }
+        store.set_tools_open(false);
+        store.set_plan_open(false);
+        store.set_settings_open(false);
+        actions.invoke_focus_stop();
+        actions.invoke_set_text_size(0);
+        actions.invoke_selection_mode(false);
+        actions.invoke_browse(0);
+    }
 }
 
 // SHOTS=motion cargo run -p patch-ui --example shots -- /tmp/anim
