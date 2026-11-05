@@ -1,5 +1,6 @@
 package com.mdhaarith.patch;
 
+import android.annotation.SuppressLint;
 import android.app.PendingIntent;
 import android.content.Intent;
 import android.os.Build;
@@ -16,6 +17,8 @@ public final class PatchTileService extends TileService {
         }
     }
 
+    // The Intent overload only runs below API 34, where it is still the only option.
+    @SuppressLint("StartActivityAndCollapseDeprecated")
     @SuppressWarnings("deprecation")
     private void open() {
         Intent intent = new Intent(this, MainActivity.class)
