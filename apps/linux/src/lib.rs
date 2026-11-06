@@ -9,3 +9,4 @@ pub mod hosting;
 pub mod instance;
 pub mod paths;
 pub mod state;
+pub mod update;

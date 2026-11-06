@@ -340,7 +340,7 @@ fn main() {
             render(&platform, pidx, psize, scale, &out.join(format!("{name}.png")));
             pa.invoke_editor_close();
         }
-        for (page, suffix) in [(1, "environments"), (1, "environments-connected"), (2, "add-environment")] {
+        for (page, suffix) in [(1, "environments"), (1, "environments-connected"), (1, "environments-offline"), (2, "add-environment")] {
             let name = format!("phone-{look}-{suffix}");
             if want(&name) {
                 let store = phone.global::<Store>();
@@ -350,6 +350,12 @@ fn main() {
                     store.set_environments(Rc::new(slint::VecModel::from(vec![patch_ui::EnvironmentRow {
                         url: "http://laptop:4747".into(), name: "My laptop".into(), status: "Connected".into(), connected: true, enabled: true,
                     }])).into());
+                }
+                if suffix == "environments-offline" {
+                    store.set_environments(Rc::new(slint::VecModel::from(vec![
+                        patch_ui::EnvironmentRow { url: "http://mdhlaptop:4747".into(), name: "MDHLaptop".into(), status: "Offline — can't find mdhlaptop".into(), connected: false, enabled: true },
+                        patch_ui::EnvironmentRow { url: "http://100.101.102.103:4747".into(), name: "MDHLaptop".into(), status: "Sync off".into(), connected: false, enabled: false },
+                    ])).into());
                 }
                 render(&platform, pidx, psize, scale, &out.join(format!("{name}.png")));
                 store.set_environments(Rc::new(slint::VecModel::from(Vec::<patch_ui::EnvironmentRow>::new())).into());
@@ -361,6 +367,10 @@ fn main() {
         if want(&name) {
             phone.global::<Store>().set_settings_open(true);
             render(&platform, pidx, psize, scale, &out.join(format!("{name}.png")));
+            platform.windows.borrow()[pidx].dispatch_event(WindowEvent::PointerScrolled {
+                position: slint::LogicalPosition::new(200.0, 500.0), delta_x: 0.0, delta_y: -700.0,
+            });
+            render(&platform, pidx, psize, scale, &out.join(format!("{name}-lower.png")));
             phone.global::<Store>().set_settings_open(false);
         }
     }

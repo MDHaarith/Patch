@@ -44,33 +44,38 @@ export component EnvironmentsPanel inherits Rectangle {
     property <string> address;
     property <string> code;
     VerticalLayout {
-        HorizontalLayout {
-            height: 76px;
-            padding-left: 10px;
-            padding-right: 14px;
-            spacing: 6px;
-            IconButton {
-                icon: "chevron-left";
-                clicked => { Actions.stop-scan(); Store.scan-active = false; Store.environment-page -= 1; }
+        VerticalLayout {
+            vertical-stretch: 0;
+            padding-left: 18px;
+            padding-right: 12px;
+            padding-top: 6px;
+            padding-bottom: 12px;
+            spacing: 4px;
+            HorizontalLayout {
+                height: 30px;
+                IconButton {
+                    icon: "chevron-left";
+                    clicked => { Actions.stop-scan(); Store.scan-active = false; Store.environment-page -= 1; }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                IconButton {
+                    icon: Store.environment-page == 2 ? "check" : "plus";
+                    tint: Store.environment-page == 2 && (root.address == "" || root.code == "" || Store.pairing) ? Theme.text-3 : Theme.text;
+                    clicked => {
+                        if Store.environment-page == 2 { if root.address != "" && root.code != "" && !Store.pairing { Actions.connect-hub(root.address, root.code); } }
+                        else { root.address = ""; root.code = ""; Store.environment-page = 2; }
+                    }
+                }
             }
             Text {
-                horizontal-stretch: 1;
                 text: Store.environment-page == 2 ? "Add environment" : "Environments";
                 color: Theme.text;
-                font-size: 27px * Theme.text-scale;
+                font-size: Theme.fs-xl;
                 font-weight: 700;
-                vertical-alignment: center;
-            }
-            IconButton {
-                icon: Store.environment-page == 2 ? "check" : "plus";
-                tint: Store.environment-page == 2 && (root.address == "" || root.code == "" || Store.pairing) ? Theme.text-3 : Theme.text;
-                clicked => {
-                    if Store.environment-page == 2 { if root.address != "" && root.code != "" && !Store.pairing { Actions.connect-hub(root.address, root.code); } }
-                    else { root.address = ""; root.code = ""; Store.environment-page = 2; }
-                }
             }
         }
         scroll := Scroll {
+            vertical-stretch: 1;
             content-height: body.preferred-height;
             body := VerticalLayout {
                 width: scroll.width;
@@ -87,21 +92,23 @@ export component EnvironmentsPanel inherits Rectangle {
                 if Store.environment-page == 1 && Store.environments.length > 0: Surface {
                     radius: 20px;
                     fill: Theme.panel-strong;
-                    height: hubs.preferred-height;
+                    preferred-height: hubs.preferred-height;
+                    vertical-stretch: 0;
                     hubs := VerticalLayout {
                         padding: 6px;
                         spacing: 0px;
                         for hub in Store.environments: HorizontalLayout {
                             padding: 14px;
                             spacing: 12px;
-                            IconBox { name: "laptop"; size: 26px; tint: Theme.text; }
+                            IconBox { name: "laptop"; size: 26px; height: 26px; tint: Theme.text; }
                             VerticalLayout {
                                 horizontal-stretch: 1;
                                 spacing: 5px;
                                 Text { text: hub.name; color: Theme.text; font-size: 17px * Theme.text-scale; font-weight: 600; overflow: elide; }
+                                Text { text: hub.url; color: Theme.text-3; font-size: Theme.fs-xs; wrap: char-wrap; }
                                 HorizontalLayout {
                                     spacing: 6px;
-                                    Rectangle { width: 7px; height: 7px; border-radius: 4px; background: hub.connected ? #43d78b : Theme.text-3; y: (parent.height - self.height) / 2; }
+                                    Rectangle { width: 7px; height: 7px; border-radius: 4px; background: hub.connected ? #43d78b : Theme.text-3; y: 4px * Theme.text-scale; }
                                     Text { horizontal-stretch: 1; text: hub.status; color: Theme.text-2; font-size: 12px * Theme.text-scale; wrap: word-wrap; }
                                 }
                             }
@@ -118,7 +125,8 @@ export component EnvironmentsPanel inherits Rectangle {
                     Surface {
                         radius: 18px;
                         fill: Theme.panel-strong;
-                        height: fields.preferred-height;
+                        preferred-height: fields.preferred-height;
+                        vertical-stretch: 0;
                         fields := VerticalLayout {
                             padding: 14px;
                             spacing: 12px;
@@ -128,7 +136,7 @@ export component EnvironmentsPanel inherits Rectangle {
                     }
                     Text { text: "Enter the address and code shown on your laptop. Keep both devices on the same Wi-Fi or Tailscale."; color: Theme.text-2; font-size: 13px * Theme.text-scale; wrap: word-wrap; }
                     if Store.pairing: Text { text: "Connecting…"; color: Theme.accent; font-size: Theme.fs-m; }
-                    if Store.sync-state == 3 || Store.sync-state == 4: Text { text: Store.sync-label; color: Theme.text-2; wrap: word-wrap; font-size: Theme.fs-s; }
+                    if Store.sync-state == 3 || Store.sync-state == 4: Text { text: Store.sync-detail; color: Theme.text-2; wrap: word-wrap; font-size: Theme.fs-s; }
                 }
                 Rectangle { height: 20px; }
             }

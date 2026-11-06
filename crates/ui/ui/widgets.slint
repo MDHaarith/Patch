@@ -127,36 +127,20 @@ export component Segmented inherits Rectangle {
     background: Theme.well;
     border-width: Theme.light ? 0px : 1px;
     border-color: Theme.hairline;
-    pill := Rectangle {
-        x: 2px;
-        y: 2px;
-        height: parent.height - 4px;
-        width: 0px;
-        border-radius: Store.mobile ? 8px : 6px;
-        background: Theme.light ? #ffffff : Theme.range;
-        drop-shadow-blur: 3px;
-        drop-shadow-offset-y: 1px;
-        drop-shadow-color: #0000002e;
-        animate x, width { duration: Theme.motion-panel; easing: cubic-bezier(0.2, 0, 0, 1); }
-    }
     HorizontalLayout {
         padding: 2px;
         spacing: 2px;
         for item[i] in root.items: Rectangle {
             property <bool> selected: i == root.current;
-            function place-pill() {
-                if self.selected {
-                    pill.x = self.x;
-                    pill.width = self.width;
-                }
-            }
-            changed selected => { self.place-pill(); }
-            changed x => { self.place-pill(); }
-            changed width => { self.place-pill(); }
             horizontal-stretch: root.stretch ? 1 : 0;
             min-width: inner.preferred-width + (Store.mobile ? 20px : 22px);
             border-radius: Store.mobile ? 8px : 6px;
-            background: !self.selected && sta.has-hover ? Theme.hover : transparent;
+            // Touch hover can stick after a tap; only selection gets a fill.
+            background: self.selected ? (Theme.light ? #ffffff : Theme.range)
+                : !Store.mobile && sta.has-hover ? Theme.hover : transparent;
+            drop-shadow-blur: self.selected ? 3px : 0px;
+            drop-shadow-offset-y: self.selected ? 1px : 0px;
+            drop-shadow-color: self.selected ? #0000002e : transparent;
             animate background { duration: Theme.motion-fast; easing: ease-out; }
             inner := HorizontalLayout {
                 alignment: center;
