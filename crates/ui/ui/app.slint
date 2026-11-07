@@ -559,8 +559,8 @@ component MobileShell inherits Rectangle {
         Rectangle { height: Store.safe-top; }
         HorizontalLayout {
             height: 56px;
-            padding-left: 18px;
-            padding-right: 10px;
+            padding-left: 16px;
+            padding-right: 4px;
             spacing: 4px;
             if Store.custom-chrome: Rectangle {
                 width: 16px;
@@ -574,20 +574,22 @@ component MobileShell inherits Rectangle {
                 }
             }
             if Store.custom-chrome: WindowControls { height: parent.height; }
-            HorizontalLayout {
-                spacing: 7px;
-                Text { text: Store.title-main; font-size: 26px * Theme.text-scale; font-weight: 700; color: Theme.text; vertical-alignment: center; }
-                Text { text: Store.title-sub; font-size: 26px * Theme.text-scale; font-weight: 400; color: Theme.text-2; vertical-alignment: center; }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                alignment: center;
+                spacing: 1px;
+                Text { text: Store.title-main; font-size: 24px * Theme.text-scale; font-weight: 700; color: Theme.text; overflow: elide; min-width: 0px; }
+                if Store.title-sub != "": Text { text: Store.title-sub; font-size: Theme.fs-s; color: Theme.text-2; overflow: elide; min-width: 0px; }
             }
-            Rectangle { horizontal-stretch: 1; }
-            if Store.view <= 1: Button { y: (parent.height - self.height) / 2; text: "Today"; kind: 0; pad: 12px; clicked => { Actions.go-today(); } }
-            IconButton { y: (parent.height - self.height) / 2; size: 38px; icon-size: 18px; icon: "more"; active: Store.selection-mode; clicked => { Store.tools-open = true; } }
-            IconButton { y: (parent.height - self.height) / 2; size: 38px; icon-size: 18px; icon: "search"; active: root.searching; clicked => { root.searching = !root.searching; } }
-            IconButton { y: (parent.height - self.height) / 2; size: 38px; icon-size: 18px; icon: "gear"; clicked => { Store.settings-open = true; } }
+            if Store.view <= 1: Button { y: (56px - self.height) / 2; text: "Today"; kind: 0; pad: 12px; clicked => { Actions.go-today(); } }
+            IconButton { y: (56px - self.height) / 2; size: 38px; icon-size: 18px; icon: "more"; active: Store.selection-mode; clicked => { Store.tools-open = true; } }
+            IconButton { y: (56px - self.height) / 2; size: 38px; icon-size: 18px; icon: "search"; active: root.searching; clicked => { root.searching = !root.searching; } }
+            IconButton { y: (56px - self.height) / 2; size: 38px; icon-size: 18px; icon: "gear"; clicked => { Store.settings-open = true; } }
         }
         if root.searching: HorizontalLayout {
-            padding-left: 12px;
-            padding-right: 12px;
+            padding-left: 16px;
+            padding-right: 16px;
             padding-bottom: 8px;
             Field {
                 icon: "search";
@@ -597,8 +599,8 @@ component MobileShell inherits Rectangle {
             }
         }
         HorizontalLayout {
-            padding-left: 12px;
-            padding-right: 12px;
+            padding-left: 16px;
+            padding-right: 16px;
             padding-bottom: 8px;
             Segmented {
                 items: ["Day", "Week", "Month", "Board", "List"];
@@ -627,9 +629,9 @@ component MobileShell inherits Rectangle {
     // Bottom quick-add dock
     dock := Surface {
         visible: root.settings-t < 1;
-        x: 12px;
+        x: 16px;
         y: parent.height - self.height - 12px - Store.safe-bottom;
-        width: parent.width - 24px;
+        width: parent.width - 32px;
         height: Math.max(60px, dock-input.preferred-height + 16px);
         radius: 30px;
         fill: Theme.dock;

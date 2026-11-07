@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
 import { Icon, IconBox } from "icons.slint";
-import { Store, Actions } from "store.slint";
+import { Store, Actions, Choice } from "store.slint";
 
 // Shared panel surface.
 export component Surface inherits Rectangle {
@@ -114,73 +114,131 @@ export component Button inherits Rectangle {
     }
 }
 
-// macOS-style segmented control.
+// Equal cells and identical outer insets, including when labels have different lengths.
 export component Segmented inherits Rectangle {
     in property <[string]> items;
     in property <[string]> icons;
+    in property <[Choice]> choices;
     in-out property <int> current;
-    in property <length> seg-height: Store.mobile ? 34px : 28px;
+    in property <length> seg-height: Store.mobile ? 36px : 30px;
     in property <bool> stretch: false;
+    in property <int> columns: 0;
     callback picked(int);
-    height: seg-height;
+    property <int> count: choices.length > 0 ? choices.length : items.length;
+    property <int> cols: max(1, columns > 0 ? columns : count);
+    property <length> cell-width: (self.width - 4px - (cols - 1) * 2px) / cols;
+    height: max(1, ceil(count / cols)) * (seg-height + 4px) - 4px;
+    min-width: cols * 56px * Theme.text-scale;
+    horizontal-stretch: stretch ? 1 : 0;
     border-radius: Store.mobile ? 10px : 8px;
     background: Theme.well;
     border-width: Theme.light ? 0px : 1px;
     border-color: Theme.hairline;
-    pill := Rectangle {
-        x: 2px;
-        y: 2px;
-        height: parent.height - 4px;
-        width: 0px;
+    for i in root.count: Rectangle {
+        x: 2px + mod(i, root.cols) * (root.cell-width + 2px);
+        y: 2px + floor(i / root.cols) * (root.seg-height + 4px);
+        width: root.cell-width;
+        height: root.seg-height - 4px;
         border-radius: Store.mobile ? 8px : 6px;
-        background: Theme.light ? #ffffff : Theme.range;
-        drop-shadow-blur: 3px;
-        drop-shadow-offset-y: 1px;
-        drop-shadow-color: #0000002e;
-        animate x, width { duration: Theme.motion-panel; easing: cubic-bezier(0.2, 0, 0, 1); }
-    }
-    HorizontalLayout {
-        padding: 2px;
-        spacing: 2px;
-        for item[i] in root.items: Rectangle {
-            property <bool> selected: i == root.current;
-            function place-pill() {
-                if self.selected {
-                    pill.x = self.x;
-                    pill.width = self.width;
-                }
+        background: i == root.current ? (Theme.light ? #ffffff : Theme.range)
+            : !Store.mobile && sta.has-hover ? Theme.hover : transparent;
+        HorizontalLayout {
+            alignment: center;
+            padding-left: 4px;
+            padding-right: 4px;
+            spacing: 5px;
+            if i < root.choices.length && root.choices[i].color != transparent: Rectangle {
+                y: (parent.height - self.height) / 2;
+                width: 8px; height: 8px;
+                background: root.choices[i].color;
+                border-radius: 4px;
             }
-            changed selected => { self.place-pill(); }
-            changed x => { self.place-pill(); }
-            changed width => { self.place-pill(); }
-            horizontal-stretch: root.stretch ? 1 : 0;
-            min-width: inner.preferred-width + (Store.mobile ? 20px : 22px);
-            border-radius: Store.mobile ? 8px : 6px;
-            background: !self.selected && sta.has-hover ? Theme.hover : transparent;
-            animate background { duration: Theme.motion-fast; easing: ease-out; }
-            inner := HorizontalLayout {
-                alignment: center;
-                spacing: 5px;
-                if i < root.icons.length && root.icons[i] != "": IconBox {
-                    name: root.icons[i];
-                    size: 13px;
-                    tint: i == root.current ? Theme.text : Theme.text-2;
-                }
-                Text {
-                    text: item;
-                    vertical-alignment: center;
-                    font-size: Store.mobile ? Theme.fs-m : Theme.fs-s;
-                    font-weight: i == root.current ? 600 : 500;
-                    color: i == root.current ? Theme.text : Theme.text-2;
-                }
+            if i < root.icons.length && root.icons[i] != "": IconBox {
+                name: root.icons[i]; size: 13px; tint: Theme.text-2;
             }
-            sta := TouchArea {
-                clicked => {
-                    root.current = i;
-                    root.picked(i);
-                }
+            Text {
+                text: i < root.choices.length ? root.choices[i].label : root.items[i];
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+                min-width: 0px;
+                font-size: Store.mobile ? Theme.fs-m : Theme.fs-s;
+                font-weight: i == root.current ? 600 : 500;
+                color: i == root.current ? Theme.text : Theme.text-2;
             }
         }
+        sta := TouchArea { clicked => { root.current = i; root.picked(i); } }
+    }
+}
+
+// A label and bounded stepper, reused by all timing builders.
+export component Stepper inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> suffix;
+    in property <int> value;
+    in property <int> minimum: 1;
+    in property <int> maximum: 365;
+    in property <int> step: 1;
+    callback changed(int);
+    height: Store.mobile ? 36px : 30px;
+    spacing: 6px;
+    alignment: start;
+    Text { text: root.label; min-width: 60px * Theme.text-scale; color: Theme.text; font-size: Theme.fs-m; vertical-alignment: center; }
+    IconButton { y: (root.height - self.height) / 2; icon: "minus"; size: 30px; icon-size: 12px; clicked => { root.changed(max(root.minimum, root.value - root.step)); } }
+    Text { text: root.value; min-width: 30px * Theme.text-scale; horizontal-alignment: center; vertical-alignment: center; color: Theme.text; font-size: Theme.fs-l; font-weight: 700; }
+    IconButton { y: (root.height - self.height) / 2; icon: "plus"; size: 30px; icon-size: 12px; clicked => { root.changed(min(root.maximum, root.value + root.step)); } }
+    Text { text: root.suffix; color: Theme.text; font-size: Theme.fs-m; vertical-alignment: center; }
+}
+
+// Optical icon edges and text actions share the 16px content gutter.
+export component PageHeader inherits Rectangle {
+    in property <string> title;
+    in property <string> leading-icon;
+    in property <string> action-icon;
+    in property <string> action-text;
+    in property <bool> action-enabled: true;
+    in property <bool> large-title: false;
+    callback back();
+    callback action();
+    height: large-title ? 84px * Theme.text-scale : 60px;
+    HorizontalLayout {
+        y: 0px;
+        height: 60px;
+        padding-left: root.leading-icon == "" ? 16px : 4px;
+        padding-right: root.action-text == "" ? 4px : 16px;
+        spacing: 8px;
+        if root.leading-icon != "": IconButton { y: (60px - self.height) / 2; icon: root.leading-icon; clicked => { root.back(); } }
+        Text {
+            text: root.large-title ? "" : root.title;
+            horizontal-stretch: 1;
+            vertical-alignment: center;
+            font-size: root.leading-icon == "" ? Theme.fs-xl : Theme.fs-l;
+            font-weight: 700;
+            color: Theme.text;
+        }
+        if root.action-text != "": Button {
+            y: (60px - self.height) / 2;
+            height: 36px;
+            text: root.action-text;
+            kind: 1;
+            enabled: root.action-enabled;
+            clicked => { root.action(); }
+        }
+        if root.action-icon != "": IconButton {
+            y: (60px - self.height) / 2;
+            icon: root.action-icon;
+            tint: root.action-enabled ? Theme.text : Theme.text-3;
+            clicked => { if root.action-enabled { root.action(); } }
+        }
+    }
+    if root.large-title: Text {
+        x: 16px;
+        y: 48px;
+        width: parent.width - 32px;
+        text: root.title;
+        color: Theme.text;
+        font-size: Theme.fs-xl;
+        font-weight: 700;
     }
 }
 

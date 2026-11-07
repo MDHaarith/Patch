@@ -2,7 +2,7 @@ import { EnvironmentsPanel } from "environments.slint";
 import { Theme } from "theme.slint";
 import { Icon, IconBox } from "icons.slint";
 import { Store, Actions, ThemeCard } from "store.slint";
-import { Surface, Field, Toggle, IconButton, Button, Scroll, SectionLabel, Divider, Segmented } from "widgets.slint";
+import { Surface, Field, Toggle, IconButton, Button, Scroll, SectionLabel, Divider, Segmented, Stepper, PageHeader } from "widgets.slint";
 
 // A miniature of the range picker drawn in a theme's own colours.
 component ThemePreview inherits Rectangle {
@@ -92,12 +92,13 @@ component Row inherits HorizontalLayout {
     in property <string> label;
     in property <string> hint;
     spacing: 12px;
-    min-height: 48px;
+    height: 48px * Theme.text-scale;
+    vertical-stretch: 0;
     VerticalLayout {
         horizontal-stretch: 1;
         alignment: center;
         spacing: 2px;
-        Text { text: root.label; color: Theme.text; font-size: Theme.fs-m; font-weight: 500; }
+        Text { text: root.label; color: Theme.text; font-size: Theme.fs-m; font-weight: 500; wrap: word-wrap; }
         if root.hint != "": Text { text: root.hint; color: Theme.text-2; font-size: Theme.fs-s; wrap: word-wrap; }
     }
     @children
@@ -109,7 +110,9 @@ component Card inherits Surface {
     fill: Theme.panel-strong;
     sheen: Theme.light;
     radius: 16px;
-    height: lay.preferred-height;
+    // Let the layout measure wrapped content at the card's available width.
+    preferred-height: lay.preferred-height;
+    vertical-stretch: 0;
     lay := VerticalLayout {
         padding: 16px;
         spacing: 10px;
@@ -128,23 +131,10 @@ export component SettingsPanel inherits Rectangle {
     property <string> revoke-confirm;
     if Store.mobile && Store.environment-page > 0: EnvironmentsPanel { width: parent.width; height: parent.height; }
     if !Store.mobile || Store.environment-page == 0: VerticalLayout {
-        HorizontalLayout {
-            padding: 12px;
-            padding-left: 18px;
-            height: 60px;
-            Text {
-                horizontal-stretch: 1;
-                text: "Settings";
-                font-size: Theme.fs-xl;
-                font-weight: 700;
-                color: Theme.text;
-                vertical-alignment: center;
-            }
-            IconButton {
-                y: (parent.height - self.height) / 2;
-                icon: "close";
-                clicked => { Store.settings-open = false; }
-            }
+        PageHeader {
+            title: "Settings";
+            action-icon: "close";
+            action => { Store.settings-open = false; }
         }
         scroll := Scroll {
             vertical-stretch: 1;
@@ -160,35 +150,48 @@ export component SettingsPanel inherits Rectangle {
                 Card {
                     title: "Progress";
                     icon: "check";
-                    HorizontalLayout {
-                        spacing: 8px;
-                        for tile in [
+                    stats := Rectangle {
+                        height: 44px * Theme.text-scale;
+                        for tile[i] in [
                             { value: Store.stat-streak, label: "day streak" },
                             { value: Store.stat-best, label: "best streak" },
                             { value: Store.stat-today, label: "done today" },
                             { value: Store.stat-focus, label: "focus min" },
                         ]: VerticalLayout {
-                            horizontal-stretch: 1;
-                            Text { text: tile.value; font-size: Theme.fs-xl; font-weight: 700; color: Theme.text; }
-                            Text { text: tile.label; font-size: Theme.fs-xs; color: Theme.text-2; }
+                            x: i * stats.width / 4;
+                            width: stats.width / 4;
+                            spacing: 2px;
+                            alignment: start;
+                            Text { text: tile.value; horizontal-alignment: center; font-size: Theme.fs-xl; font-weight: 700; color: Theme.text; }
+                            Text { text: tile.label; horizontal-alignment: center; font-size: Theme.fs-xs; color: Theme.text-2; }
                         }
                     }
-                    HorizontalLayout {
-                        height: 44px;
-                        spacing: 6px;
+                    chart := Rectangle {
+                        height: 40px + 18px * Theme.text-scale;
                         accessible-role: text;
                         accessible-label: "Tasks finished over the last 7 days";
-                        for count in Store.stat-week: Rectangle {
-                            horizontal-stretch: 1;
+                        for count[i] in Store.stat-week: Rectangle {
+                            x: i * chart.width / 7;
+                            width: chart.width / 7;
+                            height: parent.height;
                             Rectangle {
-                                height: count == 0 ? 3px : max(3px, parent.height * count / Store.stat-week-max);
-                                y: parent.height - self.height;
+                                width: 16px;
+                                x: (parent.width - self.width) / 2;
+                                height: count == 0 ? 3px : max(6px, 32px * count / max(1, Store.stat-week-max));
+                                y: 32px - self.height;
                                 border-radius: 3px;
                                 background: count == 0 ? Theme.hairline : Theme.accent;
                             }
+                            Text {
+                                y: 38px;
+                                width: parent.width;
+                                text: i < Store.stat-weekdays.length ? Store.stat-weekdays[i] : "";
+                                horizontal-alignment: center;
+                                font-size: Theme.fs-xs;
+                                color: Theme.text-2;
+                            }
                         }
                     }
-                    Text { text: "Last 7 days"; font-size: Theme.fs-xs; color: Theme.text-2; }
                 }
                 Card {
                     title: "Appearance";
@@ -255,6 +258,7 @@ export component SettingsPanel inherits Rectangle {
                             Segmented {
                                 items: ["Default", "Large", "Larger"];
                                 current: Store.text-size;
+                                stretch: true;
                                 picked(i) => { Actions.set-text-size(i); }
                             }
                         }
@@ -262,18 +266,18 @@ export component SettingsPanel inherits Rectangle {
                     Row {
                         label: "Plan my day";
                         hint: "Show what's on when you first open Patch each day.";
-                        Toggle {
+                        VerticalLayout { alignment: center; Toggle {
                             checked: Store.daily-plan;
                             toggled => { Actions.set-daily-plan(self.checked); }
-                        }
+                        } }
                     }
                     Row {
                         label: "Week starts on Monday";
-                        Toggle { y: (parent.height - self.height) / 2; checked: Store.week-monday; toggled(v) => { Actions.set-week-monday(v); } }
+                        VerticalLayout { alignment: center; Toggle { checked: Store.week-monday; toggled(v) => { Actions.set-week-monday(v); } } }
                     }
                     Row {
                         label: "24-hour time";
-                        Toggle { y: (parent.height - self.height) / 2; checked: Store.time-24h; toggled(v) => { Actions.set-time-24h(v); } }
+                        VerticalLayout { alignment: center; Toggle { checked: Store.time-24h; toggled(v) => { Actions.set-time-24h(v); } } }
                     }
                 }
 
@@ -297,83 +301,82 @@ export component SettingsPanel inherits Rectangle {
                         alignment: start;
                         Preset { text: r; removed => { Actions.remove-custom-repeat(i); } }
                     }
-                    HorizontalLayout {
-                        spacing: 6px;
-                        alignment: start;
-                        Text { text: "Every"; color: Theme.text; font-size: Theme.fs-m; vertical-alignment: center; }
-                        IconButton { y: (parent.height - self.height) / 2; icon: "minus"; size: 26px; icon-size: 12px; clicked => { presets.n = Math.max(1, presets.n - 1); } }
-                        Text { text: presets.n; min-width: 22px; horizontal-alignment: center; color: Theme.text; font-size: Theme.fs-l; font-weight: 700; vertical-alignment: center; }
-                        IconButton { y: (parent.height - self.height) / 2; icon: "plus"; size: 26px; icon-size: 12px; clicked => { presets.n = Math.min(365, presets.n + 1); } }
+                    Stepper {
+                        label: "Every";
+                        value: presets.n;
+                        changed(n) => { presets.n = n; }
                     }
-                    HorizontalLayout {
-                        spacing: 6px;
-                        Segmented {
-                            y: (parent.height - self.height) / 2;
-                            horizontal-stretch: 1;
-                            stretch: true;
-                            items: ["days", "weeks", "months", "years"];
-                            current: presets.unit;
-                            picked(u) => { presets.unit = u; }
-                        }
-                        Button { y: (parent.height - self.height) / 2; text: "Add"; kind: 1; clicked => { Actions.add-custom-repeat(presets.n, presets.unit + (presets.after-done ? 4 : 0)); } }
+                    Segmented {
+                        stretch: true;
+                        items: ["days", "weeks", "months", "years"];
+                        current: presets.unit;
+                        picked(u) => { presets.unit = u; }
                     }
-                    HorizontalLayout {
-                        Text { text: "Repeat after completion"; color: Theme.text; font-size: Theme.fs-m; horizontal-stretch: 1; vertical-alignment: center; }
-                        Toggle { checked <=> presets.after-done; }
+                    Row {
+                        label: "Repeat after completion";
+                        VerticalLayout { alignment: center; Toggle { checked <=> presets.after-done; } }
                     }
-                    SectionLabel { text: "AUTO-ARCHIVE COMPLETED"; }
-                    Field {
-                        text: Store.archive-days == 0 ? "" : "\{Store.archive-days}";
-                        placeholder: "Days after completion (0 disables)";
-                        accepted(t) => { Actions.set-archive-days(t.to-float()); }
+                    Button {
+                        horizontal-stretch: 1;
+                        text: "Add repeat";
+                        kind: 1;
+                        clicked => { Actions.add-custom-repeat(presets.n, presets.unit + (presets.after-done ? 4 : 0)); }
                     }
+                    Divider {}
                     SectionLabel { text: "CUSTOM ALERTS"; }
                     if Store.custom-alerts.length == 0: Text { text: "None yet"; color: Theme.text-3; font-size: Theme.fs-s; }
                     for a[i] in Store.custom-alerts: HorizontalLayout {
                         alignment: start;
                         Preset { text: a; removed => { Actions.remove-custom-alert(i); } }
                     }
-                    HorizontalLayout {
-                        spacing: 6px;
-                        alignment: start;
-                        IconButton { y: (parent.height - self.height) / 2; icon: "minus"; size: 26px; icon-size: 12px; clicked => { presets.amount = Math.max(1, presets.amount - (presets.scale == 0 ? 5 : 1)); } }
-                        Text { text: presets.amount; min-width: 26px; horizontal-alignment: center; color: Theme.text; font-size: Theme.fs-l; font-weight: 700; vertical-alignment: center; }
-                        IconButton { y: (parent.height - self.height) / 2; icon: "plus"; size: 26px; icon-size: 12px; clicked => { presets.amount = Math.min(presets.scale == 2 ? 365 : 999, presets.amount + (presets.scale == 0 ? 5 : 1)); } }
-                        Text { text: "before"; color: Theme.text; font-size: Theme.fs-m; vertical-alignment: center; }
+                    Stepper {
+                        label: "Before";
+                        value: presets.amount;
+                        step: presets.scale == 0 ? 5 : 1;
+                        maximum: presets.scale == 2 ? 365 : 999;
+                        changed(n) => { presets.amount = n; }
                     }
-                    HorizontalLayout {
-                        spacing: 6px;
-                        Segmented {
-                            y: (parent.height - self.height) / 2;
-                            horizontal-stretch: 1;
-                            stretch: true;
-                            items: ["min", "hours", "days"];
-                            current: presets.scale;
-                            picked(u) => { presets.scale = u; presets.amount = Math.min(presets.amount, u == 2 ? 365 : 999); }
-                        }
-                        Button {
-                            y: (parent.height - self.height) / 2;
-                            text: "Add";
-                            kind: 1;
-                            clicked => { Actions.add-custom-alert(presets.amount * (presets.scale == 0 ? 1 : presets.scale == 1 ? 60 : 1440)); }
-                        }
+                    Segmented {
+                        stretch: true;
+                        items: ["min", "hours", "days"];
+                        current: presets.scale;
+                        picked(u) => { presets.scale = u; presets.amount = min(presets.amount, u == 2 ? 365 : 999); }
                     }
+                    Button {
+                        horizontal-stretch: 1;
+                        text: "Add alert";
+                        kind: 1;
+                        clicked => { Actions.add-custom-alert(presets.amount * (presets.scale == 0 ? 1 : presets.scale == 1 ? 60 : 1440)); }
+                    }
+                    Divider {}
+                    SectionLabel { text: "AUTO-ARCHIVE COMPLETED"; }
+                    Stepper {
+                        label: "After";
+                        suffix: "days";
+                        value: Store.archive-days;
+                        minimum: 0;
+                        maximum: 36500;
+                        changed(n) => { Actions.set-archive-days(n); }
+                    }
+                    Text { text: "0 = off. Applies to all completed tasks."; color: Theme.text-2; font-size: Theme.fs-s; wrap: word-wrap; }
+
                 }
 
                 Card {
                     title: Store.mobile ? "Environments" : "Sync";
                     icon: "laptop";
                     Text { text: Store.sync-label; color: Theme.text-2; font-size: Theme.fs-s; wrap: word-wrap; }
-                    if Store.mobile: Button { text: "Manage environments"; kind: 3; clicked => { Store.environment-page = 1; } }
+                    if Store.mobile: Button { text: "Manage environments"; icon: "laptop"; clicked => { Store.environment-page = 1; } }
                     if Store.can-host: Row {
                         label: "Host on this computer";
                         hint: "Pair your phone over Tailscale or the same Wi-Fi. Keep Patch running in the tray.";
-                        Toggle { checked: Store.hosting; toggled(v) => { Actions.set-hosting(v); } }
+                        VerticalLayout { alignment: center; Toggle { checked: Store.hosting; toggled(v) => { Actions.set-hosting(v); } } }
                     }
                     if Store.can-host && Store.hosting: Rectangle {
                         border-radius: 20px;
                         background: #111111;
-                        height: pair.preferred-height;
+                        preferred-height: pair.preferred-height;
+                        vertical-stretch: 0;
                         pair := VerticalLayout {
                             padding: 20px;
                             spacing: 12px;
@@ -454,7 +457,7 @@ export component SettingsPanel inherits Rectangle {
                     init => { Actions.refresh-background(); }
                     if Store.mobile: Button {
                         text: "App battery settings";
-                        kind: 3;
+                        icon: "open";
                         clicked => { Actions.battery-settings(); }
                     }
                     if Store.battery-state != 0: Row {
@@ -475,16 +478,16 @@ export component SettingsPanel inherits Rectangle {
                     Row {
                         label: "Desktop widget";
                         hint: "Tiles on your desktop; Patch's pet above apps, with tasks and quick add.";
-                        Toggle { y: (parent.height - self.height) / 2; checked: Store.widget-on; toggled(v) => { Actions.set-widget(v); } }
+                        Toggle { checked: Store.widget-on; toggled(v) => { Actions.set-widget(v); } }
                     }
                     Row {
                         label: "Keep Patch on top";
                         hint: "The main window stays above other apps, even when you click elsewhere.";
-                        Toggle { y: (parent.height - self.height) / 2; checked: Store.pinned; toggled(v) => { Actions.set-pinned(v); } }
+                        Toggle { checked: Store.pinned; toggled(v) => { Actions.set-pinned(v); } }
                     }
                     Row {
                         label: "Start Patch at login";
-                        Toggle { y: (parent.height - self.height) / 2; checked: Store.autostart; toggled(v) => { Actions.set-autostart(v); } }
+                        Toggle { checked: Store.autostart; toggled(v) => { Actions.set-autostart(v); } }
                     }
                 }
 
@@ -494,11 +497,11 @@ export component SettingsPanel inherits Rectangle {
                     Row {
                         label: "Floating Patch bubble";
                         hint: Store.overlay-allowed ? "Today's tasks and quick add, floating above every app." : "Android needs the “Display over other apps” permission — you'll be taken to the setting.";
-                        Toggle { y: (parent.height - self.height) / 2; checked: Store.overlay-on; toggled(v) => { Actions.set-overlay(v); } }
+                        VerticalLayout { alignment: center; Toggle { checked: Store.overlay-on; toggled(v) => { Actions.set-overlay(v); } } }
                     }
                     Row {
                         label: "Show bubble after restart";
-                        Toggle { y: (parent.height - self.height) / 2; checked: Store.overlay-boot; toggled(v) => { Actions.set-overlay-boot(v); } }
+                        VerticalLayout { alignment: center; Toggle { checked: Store.overlay-boot; toggled(v) => { Actions.set-overlay-boot(v); } } }
                     }
                 }
 

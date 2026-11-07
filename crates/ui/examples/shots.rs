@@ -2,6 +2,7 @@
 //! renderer (the renderer the Android app uses), for visual review and CI.
 //!
 //!     cargo run -p patch-ui --example shots -- [out-dir]
+//!     SHOTS_TEXT_SIZE=2 cargo run -p patch-ui --example shots -- [larger-out-dir]
 
 use chrono::{Duration, NaiveDate};
 use patch_core::doc::{COL_DOING, COL_DONE, COL_TODO, DEFAULT_LIST, LIST_WORK};
@@ -177,7 +178,9 @@ fn advance(platform: &ShotPlatform, index: usize, size: (u32, u32), scale: f32, 
 
 fn render(platform: &ShotPlatform, index: usize, size: (u32, u32), scale: f32, out: &Path) {
     frame(platform, index, size, scale);
-    advance(platform, index, size, scale, 420);
+    // Static shots need only the settled frame; motion() samples intermediate frames.
+    platform.time.set(platform.time.get() + std::time::Duration::from_millis(420));
+    slint::platform::update_timers_and_animations();
     capture(platform, index, size, scale, out);
 }
 
@@ -220,6 +223,7 @@ fn main() {
     }
     let want = |name: &str| only.is_empty() || only.split(',').any(|o| name.starts_with(o));
     let looks = ["pitch", "light"];
+    let text_size = std::env::var("SHOTS_TEXT_SIZE").ok().and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
 
     // Desktop
     let dir = std::env::temp_dir().join(format!("patch-shots-desktop-{}", std::process::id()));
@@ -231,6 +235,7 @@ fn main() {
     let idx = platform.windows.borrow().len() - 1;
     main.show().unwrap();
     let a = main.global::<Actions>();
+    a.invoke_set_text_size(text_size);
     for (li, look) in looks.iter().enumerate() {
         a.invoke_set_look(li as i32);
         for (vi, view) in ["day", "week", "month", "board", "list"].iter().enumerate() {
@@ -260,6 +265,7 @@ fn main() {
             render(&platform, idx, (1440, 1100), 1.0, &path);
             main.global::<Store>().set_settings_open(false);
             a.invoke_set_hosting(false);
+            advance(&platform, idx, (1440, 900), 1.0, 300);
         }
         let name = format!("desktop-{look}-settings");
         if want(&name) {
@@ -322,6 +328,7 @@ fn main() {
     let pidx = platform.windows.borrow().len() - 1;
     phone.show().unwrap();
     let pa = phone.global::<Actions>();
+    pa.invoke_set_text_size(text_size);
     let scale = 2.625;
     let psize = ((412.0 * scale) as u32, (915.0 * scale) as u32);
     for (li, look) in looks.iter().enumerate() {
@@ -340,7 +347,13 @@ fn main() {
             render(&platform, pidx, psize, scale, &out.join(format!("{name}.png")));
             pa.invoke_editor_close();
         }
-        for (page, suffix) in [(1, "environments"), (1, "environments-connected"), (2, "add-environment")] {
+        let name = format!("phone-{look}-quick-add");
+        if want(&name) {
+            pa.invoke_new_task(phone.global::<Store>().get_selected(), -2);
+            render(&platform, pidx, psize, scale, &out.join(format!("{name}.png")));
+            pa.invoke_editor_close();
+        }
+        for (page, suffix) in [(1, "environments"), (1, "environments-connected"), (1, "environments-offline"), (2, "add-environment")] {
             let name = format!("phone-{look}-{suffix}");
             if want(&name) {
                 let store = phone.global::<Store>();
@@ -350,6 +363,12 @@ fn main() {
                     store.set_environments(Rc::new(slint::VecModel::from(vec![patch_ui::EnvironmentRow {
                         url: "http://laptop:4747".into(), name: "My laptop".into(), status: "Connected".into(), connected: true, enabled: true,
                     }])).into());
+                }
+                if suffix == "environments-offline" {
+                    store.set_environments(Rc::new(slint::VecModel::from(vec![
+                        patch_ui::EnvironmentRow { url: "http://mdhlaptop:4747".into(), name: "MDHLaptop".into(), status: "Offline — can't find mdhlaptop".into(), connected: false, enabled: true },
+                        patch_ui::EnvironmentRow { url: "http://100.101.102.103:4747".into(), name: "MDHLaptop".into(), status: "Sync off".into(), connected: false, enabled: false },
+                    ])).into());
                 }
                 render(&platform, pidx, psize, scale, &out.join(format!("{name}.png")));
                 store.set_environments(Rc::new(slint::VecModel::from(Vec::<patch_ui::EnvironmentRow>::new())).into());
@@ -361,19 +380,32 @@ fn main() {
         if want(&name) {
             phone.global::<Store>().set_settings_open(true);
             render(&platform, pidx, psize, scale, &out.join(format!("{name}.png")));
+            platform.windows.borrow()[pidx].dispatch_event(WindowEvent::PointerScrolled {
+                position: slint::LogicalPosition::new(200.0, 500.0), delta_x: 0.0, delta_y: -700.0 - 100.0 * text_size as f32,
+            });
+            render(&platform, pidx, psize, scale, &out.join(format!("{name}-lower.png")));
+            platform.windows.borrow()[pidx].dispatch_event(WindowEvent::PointerScrolled {
+                position: slint::LogicalPosition::new(200.0, 500.0), delta_x: 0.0, delta_y: -600.0,
+            });
+            render(&platform, pidx, psize, scale, &out.join(format!("{name}-bottom.png")));
             phone.global::<Store>().set_settings_open(false);
         }
     }
     roadmap_screens(&platform, &papp, &phone, pidx, &pdir, &out, &want);
-    for (tab, name) in [(0, "phone-overlay-popup"), (3, "phone-overlay-popup-calendar")] {
-        if want(name) {
+    for (li, look) in looks.iter().enumerate() {
+        for (tab, suffix) in [(0, "overlay-today"), (1, "overlay-upcoming"), (2, "overlay-board"), (3, "overlay-calendar"), (0, "bubble")] {
+            let name = format!("phone-{look}-{suffix}");
+            if !want(&name) { continue; }
             let pov = OverlayWindow::new().unwrap();
             papp.attach_overlay(&pov);
             let idx = platform.windows.borrow().len() - 1;
             pov.show().unwrap();
-            pov.global::<Store>().set_overlay_expanded(true);
+            pov.global::<Actions>().invoke_set_look(li as i32);
+            pov.global::<Actions>().invoke_set_text_size(text_size);
+            pov.global::<Store>().set_overlay_expanded(suffix != "bubble");
             pov.global::<Store>().set_overlay_tab(tab);
             render(&platform, idx, psize, scale, &out.join(format!("{name}.png")));
+            pov.hide().unwrap();
         }
     }
     drop(app);
@@ -390,6 +422,7 @@ fn roadmap_screens(platform: &ShotPlatform, app: &Rc<App>, main: &MainWindow, in
     let prefix = if mobile { "phone" } else { "desktop" };
     let review = app_task(dir, "Design review");
     actions.invoke_set_look(0);
+    let text_size = store.get_text_size();
     for screen in ["filters", "bulk", "templates", "archive", "subtasks", "details", "plan", "focus", "progress", "large-text"] {
         let name = format!("{prefix}-roadmap-{screen}");
         if !want(&name) { continue; }
@@ -418,7 +451,7 @@ fn roadmap_screens(platform: &ShotPlatform, app: &Rc<App>, main: &MainWindow, in
         store.set_plan_open(false);
         store.set_settings_open(false);
         actions.invoke_focus_stop();
-        actions.invoke_set_text_size(0);
+        actions.invoke_set_text_size(text_size);
         actions.invoke_selection_mode(false);
         actions.invoke_browse(0);
     }

@@ -25,6 +25,18 @@ use std::time::Duration as StdDuration;
 
 const REMINDER_CHOICES: [Option<i64>; 6] = [None, Some(0), Some(5), Some(15), Some(60), Some(1440)];
 
+/// Keep connection summaries readable; the connection page retains the error.
+fn offline_summary(error: &str, host: &str) -> String {
+    let target = if host.is_empty() { "hub" } else { host };
+    if error.contains("lookup address") || error.contains("Name or service not known") || error.contains("No address associated") {
+        format!("Offline — can't find {target}")
+    } else if error.contains("timed out") || error.contains("timeout") {
+        format!("Offline — {target} isn't responding")
+    } else {
+        format!("Offline — can't reach {target}")
+    }
+}
+
 /// "15 min", "2 hours", "1 day" before the start.
 fn alert_label(minutes: Option<i64>) -> String {
     match minutes {
@@ -1165,7 +1177,7 @@ impl App {
         })
     }
 
-    fn toast(&self, text: &str) {
+    pub fn toast(&self, text: &str) {
         self.each_store(|s| s.set_toast(text.into()));
         let weak = CURRENT.with(|c| c.borrow().clone());
         self.toast_timer.start(TimerMode::SingleShot, StdDuration::from_secs(5), move || {
@@ -1492,7 +1504,7 @@ impl App {
                 (2, format!("Synced with {target} over Tailscale"))
             }
             SyncStatus::ClockAhead => (3, status.label()),
-            SyncStatus::Offline(e) => (3, format!("Offline — {e}")),
+            SyncStatus::Offline(e) => (3, offline_summary(e, &self.sync.config().map(|c| c.base.host).unwrap_or_default())),
             SyncStatus::Unauthorized => (4, "Access revoked, pair again".to_string()),
         };
         let p = self.prefs.borrow();
@@ -1511,6 +1523,7 @@ impl App {
         s.set_environments(Rc::new(VecModel::from(environments)).into());
         if state == 3 || state == 4 { s.set_pairing(false); }
         s.set_sync_state(state);
+        s.set_sync_detail(status.label().into());
         s.set_sync_label(label.into());
     }
 
@@ -2199,6 +2212,7 @@ impl App {
             s.set_stat_focus(stats.focus_today as i32);
             s.set_stat_week_max(stats.last_7.iter().copied().max().unwrap_or(0).max(1) as i32);
             s.set_stat_week(models::model(stats.last_7.iter().map(|n| *n as i32).collect()));
+            s.set_stat_weekdays(models::model((0..7).map(|i| (patch_core::time::today() - chrono::Duration::days(6 - i)).format("%a").to_string().into()).collect()));
         });
     }
 
@@ -2512,6 +2526,14 @@ fn checklist_rows(items: &[CheckItem]) -> Vec<CheckRow> {
 #[cfg(test)]
 mod pairing_tests {
     use super::*;
+
+    #[test]
+    fn offline_errors_have_short_summaries() {
+        assert_eq!(offline_summary("can't reach hub: mdhlaptop: failed to lookup address information: No address associated with hostname", "mdhlaptop"), "Offline — can't find mdhlaptop");
+        assert_eq!(offline_summary("connection timed out", "laptop"), "Offline — laptop isn't responding");
+        assert_eq!(offline_summary("Connection refused (os error 111)", "laptop"), "Offline — can't reach laptop");
+        assert_eq!(offline_summary("bad response", ""), "Offline — can't reach hub");
+    }
 
     #[test]
     fn editor_and_timer_regressions() {

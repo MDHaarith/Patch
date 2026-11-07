@@ -98,6 +98,7 @@ pub struct Shell {
     state_timer: Timer,
     wayland: Cell<bool>,
     quitting: Cell<bool>,
+    updating: Cell<bool>,
 }
 
 impl Shell {
@@ -132,6 +133,7 @@ impl Shell {
             state_timer: Timer::default(),
             wayland: Cell::new(std::env::var_os("WAYLAND_DISPLAY").is_some_and(|d| !d.is_empty())),
             quitting: Cell::new(false),
+            updating: Cell::new(false),
         });
         SHELL.with(|s| *s.borrow_mut() = Rc::downgrade(&shell));
         shell
@@ -939,6 +941,26 @@ impl Host for Shell {
 
     fn notify(&self, title: &str, body: &str) {
         self.notify_user(title, body);
+    }
+
+    fn can_update(&self) -> bool {
+        cfg!(target_arch = "x86_64")
+    }
+
+    fn check_update(&self) {
+        if self.updating.replace(true) {
+            if let Some(app) = self.app() { app.toast("Update check already running"); }
+            return;
+        }
+        if let Some(app) = self.app() { app.toast("Checking for updates…"); }
+        std::thread::spawn(|| {
+            let message = patch_linux::update::check().unwrap_or_else(|e| format!("Update failed: {e}"));
+            post(move |shell| {
+                shell.updating.set(false);
+                if let Some(app) = shell.app() { app.toast(&message); }
+                shell.notify_user("Patch update", &message);
+            });
+        });
     }
 
     fn open_url(&self, url: &str) {

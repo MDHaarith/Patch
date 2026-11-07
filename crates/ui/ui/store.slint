@@ -212,6 +212,7 @@ export global Store {
     in-out property <int> stat-best;
     in-out property <int> stat-focus;
     in-out property <[int]> stat-week;
+    in-out property <[string]> stat-weekdays;
     in-out property <int> stat-week-max: 1;
     in-out property <bool> focus-active;
     in-out property <string> focus-title;
@@ -231,6 +232,7 @@ export global Store {
     // 0 local only, 1 working, 2 synced, 3 offline, 4 wrong token
     in-out property <int> sync-state: 0;
     in-out property <string> sync-label: "Local only";
+    in-out property <string> sync-detail;
     in-out property <string> hub-url;
     in-out property <string> hub-token;
     in-out property <bool> hosting: false;

@@ -95,7 +95,8 @@ export component OverlayPanel inherits Rectangle {
                     items: ["Today", "Upcoming", "Board", "Calendar"];
                     current: Store.overlay-tab;
                     stretch: true;
-                    seg-height: 30px;
+                    seg-height: Store.mobile ? 36px : 30px;
+                    columns: Theme.text-scale > 1.1 ? 2 : 0;
                     picked(i) => { Store.overlay-tab = i; }
                 }
                 pages := Rectangle {
@@ -282,11 +283,19 @@ export component DeskBoard inherits Rectangle {
                 font-weight: 600;
                 color: Theme.today;
             }
-            Text {
-                text: Store.today-day;
-                font-size: 72px * Theme.text-scale;
-                font-weight: 700;
-                color: Theme.text;
+            Rectangle {
+                vertical-stretch: 1;
+                min-height: 0px;
+                Text {
+                    x: 0px;
+                    width: parent.width;
+                    height: parent.height;
+                    text: Store.today-day;
+                    font-size: min(72px * Theme.text-scale, parent.height * 0.75);
+                    vertical-alignment: center;
+                    font-weight: 700;
+                    color: Theme.text;
+                }
             }
             Text {
                 text: Store.today-month;
@@ -313,7 +322,7 @@ export component DeskBoard inherits Rectangle {
             for d[i] in Store.weekdays-short: Text {
                 x: i * heads.width / 7;
                 width: heads.width / 7;
-                text: d;
+                text: Theme.text-scale > 1.1 ? ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"][mod(i + (Store.week-monday ? 0 : 6), 7)] : d;
                 horizontal-alignment: center;
                 font-size: 8px * Theme.text-scale;
                 font-weight: 600;
