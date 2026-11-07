@@ -2212,6 +2212,7 @@ impl App {
             s.set_stat_focus(stats.focus_today as i32);
             s.set_stat_week_max(stats.last_7.iter().copied().max().unwrap_or(0).max(1) as i32);
             s.set_stat_week(models::model(stats.last_7.iter().map(|n| *n as i32).collect()));
+            s.set_stat_weekdays(models::model((0..7).map(|i| (patch_core::time::today() - chrono::Duration::days(6 - i)).format("%a").to_string().into()).collect()));
         });
     }
 

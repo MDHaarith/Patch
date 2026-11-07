@@ -1,7 +1,7 @@
 import { Theme } from "theme.slint";
 import { Icon, IconBox } from "icons.slint";
 import { Store, Actions } from "store.slint";
-import { Surface, Field, Toggle, IconButton, Button, Scroll } from "widgets.slint";
+import { Surface, Field, Toggle, IconButton, Button, Scroll, PageHeader } from "widgets.slint";
 
 // The native camera is positioned over this card, in logical window pixels.
 component ScanCard inherits Rectangle {
@@ -21,9 +21,11 @@ component ScanCard inherits Rectangle {
         border-width: 2px;
         border-color: #ffffff88;
         VerticalLayout {
+            y: (parent.height - self.height) / 2;
+            height: self.preferred-height;
             alignment: center;
             spacing: 12px;
-            HorizontalLayout { alignment: center; IconBox { name: "qr"; size: 32px; tint: #ffffff; } }
+            HorizontalLayout { height: 32px; alignment: center; IconBox { name: "qr"; width: 32px; height: 32px; size: 32px; tint: #ffffff; } }
             Text { text: Store.scan-active ? "Starting camera…" : "Tap to scan"; color: #ffffff; horizontal-alignment: center; font-size: 15px * Theme.text-scale; }
         }
     }
@@ -44,34 +46,16 @@ export component EnvironmentsPanel inherits Rectangle {
     property <string> address;
     property <string> code;
     VerticalLayout {
-        VerticalLayout {
-            vertical-stretch: 0;
-            padding-left: 18px;
-            padding-right: 12px;
-            padding-top: 6px;
-            padding-bottom: 12px;
-            spacing: 4px;
-            HorizontalLayout {
-                height: 30px;
-                IconButton {
-                    icon: "chevron-left";
-                    clicked => { Actions.stop-scan(); Store.scan-active = false; Store.environment-page -= 1; }
-                }
-                Rectangle { horizontal-stretch: 1; }
-                IconButton {
-                    icon: Store.environment-page == 2 ? "check" : "plus";
-                    tint: Store.environment-page == 2 && (root.address == "" || root.code == "" || Store.pairing) ? Theme.text-3 : Theme.text;
-                    clicked => {
-                        if Store.environment-page == 2 { if root.address != "" && root.code != "" && !Store.pairing { Actions.connect-hub(root.address, root.code); } }
-                        else { root.address = ""; root.code = ""; Store.environment-page = 2; }
-                    }
-                }
-            }
-            Text {
-                text: Store.environment-page == 2 ? "Add environment" : "Environments";
-                color: Theme.text;
-                font-size: Theme.fs-xl;
-                font-weight: 700;
+        PageHeader {
+            title: Store.environment-page == 2 ? "Add environment" : "Environments";
+            large-title: true;
+            leading-icon: "chevron-left";
+            action-icon: Store.environment-page == 2 ? "check" : "plus";
+            action-enabled: Store.environment-page != 2 || (root.address != "" && root.code != "" && !Store.pairing);
+            back => { Actions.stop-scan(); Store.scan-active = false; Store.environment-page -= 1; }
+            action => {
+                if Store.environment-page == 2 { Actions.connect-hub(root.address, root.code); }
+                else { root.address = ""; root.code = ""; Store.environment-page = 2; }
             }
         }
         scroll := Scroll {
@@ -80,7 +64,7 @@ export component EnvironmentsPanel inherits Rectangle {
             body := VerticalLayout {
                 width: scroll.width;
                 alignment: start;
-                padding: 18px;
+                padding: 16px;
                 padding-top: 8px;
                 spacing: 20px;
                 if Store.environment-page == 1 && Store.environments.length == 0: VerticalLayout {
@@ -112,8 +96,8 @@ export component EnvironmentsPanel inherits Rectangle {
                                     Text { horizontal-stretch: 1; text: hub.status; color: Theme.text-2; font-size: 12px * Theme.text-scale; wrap: word-wrap; }
                                 }
                             }
-                            Toggle { checked: hub.enabled; toggled(on) => { Actions.enable-environment(hub.url, on); } }
-                            IconButton { icon: "chevron-right"; size: 26px; clicked => { root.address = hub.url; root.code = ""; Store.environment-page = 2; } }
+                            VerticalLayout { alignment: center; Toggle { checked: hub.enabled; toggled(on) => { Actions.enable-environment(hub.url, on); } } }
+                            VerticalLayout { alignment: center; IconButton { icon: "chevron-right"; size: 26px; clicked => { root.address = hub.url; root.code = ""; Store.environment-page = 2; } } }
                         }
                     }
                 }

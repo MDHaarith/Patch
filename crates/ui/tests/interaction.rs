@@ -232,10 +232,10 @@ fn desktop_interactions() {
     let inspector_x = 1440.0 - 10.0 - 360.0;
     let picker_x = inspector_x + 16.0 + 16.0;
     let picker_w = 360.0 - 32.0 - 32.0;
-    // Inspector header 52 + divider 1 + scroll padding 16; blocks above the
-    // picker: title(30)+18, list group(13+8+28)+18, status(13+8+28)+18,
-    // priority(13+8+28)+18, schedule label 13+8, two toggle rows (22+8)*2.
-    let picker_top = 10.0 + 53.0 + 16.0 + 48.0 + 67.0 + 67.0 + 67.0 + 21.0 + 60.0;
+    // Shared header 60 + divider 1 + scroll padding 16; blocks above the
+    // picker: title(30)+18, list/status/priority groups (13+8+30)+18,
+    // schedule label 13+8, two toggle rows (22+8)*2.
+    let picker_top = 10.0 + 61.0 + 16.0 + 48.0 + 69.0 + 69.0 + 69.0 + 21.0 + 60.0;
     let days_top = picker_top + 14.0 + 28.0 + 6.0 + 16.0 + 6.0;
     let cell_xy_p = |i: f32| (picker_x + (i % 7.0 + 0.5) * picker_w / 7.0, days_top + ((i / 7.0).floor() + 0.5) * 30.0);
     let (sx, sy) = cell_xy_p(pos_of(&start.to_string()));
