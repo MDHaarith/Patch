@@ -221,4 +221,20 @@ impl Bridge for JniBridge {
     fn request_battery_unrestricted(&self) {
         self.call_void("requestBatteryUnrestricted", "()V", |_| Ok(vec![]));
     }
+
+    fn x_scroll(&self) -> String {
+        self.with_env("xScroll", |env| {
+            let obj = env.call_static_method(self.class, "xScroll", "()Ljava/lang/String;", &[])?.l()?;
+            Ok(env.get_string(&JString::from(obj))?.into())
+        })
+        .unwrap_or_default()
+    }
+
+    fn set_x_limit(&self, limit: i32) {
+        self.call_void("setXLimit", "(I)V", |_| Ok(vec![Arg::Int(limit)]));
+    }
+
+    fn open_accessibility_settings(&self) {
+        self.call_void("openAccessibilitySettings", "()V", |_| Ok(vec![]));
+    }
 }

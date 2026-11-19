@@ -35,4 +35,6 @@
     <string name="widget_preview_when2">18:30</string>
     <string name="widget_preview_task3">Lunch with Sam</string>
     <string name="widget_preview_when3">Tomorrow</string>
+    <string name="x_scroll_label">Patch video limit</string>
+    <string name="x_scroll_description">Counts the short videos you swipe through in X, Instagram, YouTube, TikTok, Facebook, Snapchat, Threads, Moj and Josh (never their feeds), shows a small counter under the camera while one is open, and closes it at your daily limit. It only notices which app is open and when it scrolls; it never reads post content.</string>
 </resources>

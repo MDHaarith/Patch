@@ -257,6 +257,26 @@ final class PatchNative {
         });
     }
 
+    /** Today's X scrolling for Settings, see {@link XScroll#summary}. */
+    static String xScroll() {
+        return XScroll.summary(app);
+    }
+
+    static void setXLimit(int limit) {
+        XScroll.setLimit(app, limit);
+    }
+
+    static void openAccessibilitySettings() {
+        main.post(() -> {
+            try {
+                app.startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            } catch (RuntimeException e) {
+                Log.w(TAG, "no accessibility settings", e);
+            }
+        });
+    }
+
     static void openUrl(String url) {
         try {
             app.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))

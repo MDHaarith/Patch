@@ -104,6 +104,37 @@ component Row inherits HorizontalLayout {
     @children
 }
 
+// Seven bars, today last, labelled with Store.stat-weekdays.
+component WeekBars inherits Rectangle {
+    in property <[int]> counts;
+    in property <int> maximum: 1;
+    in property <string> label;
+    height: 40px + 18px * Theme.text-scale;
+    accessible-role: text;
+    accessible-label: root.label;
+    for count[i] in root.counts: Rectangle {
+        x: i * root.width / 7;
+        width: root.width / 7;
+        height: parent.height;
+        Rectangle {
+            width: 16px;
+            x: (parent.width - self.width) / 2;
+            height: count == 0 ? 3px : max(6px, 32px * count / max(1, root.maximum));
+            y: 32px - self.height;
+            border-radius: 3px;
+            background: count == 0 ? Theme.hairline : Theme.accent;
+        }
+        Text {
+            y: 38px;
+            width: parent.width;
+            text: i < Store.stat-weekdays.length ? Store.stat-weekdays[i] : "";
+            horizontal-alignment: center;
+            font-size: Theme.fs-xs;
+            color: Theme.text-2;
+        }
+    }
+}
+
 component Card inherits Surface {
     in property <string> title;
     in property <string> icon;
@@ -129,6 +160,7 @@ export component SettingsPanel inherits Rectangle {
     property <string> url-input: Store.hub-url;
     property <string> token-input;
     property <string> revoke-confirm;
+    property <int> x-pending: -1; // limit being picked, not saved yet; -1 = none
     if Store.mobile && Store.environment-page > 0: EnvironmentsPanel { width: parent.width; height: parent.height; }
     if !Store.mobile || Store.environment-page == 0: VerticalLayout {
         PageHeader {
@@ -166,31 +198,81 @@ export component SettingsPanel inherits Rectangle {
                             Text { text: tile.label; horizontal-alignment: center; font-size: Theme.fs-xs; color: Theme.text-2; }
                         }
                     }
-                    chart := Rectangle {
-                        height: 40px + 18px * Theme.text-scale;
-                        accessible-role: text;
-                        accessible-label: "Tasks finished over the last 7 days";
-                        for count[i] in Store.stat-week: Rectangle {
-                            x: i * chart.width / 7;
-                            width: chart.width / 7;
-                            height: parent.height;
-                            Rectangle {
-                                width: 16px;
-                                x: (parent.width - self.width) / 2;
-                                height: count == 0 ? 3px : max(6px, 32px * count / max(1, Store.stat-week-max));
-                                y: 32px - self.height;
-                                border-radius: 3px;
-                                background: count == 0 ? Theme.hairline : Theme.accent;
-                            }
-                            Text {
-                                y: 38px;
-                                width: parent.width;
-                                text: i < Store.stat-weekdays.length ? Store.stat-weekdays[i] : "";
-                                horizontal-alignment: center;
-                                font-size: Theme.fs-xs;
-                                color: Theme.text-2;
+                    WeekBars {
+                        counts: Store.stat-week;
+                        maximum: Store.stat-week-max;
+                        label: "Tasks finished over the last 7 days";
+                    }
+                }
+                if Store.mobile: Card {
+                    title: "Short videos";
+                    icon: "phone";
+                    // Java owns the numbers (the counter runs without the UI); poll like Background does.
+                    Timer { interval: 2s; running: true; triggered => { Actions.refresh-x-scroll(); } }
+                    init => { Actions.refresh-x-scroll(); }
+                    if Store.x-state == 1: Row {
+                        label: "Tracking is off";
+                        // Row is a fixed 48px; a longer hint wraps into the stats below.
+                        hint: "Turn on in Accessibility. Never reads posts.";
+                        Button {
+                            y: (parent.height - self.height) / 2;
+                            text: "Turn on";
+                            kind: 3;
+                            clicked => { Actions.x-scroll-settings(); }
+                        }
+                    }
+                    if Store.x-state != 0: xstats := Rectangle {
+                        height: 44px * Theme.text-scale;
+                        for tile[i] in [
+                            { value: Store.x-reels, label: "videos" },
+                            { value: Store.x-minutes, label: "min in apps" },
+                        ]: VerticalLayout {
+                            x: i * xstats.width / 2;
+                            width: xstats.width / 2;
+                            spacing: 2px;
+                            alignment: start;
+                            Text { text: tile.value; horizontal-alignment: center; font-size: Theme.fs-xl; font-weight: 700; color: Theme.text; }
+                            Text { text: tile.label; horizontal-alignment: center; font-size: Theme.fs-xs; color: Theme.text-2; }
+                        }
+                    }
+                    if Store.x-state != 0: WeekBars {
+                        counts: Store.x-week;
+                        maximum: Store.x-week-max;
+                        label: "Videos over the last 7 days";
+                    }
+                    // Steps only pick a value; saving locks it for 30 days, so it needs its own button.
+                    if Store.x-state != 0 && Store.x-lock-days == 0: Stepper {
+                        label: "Daily limit";
+                        suffix: (root.x-pending < 0 ? Store.x-limit : root.x-pending) == 0 ? "off" : "videos";
+                        value: root.x-pending < 0 ? Store.x-limit : root.x-pending;
+                        minimum: 0;
+                        maximum: 1000;
+                        step: 10;
+                        changed(n) => { root.x-pending = n; }
+                    }
+                    if Store.x-state != 0 && Store.x-lock-days == 0 && root.x-pending >= 0 && root.x-pending != Store.x-limit: HorizontalLayout {
+                        alignment: end;
+                        Button {
+                            text: root.x-pending == 0 ? "Turn limit off" : "Lock for 30 days";
+                            kind: 1;
+                            clicked => {
+                                Actions.x-limit(root.x-pending);
+                                root.x-pending = -1;
+                                Actions.refresh-x-scroll();
                             }
                         }
+                    }
+                    if Store.x-state != 0 && Store.x-lock-days > 0: Row {
+                        label: "Daily limit: \{Store.x-limit} videos";
+                        hint: Store.x-lock-days == 1 ? "Locked for 1 more day" : "Locked for \{Store.x-lock-days} more days";
+                    }
+                    if Store.x-state != 0: Text {
+                        text: Store.x-limit == 0
+                            ? "Set a limit and Patch closes video apps once you reach it, until midnight. Once set, it can't change for 30 days."
+                            : "\{Store.x-reels} of \{Store.x-limit} videos today. Patch closes video apps at the limit, until midnight.";
+                        color: Theme.text-2;
+                        font-size: Theme.fs-s;
+                        wrap: word-wrap;
                     }
                 }
                 Card {
