@@ -184,9 +184,7 @@ impl Parser<'_> {
     }
 
     fn take(&mut self, from: usize, n: usize) {
-        for i in from..from + n {
-            self.used[i] = true;
-        }
+        self.used[from..from + n].fill(true);
         if from > 0 && !self.used[from - 1] && CONNECTORS.contains(&self.toks[from - 1].as_str()) {
             self.used[from - 1] = true;
         }
