@@ -214,6 +214,16 @@ export global Store {
     in-out property <[int]> stat-week;
     in-out property <[string]> stat-weekdays;
     in-out property <int> stat-week-max: 1;
+    // X scrolling (Android): 0 n/a, 1 tracking off, 2 tracking on.
+    in-out property <int> x-state: 0;
+    in-out property <int> x-limit;
+    in-out property <int> x-lock-days; // days until the limit can change; 0 = now
+    in-out property <int> x-posts;
+    in-out property <int> x-reels;
+    in-out property <int> x-scrolls;
+    in-out property <int> x-minutes;
+    in-out property <[int]> x-week;
+    in-out property <int> x-week-max: 1;
     in-out property <bool> focus-active;
     in-out property <string> focus-title;
     in-out property <string> focus-left;
@@ -434,6 +444,9 @@ export global Actions {
     callback set-text-size(int);
     callback battery-unrestrict();
     callback battery-settings();
+    callback refresh-x-scroll();
+    callback x-limit(int);
+    callback x-scroll-settings();
     callback set-hosting(bool);
     callback set-autostart(bool);
     callback set-widget(bool);

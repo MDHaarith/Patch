@@ -90,6 +90,10 @@ pub trait Bridge {
     fn open_battery_settings(&self);
     fn battery_unrestricted(&self) -> bool;
     fn request_battery_unrestricted(&self);
+    /// Today's X scrolling as comma-separated ints (see [`patch_ui::Host::x_scroll`]).
+    fn x_scroll(&self) -> String { String::new() }
+    fn set_x_limit(&self, _limit: i32) {}
+    fn open_accessibility_settings(&self) {}
 }
 
 pub enum Msg {

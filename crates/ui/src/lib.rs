@@ -153,6 +153,21 @@ pub trait Host {
 
     /// Ask the OS to stop restricting Patch in the background (Android).
     fn request_battery_unrestricted(&self) {}
+
+    /// Today's X scrolling (Android), comma-separated ints:
+    /// `state,limit,posts,videos,scrolls,minutes,d0..d6,lock_days` where state is
+    /// 1 tracking off / 2 on, d0..d6 are videos per day (d6 = today) and
+    /// lock_days is days until the limit can change (0 = now).
+    /// `None` where X tracking doesn't exist (desktop).
+    fn x_scroll(&self) -> Option<String> {
+        None
+    }
+
+    /// Daily video limit; 0 turns it off. Ignored while the limit is locked.
+    fn set_x_limit(&self, _limit: i32) {}
+
+    /// Open the system Accessibility settings to turn X tracking on.
+    fn open_accessibility_settings(&self) {}
 }
 
 /// Window-management requests from the custom chrome.

@@ -37,6 +37,29 @@ fn offline_summary(error: &str, host: &str) -> String {
     }
 }
 
+/// Today's X scrolling, parsed from [`Host::x_scroll`].
+#[derive(Debug, PartialEq)]
+struct XScroll {
+    state: i32,
+    limit: i32,
+    posts: i32,
+    reels: i32,
+    scrolls: i32,
+    minutes: i32,
+    /// Videos per day, oldest first, today last.
+    week: Vec<i32>,
+    /// Days until the limit can change again; 0 = now.
+    lock_days: i32,
+}
+
+fn parse_x_scroll(csv: &str) -> Option<XScroll> {
+    let v = csv.split(',').map(|s| s.trim().parse().ok()).collect::<Option<Vec<i32>>>()?;
+    if v.len() != 14 {
+        return None;
+    }
+    Some(XScroll { state: v[0], limit: v[1], posts: v[2], reels: v[3], scrolls: v[4], minutes: v[5], week: v[6..13].to_vec(), lock_days: v[13] })
+}
+
 /// "15 min", "2 hours", "1 day" before the start.
 fn alert_label(minutes: Option<i64>) -> String {
     match minutes {
@@ -1034,6 +1057,26 @@ impl App {
         });
         on!(on_battery_unrestrict, |app| app.host.request_battery_unrestricted());
         on!(on_battery_settings, |app| app.host.open_battery_settings());
+        on!(on_refresh_x_scroll, |app| {
+            let x = app.host.x_scroll().as_deref().and_then(parse_x_scroll);
+            app.each_store(|s| match &x {
+                None => s.set_x_state(0),
+                Some(x) => {
+                    s.set_x_state(x.state);
+                    s.set_x_limit(x.limit);
+                    s.set_x_lock_days(x.lock_days);
+                    s.set_x_posts(x.posts);
+                    s.set_x_reels(x.reels);
+                    s.set_x_scrolls(x.scrolls);
+                    s.set_x_minutes(x.minutes);
+                    s.set_x_week_max(x.week.iter().copied().max().unwrap_or(0).max(x.limit).max(1));
+                    s.set_x_week(models::model(x.week.clone()));
+                }
+            });
+        });
+        // The host refuses a change while locked; the UI refreshes right after to show what stuck.
+        on!(on_x_limit, |app, limit| app.host.set_x_limit(limit));
+        on!(on_x_scroll_settings, |app| app.host.open_accessibility_settings());
         on!(on_disconnect_hub, |app| {
             {
                 let mut p = app.prefs.borrow_mut();
@@ -2526,6 +2569,18 @@ fn checklist_rows(items: &[CheckItem]) -> Vec<CheckRow> {
 #[cfg(test)]
 mod pairing_tests {
     use super::*;
+
+    #[test]
+    fn x_scroll_summary_parses() {
+        let x = parse_x_scroll("2,50,12,3,140,9,0,1,2,3,4,5,15,27").unwrap();
+        assert_eq!((x.state, x.limit, x.posts, x.reels, x.scrolls, x.minutes), (2, 50, 12, 3, 140, 9));
+        assert_eq!(x.week, vec![0, 1, 2, 3, 4, 5, 15]);
+        assert_eq!(x.lock_days, 27);
+        assert_eq!(parse_x_scroll(""), None);
+        assert_eq!(parse_x_scroll("2,50,12"), None);
+        assert_eq!(parse_x_scroll("2,50,12,3,140,9,0,1,2,3,4,5,15"), None);
+        assert_eq!(parse_x_scroll("2,50,12,3,140,9,0,1,2,3,4,5,15,x"), None);
+    }
 
     #[test]
     fn offline_errors_have_short_summaries() {

@@ -26,7 +26,7 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:enableOnBackInvokedCallback="true"
         android:icon="@mipmap/ic_launcher"
-        android:label="@string/app_name"
+        android:label="${appLabel}"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Patch">
@@ -80,6 +80,20 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Floating task panel the user keeps on screen over other apps (display over other apps)" />
+        </service>
+
+        <!-- X scroll counter and daily limit (Settings → X scrolling). -->
+        <service
+            android:name=".XScrollService"
+            android:exported="true"
+            android:label="@string/x_scroll_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/x_scroll_service" />
         </service>
 
         <receiver

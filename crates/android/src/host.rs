@@ -101,6 +101,18 @@ impl Host for AndroidHost {
         self.bridge.request_battery_unrestricted();
     }
 
+    fn x_scroll(&self) -> Option<String> {
+        Some(self.bridge.x_scroll())
+    }
+
+    fn set_x_limit(&self, limit: i32) {
+        self.bridge.set_x_limit(limit);
+    }
+
+    fn open_accessibility_settings(&self) {
+        self.bridge.open_accessibility_settings();
+    }
+
     fn text_focus(&self, _focused: bool) {
         // The keyboard follows the text inputs' own requests (see ime.rs),
         // which also cover re-tapping a field after the keyboard was
