@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- No packageNames: window changes from every app tell when X is left; XScrollService ignores other apps otherwise. canRetrieveWindowContent is on only because X (Compose) sends no scroll events without it; Patch never reads window content. -->
+<!-- No packageNames: window changes from every app tell when X is left; XScrollService ignores other apps otherwise. canRetrieveWindowContent allows Compose scroll events and recognition of X pagers by their actions and bounds. -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeViewScrolled|typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"

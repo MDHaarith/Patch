@@ -54,6 +54,19 @@ public final class MainActivity extends Activity {
         content = new FrameLayout(this);
         content.addView(view, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        if (BuildConfig.APPLICATION_ID.endsWith(".test")) {
+            android.widget.Button copy = new android.widget.Button(this);
+            copy.setText("Copy X swipe report");
+            copy.setOnClickListener(v -> {
+                android.content.ClipboardManager clipboard = getSystemService(android.content.ClipboardManager.class);
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("X swipe report", XScrollService.swipeReport(this)));
+                android.widget.Toast.makeText(this, "X swipe report copied", android.widget.Toast.LENGTH_SHORT).show();
+            });
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-2, -2,
+                    android.view.Gravity.BOTTOM | android.view.Gravity.END);
+            lp.bottomMargin = Math.round(48 * getResources().getDisplayMetrics().density);
+            content.addView(copy, lp);
+        }
         setContentView(content);
         view.setOnApplyWindowInsetsListener((v, insets) -> applyInsets(insets));
         view.requestFocus();
